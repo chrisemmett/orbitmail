@@ -238,6 +238,21 @@ the control, and the README says so.
   crosses into a different icon, since redrawing on every sync makes some panels
   flicker.
 
+  **Close hides to the tray; quit is explicit.** The main window's `close`
+  handler calls `event.preventDefault()` and `hide()` instead of letting the
+  window close, so mail keeps syncing in the background — gated on
+  `isTrayActive()`, because with no tray there would be nothing to reopen from.
+  Quitting is deliberate: the tray's **Quit** or the default menu's **File →
+  Quit** (Ctrl+Q) both call `app.quit()`, which fires `before-quit`; that handler
+  sets an `isQuitting` flag *first*, so the next `close` lets the window through
+  rather than re-hiding it. Because a hidden window never fires
+  `window-all-closed`, the app stays alive in the tray and none of that handler's
+  teardown (stop sync, close pools, `VACUUM`) runs until a real quit. The
+  fail-safe for a desktop that creates the tray but never draws it (stock GNOME,
+  some panels): `requestSingleInstanceLock`'s `second-instance` handler always
+  calls `focusMainWindow()`, so re-launching Orbit Mail un-hides the window.
+  There is no toggle yet — no general settings dialog exists to host one.
+
   Attribution depends on `StartupWMClass` matching the window's real `WM_CLASS`,
   which Chromium derives from the name `main.ts` passes to `app.setName()` on
   Linux: **`Orbit Mail`**, not the package name. It read `orbit-mail` in both the

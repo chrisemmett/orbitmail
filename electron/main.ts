@@ -21,7 +21,7 @@ import {
   isAttachmentApproved,
   clearApprovedAttachments
 } from './services/attachment-allowlist'
-import { initTray, destroyTray } from './tray'
+import { initTray, destroyTray, isTrayActive } from './tray'
 import { cleanupExportDir, sweepStaleExportDirs } from './services/temp-export'
 import { restrictExistingAttachments } from './services/attachment-permissions'
 import { isBenignSocketError, describeUnexpectedError } from './services/crash-report'
@@ -439,7 +439,7 @@ function createMainWindow(): void {
     })
   }
 
-  mainWindow.on('close', () => {
+  mainWindow.on('close', (event) => {
     if (!mainWindow) return
     const bounds = mainWindow.getBounds()
     setWindowPreferences({
@@ -448,6 +448,17 @@ function createMainWindow(): void {
       x: bounds.x,
       y: bounds.y
     })
+
+    // Closing the window hides it to the tray instead of quitting — mail keeps
+    // syncing in the background and the count stays live in the panel. Quitting
+    // is deliberate: the tray's "Quit", or the menu's File → Quit (Ctrl+Q),
+    // both route through before-quit, which sets isQuitting so this lets the
+    // window close. Only when a tray actually exists to reopen from (Linux with
+    // the icon installed); everywhere else close quits as before.
+    if (!isQuitting && isTrayActive()) {
+      event.preventDefault()
+      mainWindow.hide()
+    }
   })
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -1159,9 +1170,10 @@ if (!gotSingleInstanceLock) {
   app.quit()
 } else {
   app.on('second-instance', (_, argv) => {
-    if (handleMailtoArgv(argv)) {
-      focusMainWindow()
-    }
+    // Re-launching Orbit Mail always brings the window back to the front — the
+    // recovery path when it has been hidden to a tray the desktop doesn't draw.
+    handleMailtoArgv(argv)
+    focusMainWindow()
   })
 
   app.whenReady().then(() => {
@@ -1320,7 +1332,12 @@ app.on('open-url', (event, url) => {
 // lost: change a setting, quit, and it was as if you had not.
 let quitFlushed = false
 
+// Set the instant a real quit begins (tray "Quit", File → Quit, OS logout), so
+// the window's close handler stops hiding to the tray and lets the window close.
+let isQuitting = false
+
 app.on('before-quit', (event) => {
+  isQuitting = true
   const teardown = (): void => {
     destroyTray()
     // The raw .eml files written for forward-as-attachment are whole emails.
