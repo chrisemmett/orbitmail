@@ -73,7 +73,8 @@ Off by default. Nothing is sent anywhere until you add an
   choice of tone, and opens it in the composer for you to check and send.
 - **Tasks** sweeps a whole folder into one prioritised list, each task linking
   back to its email. Tick things off and they stay off. Re-running a sweep only
-  looks at mail it has not seen before, so it does not spend tokens twice.
+  looks at mail it has not seen before, so it does not spend tokens twice. You
+  can print the list for an account, or export it to a Markdown file.
 
 ## Install
 

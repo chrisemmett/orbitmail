@@ -5,7 +5,8 @@ import {
   runSweep,
   completeTask,
   reopenTask,
-  exportTasks
+  exportTasks,
+  printTasks
 } from '../../stores/mailStore'
 
 interface TasksDialogProps {
@@ -177,15 +178,26 @@ export function TasksDialog({ onClose }: TasksDialogProps) {
 
         <div className="modal-actions">
           {(tasks.length > 0 || completed.length > 0) && (
-            <button
-              type="button"
-              className="btn btn-secondary"
-              disabled={sweeping}
-              onClick={() => void exportTasks()}
-              title="Export tasks to a Markdown file"
-            >
-              Export Markdown
-            </button>
+            <>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={sweeping}
+                onClick={() => void printTasks()}
+                title="Print this account's task list"
+              >
+                Print
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={sweeping}
+                onClick={() => void exportTasks()}
+                title="Export tasks to a Markdown file"
+              >
+                Export Markdown
+              </button>
+            </>
           )}
           <span className="modal-actions-spacer" />
           <button type="button" className="btn btn-secondary" onClick={onClose}>
