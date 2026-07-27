@@ -20,7 +20,7 @@ import {
   scheduleSaveUiPreferences
 } from './persistence'
 import { findAccountFolder, findArchiveFolder } from '../utils/folders'
-import { buildTasksMarkdown, defaultTasksFilename } from '../utils/taskExport'
+import { buildTasksMarkdown, buildTasksPrintHtml, defaultTasksFilename } from '../utils/taskExport'
 import { draftToHtml } from '../utils/replyDraft'
 
 export const MESSAGE_PAGE_SIZE = 200
@@ -2402,6 +2402,41 @@ export async function exportTasks(): Promise<void> {
     if (savedPath) store.setToast(`Tasks exported to ${savedPath.split('/').pop()}`)
   } catch (err) {
     store.setToast(err instanceof Error ? err.message : 'Export failed')
+  }
+}
+
+// Resolve a human label for the account whose folder is currently selected, for
+// the print/header. 'unified' (or an unknown folder) has no single account.
+function selectedAccountLabel(): string {
+  const store = useMailStore.getState()
+  if (store.selectedFolderId === 'unified') return 'All accounts'
+  const folder = store.folders.find((f) => f.id === store.selectedFolderId)
+  const account = folder ? store.accounts.find((a) => a.id === folder.accountId) : undefined
+  return account ? account.displayName || account.email : 'All accounts'
+}
+
+// Print the current sweep (open + completed tasks) via the OS print dialog,
+// headed by the selected account. No-op with a toast if there's nothing to print.
+export async function printTasks(): Promise<void> {
+  const store = useMailStore.getState()
+  if (store.sweepTasks.length === 0 && store.sweepCompleted.length === 0) {
+    store.setToast('No tasks to print yet — run a sweep first.')
+    return
+  }
+  const html = buildTasksPrintHtml(
+    {
+      tasks: store.sweepTasks,
+      completed: store.sweepCompleted,
+      scope: store.sweepScope,
+      analyzedCount: store.sweepAnalyzedCount,
+      sweptAt: store.sweepSweptAt
+    },
+    selectedAccountLabel()
+  )
+  try {
+    await window.orbitMail.print.document(html)
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : 'Print failed')
   }
 }
 
