@@ -94,6 +94,15 @@ export function updateTrayUnread(count: number): void {
   lastIconFile = file
 }
 
+/**
+ * Whether a tray icon was actually created (Linux, icon present). Gates
+ * close-to-tray in main: without a tray there is nothing to reopen from, so the
+ * window must quit on close rather than vanish.
+ */
+export function isTrayActive(): boolean {
+  return tray !== null
+}
+
 export function destroyTray(): void {
   tray?.destroy()
   tray = null

@@ -61,6 +61,12 @@ Light and dark mode. Desktop notifications for new mail. Your unread count in th
 window title and on a tray icon. Links open in your browser. It remembers where
 you were — folder, message, window size — between runs.
 
+Closing the window tucks Orbit Mail into the tray and keeps your mail syncing in
+the background — the way most mail clients behave. Quitting for real is a
+deliberate choice: the tray icon's **Quit**, or **File → Quit** (Ctrl+Q). (If
+your desktop doesn't draw a tray icon, launching Orbit Mail again brings the
+hidden window back.)
+
 ### AI, if you want it (optional)
 
 Off by default. Nothing is sent anywhere until you add an
