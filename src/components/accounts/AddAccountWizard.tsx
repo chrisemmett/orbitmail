@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type {
   AutodetectResult,
-  ConnectionSecurity,
   ManualAccountInput,
   OAuthConfigStatus,
   OAuthCredentialKey,
@@ -9,6 +8,7 @@ import type {
 } from '../../../shared/types'
 import { useMailStore, addAccount, addManualAccount } from '../../stores/mailStore'
 import { AppBrand } from '../brand/AppBrand'
+import { ServerFields } from './ServerFields'
 
 type WizardView = 'choose' | 'manual' | 'oauth-credentials'
 
@@ -47,53 +47,6 @@ function applyAutodetect(
     incoming: { ...current.incoming, ...result.settings.incoming },
     outgoing: { ...current.outgoing, ...result.settings.outgoing }
   }
-}
-
-function ServerFields({
-  label,
-  value,
-  onChange
-}: {
-  label: string
-  value: ServerConfig
-  onChange: (next: ServerConfig) => void
-}) {
-  return (
-    <fieldset className="account-fieldset">
-      <legend>{label}</legend>
-      <label className="account-field">
-        <span>Server</span>
-        <input
-          value={value.host}
-          onChange={(e) => onChange({ ...value, host: e.target.value })}
-          placeholder="mail.example.com"
-        />
-      </label>
-      <div className="account-field-row">
-        <label className="account-field">
-          <span>Port</span>
-          <input
-            type="number"
-            value={value.port}
-            onChange={(e) => onChange({ ...value, port: Number(e.target.value) || 0 })}
-          />
-        </label>
-        <label className="account-field">
-          <span>Security</span>
-          <select
-            value={value.security}
-            onChange={(e) =>
-              onChange({ ...value, security: e.target.value as ConnectionSecurity })
-            }
-          >
-            <option value="ssl">SSL/TLS</option>
-            <option value="starttls">STARTTLS</option>
-            <option value="none">None</option>
-          </select>
-        </label>
-      </div>
-    </fieldset>
-  )
 }
 
 function ManualAccountForm({ onBack }: { onBack: () => void }) {

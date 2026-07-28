@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useMailStore, type SettingsCategory } from '../../stores/mailStore'
+import { AccountsPane } from './AccountsPane'
 import { GeneralPane } from './GeneralPane'
 import { PrivacyPane } from './PrivacyPane'
 import { AiPane } from './AiPane'
@@ -82,15 +83,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
             {category === 'general' && <GeneralPane />}
             {category === 'privacy' && <PrivacyPane />}
             {category === 'ai' && <AiPane />}
-            {category === 'accounts' && (
-              <section className="settings-section">
-                <h3>Accounts</h3>
-                <p className="account-hint">
-                  Account settings move here next. For now, use the gear beside an account in the
-                  sidebar to sync or remove it, and right-click a folder for account info.
-                </p>
-              </section>
-            )}
+            {category === 'accounts' && <AccountsPane />}
           </div>
         </div>
 
