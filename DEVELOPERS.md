@@ -124,9 +124,23 @@ MICROSOFT_TENANT_ID=common
 
 ## AI (optional)
 
-The AI features — per-message **Analyze** and the folder **Tasks** sweep — are off unless the user supplies an Anthropic API key. Unlike the OAuth credentials above, this key is **not** read from `.env`: it's entered in-app (✦ toolbar button → AI settings), encrypted with Electron `safeStorage`, and stored in the `app_preferences` table under `ai_api_key`. So there is nothing to configure at build time for AI.
+The AI features — per-message **Analyze**, **Draft reply**, and the folder **Tasks** sweep — are off unless the user supplies an Anthropic API key. Unlike the OAuth credentials above, this key is **not** read from `.env`: it's entered in-app (✦ toolbar button → AI settings), encrypted with Electron `safeStorage`, and stored in the `app_preferences` table under `ai_api_key`. So there is nothing to configure at build time for AI.
 
 `electron/services/ai-service.ts` uses `@anthropic-ai/sdk` with model `claude-opus-4-8` and structured output. Message content is sent to Anthropic only when the user triggers a feature. On **Analyze**, the user can opt to include a message's attachments for extra context (text extracted inline; images and PDFs sent as native content blocks) — the UI prompts first because attachments increase token usage.
+
+**Draft reply** (`ai:draftReply`, `draftReply` in `ai-service.ts`) takes a tone
+(`DraftTone` — brief / neutral / detailed) and a mode (`'reply' | 'reply-all'`),
+grounds the draft in up to `MAX_THREAD_MESSAGES` of the conversation, and returns
+a body the renderer drops into the composer. The mode does two separate jobs and
+both are needed: `compose.open` passes it to `buildReplyPayload`, which fills
+To/Cc (reply-all adds everyone on To/Cc except the user and the sender, via
+`buildReplyAllCc`), *and* the prompt is told who will read the draft — on
+reply-all it also receives the other recipients (fenced, they come from headers)
+so the wording addresses the group rather than one person. `otherRecipients` in
+`ai-service.ts` mirrors `buildReplyAllCc`'s exclusions for that purpose only; it
+does not decide the actual Cc. In the UI the mode is a sticky segmented toggle at
+the top of the "Draft reply ▾" menu (`draftReplyMode` in `mailStore`), so picking
+a tone stays a single click.
 
 **Message content is untrusted input to the model.** Bodies, subjects and `From`
 headers are written by whoever sent the mail, and what comes back is shown as

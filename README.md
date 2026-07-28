@@ -76,7 +76,9 @@ Off by default. Nothing is sent anywhere until you add an
   context — and knows the difference between what you owe someone and what you
   asked of them.
 - **Draft reply** writes an editable reply grounded in the conversation, in your
-  choice of tone, and opens it in the composer for you to check and send.
+  choice of tone, and opens it in the composer for you to check and send. Choose
+  **Reply** or **Reply All** in the same menu — that sets the recipients *and*
+  tells the draft whether it is writing to one person or to the whole thread.
 - **Tasks** sweeps a whole folder into one prioritised list, each task linking
   back to its email. Tick things off and they stay off. Re-running a sweep only
   looks at mail it has not seen before, so it does not spend tokens twice. You
