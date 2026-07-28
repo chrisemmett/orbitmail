@@ -113,6 +113,7 @@ plus the OAuth setup for Gmail and Microsoft, are in **[INSTALL.md](INSTALL.md)*
 |-----|--------|
 | `C` | Compose |
 | `R` | Reply — to the open conversation's latest message, or the selected one |
+| `F` | Forward, the same message `R` would reply to |
 | `/` | Search |
 | `Shift` / `Ctrl` + click | Select a range of rows, or add and remove single ones. Delete, Archive and Move then act on all of them |
 | `Delete` / `Backspace` | Move to Trash (or delete for good, if already in Trash). You land on the next message down |

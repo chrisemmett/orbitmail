@@ -435,6 +435,12 @@ sent; it is how main tells the composer it opened with something missing.
 `exportMessageRawToTemp` writes the whole original `.eml`, attachments included —
 so it deliberately does **not** also carry the parts individually.
 
+`R` (reply) and `F` (forward) in `App.tsx` share one resolution of *which*
+message they act on: the open conversation's latest, falling back to the selected
+message. Conversation view keeps `selectedMessage` null, so without that fallback
+a per-message shortcut does nothing with a conversation open — the same way the
+old toolbar buttons went dead.
+
 The compose window renders its own `<Toast />`. It is a separate `BrowserWindow`,
 so the main window's toast is not on screen there; before that, every message the
 composer raised — "Please enter a recipient", a failed send, the forward notice
