@@ -6,7 +6,7 @@ import { MessageList } from './components/list/MessageList'
 import { MessageListHeader } from './components/list/MessageListHeader'
 import { MessageView } from './components/reader/MessageView'
 import { AddAccountWizard } from './components/accounts/AddAccountWizard'
-import { AiSettingsDialog } from './components/settings/AiSettingsDialog'
+import { SettingsDialog } from './components/settings/SettingsDialog'
 import { TasksDialog } from './components/tasks/TasksDialog'
 import {
   useMailStore,
@@ -17,7 +17,8 @@ import {
   saveUiPreferencesNow,
   deleteSelectedMessages,
   deleteThread,
-  deleteSelectedThreads
+  deleteSelectedThreads,
+  openSettings
 } from './stores/mailStore'
 import { SecureStorageBanner } from './components/SecureStorageBanner'
 import { exposeFlushHook } from './stores/persistence'
@@ -100,8 +101,8 @@ function MainApp() {
   const setSyncStatus = useMailStore((s) => s.setSyncStatus)
   const setIsOnline = useMailStore((s) => s.setIsOnline)
   const setShowAddAccount = useMailStore((s) => s.setShowAddAccount)
-  const showAiSettings = useMailStore((s) => s.showAiSettings)
-  const setShowAiSettings = useMailStore((s) => s.setShowAiSettings)
+  const showSettings = useMailStore((s) => s.showSettings)
+  const setShowSettings = useMailStore((s) => s.setShowSettings)
   const showTasks = useMailStore((s) => s.showTasks)
   const setShowTasks = useMailStore((s) => s.setShowTasks)
 
@@ -165,6 +166,21 @@ function MainApp() {
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return
 
       const store = useMailStore.getState()
+
+      // Ctrl/Cmd+, opens Settings, and is the one shortcut that works with a
+      // dialog already open — it is how you get to Settings from anywhere.
+      if (e.key === ',' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault()
+        openSettings()
+        return
+      }
+
+      // Nothing else fires behind an open dialog. The bail used to be the
+      // INPUT/TEXTAREA check alone, which is fine for a form but not for a
+      // dialog made of buttons: with Settings open and a tab focused, `f`
+      // opened a Forward window behind it and Delete deleted the mail still
+      // selected in the list underneath.
+      if (store.showSettings || store.showAddAccount || store.showTasks) return
 
       if (e.key === 'c' && !e.metaKey && !e.ctrlKey) {
         const accountId = store.accounts[0]?.id
@@ -254,9 +270,7 @@ function MainApp() {
       />
       <StatusBar />
       <AddAccountWizard />
-      {showAiSettings && (
-        <AiSettingsDialog onClose={() => setShowAiSettings(false)} />
-      )}
+      {showSettings && <SettingsDialog onClose={() => setShowSettings(false)} />}
       {showTasks && <TasksDialog onClose={() => setShowTasks(false)} />}
       <Toast />
     </div>

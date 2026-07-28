@@ -13,6 +13,7 @@ import type {
   SearchField,
   AttachmentDraft,
   OAuthCredentialKey,
+  PlatformCapabilities,
   Provider
 } from '../shared/types'
 import { configureLinuxDesktopIntegration, getAppIconPath } from './app-icon'
@@ -371,6 +372,11 @@ function senderName(from: string): string {
 }
 
 function showNewMailNotification(count: number): void {
+  // Both callers (the poll's onNewMailArrived and the IDLE push handler) route
+  // through here, so one guard covers both. Deliberately not gated further up
+  // in the sync layer: the unread badge and the tray count must keep updating
+  // whether or not the user wants to be interrupted about it.
+  if (getAppState().desktopNotifications === false) return
   if (!Notification.isSupported()) return
   if (Date.now() - lastNotificationAt < 5000) return
   lastNotificationAt = Date.now()
@@ -481,7 +487,11 @@ function createMainWindow(): void {
     // both route through before-quit, which sets isQuitting so this lets the
     // window close. Only when a tray actually exists to reopen from (Linux with
     // the icon installed); everywhere else close quits as before.
-    if (!isQuitting && isTrayActive()) {
+    // Read at close time rather than captured when the window was made, so the
+    // setting applies without a restart. `!== false` and not `=== true`: an
+    // install predating the key has it absent, and absent must keep today's
+    // behaviour.
+    if (!isQuitting && isTrayActive() && getAppState().closeToTray !== false) {
       event.preventDefault()
       mainWindow.hide()
     }
@@ -1106,8 +1116,21 @@ function registerIpc(): void {
   ipcMain.handle('preferences:setHandleMailtoLinks', (_, enabled: boolean) => {
     patchAppState({ handleMailtoLinks: enabled })
     configureMailtoProtocolClient(enabled)
-    return enabled
+    // Report what the OS actually thinks, not what we asked for. On Linux the
+    // registration is an xdg association keyed on an installed .desktop file,
+    // so it silently no-ops in `npm run dev` — echoing `enabled` would show a
+    // switch as on while mailto: links still open somewhere else.
+    return app.isDefaultProtocolClient('mailto')
   })
+
+  ipcMain.handle(
+    'app:getPlatformCapabilities',
+    (): PlatformCapabilities => ({
+      trayActive: isTrayActive(),
+      notificationsSupported: Notification.isSupported(),
+      mailtoHandlerActive: app.isDefaultProtocolClient('mailto')
+    })
+  )
 
   ipcMain.handle('preferences:muteSender', (_, email: string) => {
     muteSender(email)

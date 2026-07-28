@@ -115,7 +115,8 @@ const api: OrbitMailAPI = {
       ipcRenderer.on('app:unexpectedError', handler)
       return () => ipcRenderer.removeListener('app:unexpectedError', handler)
     },
-    getSecureStorageStatus: () => ipcRenderer.invoke('app:getSecureStorageStatus')
+    getSecureStorageStatus: () => ipcRenderer.invoke('app:getSecureStorageStatus'),
+    getPlatformCapabilities: () => ipcRenderer.invoke('app:getPlatformCapabilities')
   },
   attachments: {
     download: (attachmentId) => ipcRenderer.invoke('attachments:download', attachmentId),

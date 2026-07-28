@@ -32,6 +32,27 @@ export function RemoteContentBar({
   )
 }
 
+/**
+ * Whether one message's remote content stays blocked.
+ *
+ * Pulled out of the hook below so it can be tested without a GUI — this decides
+ * whether a tracking pixel fires, which is not a thing to leave only to a manual
+ * click-through. The order reads as the escape hatches in order of scope: the
+ * global setting, then this sender, then this message.
+ */
+export function isRemoteContentBlocked(input: {
+  alwaysLoad: boolean
+  allowed: string[]
+  senderEmail: string
+  loadedThisSession: boolean
+  hasRemote: boolean
+}): boolean {
+  if (!input.hasRemote) return false
+  if (input.alwaysLoad) return false
+  if (input.allowed.includes(input.senderEmail)) return false
+  return !input.loadedThisSession
+}
+
 // Blocking state for one message's remote images. `blocked` drives both the
 // sanitize option and whether the bar shows. Blocking lifts when the sender is
 // on the allowlist, or the user loaded this message once this session.
@@ -41,10 +62,16 @@ export function useRemoteImageBlocking(
   bodyHtml: string | null | undefined
 ): { blocked: boolean; senderEmail: string; loadOnce: () => void; alwaysAllow: () => void } {
   const allowed = useMailStore((s) => s.imageAllowedSenders)
+  const alwaysLoad = useMailStore((s) => s.alwaysLoadRemoteImages)
   const [loadedIds, setLoadedIds] = useState<ReadonlySet<string>>(() => new Set())
   const senderEmail = extractSenderEmail(from).toLowerCase()
-  const blocked =
-    !allowed.includes(senderEmail) && !loadedIds.has(messageId) && hasRemoteContent(bodyHtml)
+  const blocked = isRemoteContentBlocked({
+    alwaysLoad,
+    allowed,
+    senderEmail,
+    loadedThisSession: loadedIds.has(messageId),
+    hasRemote: hasRemoteContent(bodyHtml)
+  })
   return {
     blocked,
     senderEmail,

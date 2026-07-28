@@ -1225,6 +1225,93 @@ async function main(): Promise<void> {
     ok('a UI save does not lose the sender lists',
       prefs.getAppState().mutedSenders?.includes('victim@example.com'),
       prefs.getAppState().mutedSenders?.join(', '))
+
+    // Global settings toggles. `??` and not `||` in the patch merge: these are
+    // booleans whose falsy value is a real setting, and `false || true` is true
+    // — with `||` none of them could ever be turned off.
+    prefs.patchAppState({ closeToTray: false })
+    ok('a global setting can actually be turned off',
+      prefs.getAppState().closeToTray === false,
+      String(prefs.getAppState().closeToTray))
+    ok('and turning one off does not disturb the others',
+      prefs.getAppState().desktopNotifications === true &&
+        prefs.getAppState().mutedSenders?.includes('victim@example.com') &&
+        prefs.getAppState().ui.selectedMessageId === 'msg-2')
+    prefs.patchAppState({ closeToTray: true })
+
+    // An emptied list must stay empty for the same reason.
+    const savedMuted = prefs.getAppState().mutedSenders ?? []
+    prefs.patchAppState({ mutedSenders: [] })
+    ok('an emptied sender list stays empty rather than springing back',
+      (prefs.getAppState().mutedSenders ?? []).length === 0,
+      prefs.getAppState().mutedSenders?.join(', '))
+    prefs.patchAppState({ mutedSenders: savedMuted })
+  }
+
+  // -------------------------------------------------------------------------
+  section('Preferences: an install predating a setting keeps its old behaviour')
+  // -------------------------------------------------------------------------
+  {
+    // The defaults are not cosmetic — they are the upgrade path. Every existing
+    // install has an app_state blob written before these keys existed, and each
+    // default has to equal what the app already did, or upgrading silently
+    // changes behaviour nobody asked to change.
+    const { getRawSqlite } = await import('../electron/db')
+    const prefs = await import('../electron/services/preferences-service')
+    const raw = getRawSqlite()
+
+    const saved = raw
+      .prepare("SELECT value FROM app_preferences WHERE key = 'app_state'")
+      .get() as { value: string } | undefined
+
+    // A blob as an older build wrote it: real settings, none of the new keys.
+    raw
+      .prepare(
+        `INSERT INTO app_preferences (key, value) VALUES ('app_state', ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+      )
+      .run(
+        JSON.stringify({
+          ui: { darkMode: true, threadedView: false, searchField: 'from' },
+          lastSyncAt: 1700000000000,
+          mutedSenders: ['old@example.com']
+        })
+      )
+    prefs.resetPreferencesCacheForTests()
+
+    const migrated = prefs.getAppState()
+    ok('closing the window still minimises to the tray', migrated.closeToTray === true,
+      String(migrated.closeToTray))
+    ok('notifications are still on', migrated.desktopNotifications === true,
+      String(migrated.desktopNotifications))
+    ok('remote images are still blocked — the private default is the absent one',
+      migrated.alwaysLoadRemoteImages === false,
+      String(migrated.alwaysLoadRemoteImages))
+    ok('and the settings that were already there survive untouched',
+      migrated.ui.darkMode === true &&
+        migrated.ui.threadedView === false &&
+        migrated.ui.searchField === 'from' &&
+        migrated.lastSyncAt === 1700000000000 &&
+        migrated.mutedSenders?.includes('old@example.com'),
+      JSON.stringify({ ui: migrated.ui, muted: migrated.mutedSenders }))
+
+    // A key absent from the blob must not be dropped by the next patch of an
+    // unrelated key — that is the failure patchAppState's explicit per-key
+    // merge lines exist to prevent.
+    prefs.patchAppState({ lastSyncAt: 1 })
+    ok('a patch of something else does not drop the defaults',
+      prefs.getAppState().closeToTray === true &&
+        prefs.getAppState().desktopNotifications === true,
+      JSON.stringify(prefs.getAppState()))
+
+    if (saved) {
+      raw
+        .prepare("UPDATE app_preferences SET value = ? WHERE key = 'app_state'")
+        .run(saved.value)
+    } else {
+      raw.prepare("DELETE FROM app_preferences WHERE key = 'app_state'").run()
+    }
+    prefs.resetPreferencesCacheForTests()
   }
 
   // -------------------------------------------------------------------------

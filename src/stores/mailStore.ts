@@ -13,7 +13,8 @@ import type {
   CompletedTask,
   SweepScope,
   SearchField,
-  DraftTone
+  DraftTone,
+  PlatformCapabilities
 } from '../../shared/types'
 import {
   loadPersistedPreferences,
@@ -24,6 +25,21 @@ import { buildTasksMarkdown, buildTasksPrintHtml, defaultTasksFilename } from '.
 import { draftToHtml } from '../utils/replyDraft'
 
 export const MESSAGE_PAGE_SIZE = 200
+
+export type SettingsCategory = 'general' | 'accounts' | 'privacy' | 'ai'
+
+/**
+ * The global on/off preferences Settings can change. Narrowed to a key union on
+ * purpose: the renderer must only ever send the keys it changed. A whole-blob
+ * `preferences.save(state)` would race the debounced UI-preference write and
+ * clobber whichever landed first.
+ */
+export interface GlobalPreferences {
+  closeToTray: boolean
+  desktopNotifications: boolean
+  alwaysLoadRemoteImages: boolean
+  handleMailtoLinks: boolean
+}
 
 interface MailState {
   accounts: Account[]
@@ -78,6 +94,17 @@ interface MailState {
   favoriteFolderIds: string[]
   // Senders whose remote images load without the block prompt (persisted).
   imageAllowedSenders: string[]
+  // Global preferences the user can change in Settings (persisted in the
+  // app_state blob). These live in the store rather than in the dialog because
+  // they are read outside it — alwaysLoadRemoteImages by the reader on every
+  // message, and the tray/notification pair by the settings UI itself.
+  closeToTray: boolean
+  desktopNotifications: boolean
+  alwaysLoadRemoteImages: boolean
+  handleMailtoLinks: boolean
+  // What this desktop can actually do; null until asked. Settings disables a
+  // control rather than offering one that would do nothing.
+  platformCapabilities: PlatformCapabilities | null
   // Conversation grouping on/off (persisted). When off, the list is flat.
   threadedView: boolean
   // Per-account "unread only" list filter (persisted). Keyed by account id, plus
@@ -94,7 +121,11 @@ interface MailState {
   // reply-all-heavy conversation doesn't mean re-picking it every time.
   draftReplyMode: 'reply' | 'reply-all'
   flaggingTaskId: string | null
-  showAiSettings: boolean
+  showSettings: boolean
+  settingsCategory: SettingsCategory
+  // Set when Settings is opened aimed at one account, so the Accounts pane can
+  // select it. Cleared when the dialog closes.
+  settingsAccountId: string | null
   showTasks: boolean
   sweeping: boolean
   sweepTasks: SweepTask[]
@@ -150,7 +181,10 @@ interface MailState {
   setDraftingReplyId: (id: string | null) => void
   setDraftReplyMode: (mode: 'reply' | 'reply-all') => void
   setFlaggingTaskId: (id: string | null) => void
-  setShowAiSettings: (show: boolean) => void
+  setShowSettings: (show: boolean) => void
+  setSettingsCategory: (category: SettingsCategory) => void
+  setGlobalPreferences: (patch: Partial<GlobalPreferences>) => void
+  setPlatformCapabilities: (capabilities: PlatformCapabilities) => void
   setShowTasks: (show: boolean) => void
   setSweeping: (sweeping: boolean) => void
   setSweepResult: (
@@ -206,7 +240,14 @@ export const useMailStore = create<MailState>((set) => ({
   draftingReplyId: null,
   draftReplyMode: 'reply',
   flaggingTaskId: null,
-  showAiSettings: false,
+  showSettings: false,
+  settingsCategory: 'general',
+  settingsAccountId: null,
+  closeToTray: true,
+  desktopNotifications: true,
+  alwaysLoadRemoteImages: false,
+  handleMailtoLinks: false,
+  platformCapabilities: null,
   showTasks: false,
   sweeping: false,
   sweepTasks: [],
@@ -258,7 +299,11 @@ export const useMailStore = create<MailState>((set) => ({
   setDraftingReplyId: (id) => set({ draftingReplyId: id }),
   setDraftReplyMode: (mode) => set({ draftReplyMode: mode }),
   setFlaggingTaskId: (id) => set({ flaggingTaskId: id }),
-  setShowAiSettings: (show) => set({ showAiSettings: show }),
+  setShowSettings: (show) =>
+    set(show ? { showSettings: true } : { showSettings: false, settingsAccountId: null }),
+  setSettingsCategory: (category) => set({ settingsCategory: category }),
+  setGlobalPreferences: (patch) => set(patch),
+  setPlatformCapabilities: (capabilities) => set({ platformCapabilities: capabilities }),
   setShowTasks: (show) => set({ showTasks: show }),
   setSweeping: (sweeping) => set({ sweeping }),
   setSweepResult: (tasks, completed, analyzedCount, sweptAt) =>
@@ -2260,7 +2305,7 @@ export async function analyzeMessage(
     if ('error' in result) {
       store.setToast(result.error)
       const status = await window.orbitMail.ai.getStatus()
-      if (!status.configured) store.setShowAiSettings(true)
+      if (!status.configured) openSettings('ai')
       return
     }
     store.setAiAnalysis(messageId, result)
@@ -2300,7 +2345,7 @@ export async function draftReply(
     if ('error' in result) {
       store.setToast(result.error)
       const status = await window.orbitMail.ai.getStatus()
-      if (!status.configured) store.setShowAiSettings(true)
+      if (!status.configured) openSettings('ai')
       return
     }
     await window.orbitMail.compose.open({
@@ -2314,6 +2359,68 @@ export async function draftReply(
     store.setToast(err instanceof Error ? err.message : 'Could not draft a reply')
   } finally {
     store.setDraftingReplyId(null)
+  }
+}
+
+// Open Settings, optionally on a category and aimed at one account. Every entry
+// point goes through here — the toolbar gear, Ctrl+, the sidebar's account menu,
+// and the AI features when they find no API key — so there is one place that
+// decides what "open settings" means.
+export function openSettings(
+  category: SettingsCategory = 'general',
+  accountId?: string
+): void {
+  useMailStore.setState({
+    showSettings: true,
+    settingsCategory: category,
+    settingsAccountId: accountId ?? null
+  })
+  // Ask the main process what this desktop supports the first time Settings is
+  // opened, so a toggle for a tray that does not exist can be disabled rather
+  // than lying. Failure is not fatal — the panes fall back to enabled.
+  if (!useMailStore.getState().platformCapabilities) {
+    void window.orbitMail.app
+      .getPlatformCapabilities()
+      .then((capabilities) => useMailStore.getState().setPlatformCapabilities(capabilities))
+      .catch(() => {})
+  }
+}
+
+/**
+ * Change one global preference, optimistically, rolling back if the write
+ * fails — the same contract as the message actions.
+ *
+ * Only the changed key is sent. The UI-preference save is debounced and reads
+ * the whole blob, so posting a full state from here would race it.
+ */
+export async function setGlobalPreference<K extends keyof GlobalPreferences>(
+  key: K,
+  value: GlobalPreferences[K]
+): Promise<void> {
+  const store = useMailStore.getState()
+  const previous = store[key]
+  if (previous === value) return
+  store.setGlobalPreferences({ [key]: value } as Partial<GlobalPreferences>)
+  try {
+    if (key === 'handleMailtoLinks') {
+      // This one has a side effect beyond persistence, and the OS gets the last
+      // word: on Linux the association needs an installed .desktop file, so the
+      // handler reports what actually took effect rather than what we asked.
+      const actual = await window.orbitMail.preferences.setHandleMailtoLinks(value as boolean)
+      store.setGlobalPreferences({ handleMailtoLinks: actual })
+      if (actual !== value) {
+        store.setToast(
+          value
+            ? 'Could not register Orbit Mail as the mail handler — this usually needs an installed copy, not a dev build.'
+            : 'Could not release the mail handler registration.'
+        )
+      }
+      return
+    }
+    await window.orbitMail.preferences.save({ [key]: value })
+  } catch (err) {
+    store.setGlobalPreferences({ [key]: previous } as Partial<GlobalPreferences>)
+    store.setToast(err instanceof Error ? err.message : 'Could not save that setting')
   }
 }
 
@@ -2346,7 +2453,7 @@ export async function runSweep(scope?: SweepScope): Promise<void> {
     if ('error' in result) {
       store.setToast(result.error)
       const status = await window.orbitMail.ai.getStatus()
-      if (!status.configured) store.setShowAiSettings(true)
+      if (!status.configured) openSettings('ai')
       return
     }
     store.setSweepResult(result.tasks, result.completed, result.analyzedCount, result.sweptAt)
@@ -2376,7 +2483,7 @@ export async function flagMessageAsTask(messageId: string): Promise<void> {
     if ('error' in result) {
       store.setToast(result.error)
       const status = await window.orbitMail.ai.getStatus()
-      if (!status.configured) store.setShowAiSettings(true)
+      if (!status.configured) openSettings('ai')
       return
     }
     store.setSweepResult(result.tasks, result.completed, result.analyzedCount, result.sweptAt)

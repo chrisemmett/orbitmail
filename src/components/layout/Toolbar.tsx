@@ -9,7 +9,8 @@ import {
   markMessageUnread,
   toggleMessageStar,
   runSearch,
-  clearSearch
+  clearSearch,
+  openSettings
 } from '../../stores/mailStore'
 import { useThemeStore } from '../../stores/themeStore'
 import { AppBrand } from '../brand/AppBrand'
@@ -22,6 +23,7 @@ import {
   ArrowsClockwise,
   MagnifyingGlass,
   Star,
+  GearSix,
   Envelope,
   XCircle,
   CaretRight
@@ -315,6 +317,14 @@ export function Toolbar() {
       </div>
 
       <div className="toolbar-spacer" />
+
+      <button
+        className="toolbar-btn"
+        title="Settings (Ctrl+,)"
+        onClick={() => openSettings()}
+      >
+        <GearSix {...iconProps} />
+      </button>
 
       <ThemeToggle />
 
