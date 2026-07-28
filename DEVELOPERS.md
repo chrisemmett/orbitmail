@@ -414,6 +414,32 @@ before this column existed has no `server_uid`, so a server-side delete of it
   matching (`mail` matches `gmail`) rather than breaking it the way a word-token FTS
   would. Not done here — it re-adds FTS machinery and wants its own justification.
 
+### Forwarding
+
+`buildReplyPayload` (`smtp-send.ts`) produces only the *body* of a forward — the
+`---------- Forwarded message ----------` header block plus the original
+content, as collapsible quoted text, with a `Fwd:` subject and no recipient.
+The original's **attachments are collected separately**, by
+`localizeMessageAttachments` (`attachment-fetch.ts`) in `prepareComposePayload`,
+which downloads any part not already cached and hands main the paths to approve.
+Without that step a forward went out with the quoted text still saying "see
+attached" and nothing attached — and neither sender nor recipient got a signal.
+
+A part that cannot be fetched (message expunged server-side, connection down)
+does not sink the forward: the reachable attachments are carried and the failures
+are **named** back to the user through `ComposePayload.notice`, which the
+composer raises as a toast on open. `notice` is not part of the message being
+sent; it is how main tells the composer it opened with something missing.
+
+`forward-attachment` (Message → *Forward as Attachment*) takes the other route —
+`exportMessageRawToTemp` writes the whole original `.eml`, attachments included —
+so it deliberately does **not** also carry the parts individually.
+
+The compose window renders its own `<Toast />`. It is a separate `BrowserWindow`,
+so the main window's toast is not on screen there; before that, every message the
+composer raised — "Please enter a recipient", a failed send, the forward notice
+above — was written to the store and never shown to anyone.
+
 ### Contacts (compose autocomplete)
 
 There is no address book, no contacts UI, and nothing synced from a server. The
@@ -783,6 +809,7 @@ reimplementing them, so it exercises the shipping code paths:
 | Attachment allowlist | Only files approved in this compose session can be attached: an unapproved path in the list refuses the whole send, the refusal names the offending file, equivalent path spellings (`/tmp/./x`) do not decide approval, `sendMail` refuses before touching credentials or a transport, and closing compose withdraws approval. |
 | Account identity | Re-adding an address with the *same* provider updates the row in place (re-authentication, password changes) and stores the new credentials; re-adding it with a *different* provider is refused, naming both providers, and leaves the existing account and its OAuth refresh token untouched. Other addresses are unaffected. |
 | Account removal | Deleting an account removes its AI Tasks (per-folder, and unified-inbox tasks tied to its messages) as well as its mail — `sweep_tasks` has no foreign key, so the cascade misses them — while another account's tasks survive. |
+| Forward | A forward is `Fwd:`-prefixed with no recipient pre-filled and keeps the original as *quoted* text (not in the editable body), and the original's attachments come with it as real files rather than placeholders. An attachment that cannot be fetched is reported by name instead of being silently dropped, and the reachable ones still go. `forward-attachment` keeps the original whole rather than quoting it. |
 | Contacts | Autocomplete addresses are collected with the right polarity — an incoming sender (and anyone cc'd alongside the user) counts as *seen*, a recipient of the user's own mail as *written to*, and the user's own address is never collected. Re-syncing the same message does not inflate the counts. Someone written to once outranks a stranger seen twelve times, while the stranger is still offered lower down; a display name is searchable and a match at the start beats one buried mid-string; a bare address does not erase a known display name; a `LIKE` wildcard in the query matches literally. Suggestions are per-account (another account's contact is not offered, and is offered for its own), removing an account deletes what it collected, and the backfill spans several batches, is a no-op once drained, and does not double-count on a re-run. |
 | Task-orphan cleanup | The one-time migration for tasks left by pre-fix deletions removes a per-folder orphan (folder gone), leaves a unified task whose source message is merely missing (could be a valid todo that aged out of the cache), and is idempotent. |
 | DB maintenance | The freelist reclaim fires only above the 25% / 20MB threshold and not on a small or freshly compacted database; the real `VACUUM` path shrinks the file and zeroes the freelist. |

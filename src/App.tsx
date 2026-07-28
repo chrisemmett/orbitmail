@@ -259,9 +259,14 @@ export default function App() {
   const isCompose = window.location.hash === '#/compose'
 
   if (isCompose) {
+    // The compose window needs its own Toast: it is a separate BrowserWindow, so
+    // the main window's one is not on screen here. Without it every message this
+    // window raises — "Please enter a recipient", a failed send, a forward that
+    // could not fetch an attachment — was set into the store and never shown.
     return (
       <div className="app-shell" style={{ height: '100%' }}>
         <ComposeWindow />
+        <Toast />
       </div>
     )
   }

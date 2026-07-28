@@ -89,8 +89,12 @@ export function ComposeWindow() {
       } else {
         setAttachments([])
       }
+      // Main opened the composer with something missing — most often a forward
+      // whose attachment could not be downloaded.
+      if (initial.notice) setToast(initial.notice)
     })
     return unsub
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accounts])
 
   if (!payload) {

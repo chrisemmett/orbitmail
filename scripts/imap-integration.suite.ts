@@ -2257,6 +2257,112 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Forward: the original’s attachments go with it')
+  // -------------------------------------------------------------------------
+  {
+    // A forward whose attachments are left behind is worse than a failed one:
+    // the quoted text still says "see attached", the recipient sees nothing, and
+    // the sender has no signal at all. buildReplyPayload only produces the
+    // quoted body, so the attachments are collected separately.
+    const { localizeMessageAttachments } = await import('../electron/services/attachment-fetch')
+    const { buildReplyPayload } = await import('../electron/services/smtp-send')
+    const { readFileSync } = await import('fs')
+    const { getRawSqlite } = await import('../electron/db')
+    const raw = getRawSqlite()
+
+    const client = rawClient()
+    await client.connect()
+    const box = 'FwdAttach'
+    await client.mailboxCreate(box).catch(() => {})
+    const folder = db.upsertFolder(account.id, box, box, 'custom')
+
+    const boundary = 'orbitfwdboundary'
+    const filePart = (name: string, body: string) =>
+      [
+        `--${boundary}`,
+        `Content-Type: application/octet-stream; name="${name}"`,
+        `Content-Disposition: attachment; filename="${name}"`,
+        '',
+        body,
+        ''
+      ].join('\r\n')
+
+    await client.append(
+      box,
+      Buffer.from(
+        [
+          'From: Roger Joyce <roger@example.com>',
+          `To: Me <${EMAIL}>`,
+          'Subject: Rising sun and rotary',
+          'Message-ID: <fwd-attach@example.com>',
+          `Date: ${new Date().toUTCString()}`,
+          `Content-Type: multipart/mixed; boundary="${boundary}"`,
+          '',
+          `--${boundary}`,
+          'Content-Type: text/plain; charset=utf-8',
+          '',
+          'Minutes and the agenda are attached.',
+          '',
+          filePart('minutes.pdf', 'MINUTES-CONTENT'),
+          filePart('agenda.pdf', 'AGENDA-CONTENT'),
+          `--${boundary}--`,
+          ''
+        ].join('\r\n')
+      ),
+      ['\\Seen']
+    )
+    await sync.syncFolder(client, account.id, folder.id, box)
+
+    const msg = db.listMessages(folder.id, 10, 0).find((m) => m.subject === 'Rising sun and rotary')
+    ok('the message with attachments synced', !!msg, msg?.subject ?? 'missing')
+
+    const payload = buildReplyPayload(msg!.id, account.id, 'forward')
+    ok('a forward is subject-prefixed and has no recipient pre-filled',
+      payload.subject === 'Fwd: Rising sun and rotary' && !payload.to,
+      `${payload.subject} / to=${JSON.stringify(payload.to)}`)
+    ok('the forwarded original is quoted, not dropped into the editable body',
+      (payload.quotedText ?? '').includes('Forwarded message') && payload.bodyText === '',
+      (payload.quotedText ?? '').split('\n')[0])
+
+    const collected = await localizeMessageAttachments(msg!.id)
+    ok('both of the original’s attachments come with the forward',
+      collected.paths.length === 2 && collected.failed.length === 0,
+      `paths=${collected.paths.length} failed=${collected.failed.join(',')}`)
+    ok('and they are the real files, not empty placeholders',
+      collected.paths.some((p) => readFileSync(p, 'utf8').includes('MINUTES-CONTENT')) &&
+        collected.paths.some((p) => readFileSync(p, 'utf8').includes('AGENDA-CONTENT')))
+
+    // A part that cannot be fetched (message expunged server-side, connection
+    // down) must not sink the whole forward — but it must be *named*, because
+    // silently sending a short attachment list is the bug being fixed.
+    const orphan = db.upsertMessage({
+      folderId: folder.id, accountId: account.id, uid: 999_123,
+      from: 'ghost@example.com', to: `Me <${EMAIL}>`, subject: 'Gone from the server',
+      snippet: '', date: 9000, isRead: true, isStarred: false, hasAttachments: true
+    })
+    raw
+      .prepare(
+        `INSERT INTO attachments (id, message_id, filename, mime_type, size, local_path)
+         VALUES ('fwd-missing', ?, 'ghost.pdf', 'application/pdf', 42, NULL)`
+      )
+      .run(orphan.id)
+    const partial = await localizeMessageAttachments(orphan.id)
+    ok('an unfetchable attachment is reported rather than silently dropped',
+      partial.failed.includes('ghost.pdf') && partial.paths.length === 0,
+      `paths=${partial.paths.length} failed=${partial.failed.join(',')}`)
+
+    // forward-as-attachment takes a different route (the whole .eml), so it must
+    // not also carry the parts individually.
+    const asAttachment = buildReplyPayload(msg!.id, account.id, 'forward-attachment')
+    ok('forward-as-attachment keeps the original whole instead of quoting it',
+      !asAttachment.quotedText && asAttachment.subject === 'Fwd: Rising sun and rotary',
+      JSON.stringify(asAttachment.quotedText ?? null))
+
+    raw.prepare('DELETE FROM messages WHERE id = ?').run(orphan.id)
+    await client.logout()
+  }
+
+  // -------------------------------------------------------------------------
   section('Attachments: metadata reduction preserves fields and drops the buffer')
   // -------------------------------------------------------------------------
   {

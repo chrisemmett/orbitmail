@@ -17,9 +17,6 @@ import { resolveSearchAccountId, searchAccountLabel } from '../../utils/search'
 import {
   iconProps,
   PencilLine,
-  ArrowBendUpLeft,
-  ArrowBendDoubleUpLeft,
-  ArrowBendUpRight,
   Trash,
   Archive,
   ArrowsClockwise,
@@ -151,32 +148,12 @@ export function Toolbar() {
     window.orbitMail.compose.open({ accountId })
   }
 
-  const handleReply = () => {
-    if (!selectedMessage) return
-    window.orbitMail.compose.open({
-      accountId: selectedMessage.accountId,
-      mode: 'reply',
-      originalMessageId: selectedMessage.id
-    })
-  }
-
-  const handleReplyAll = () => {
-    if (!selectedMessage) return
-    window.orbitMail.compose.open({
-      accountId: selectedMessage.accountId,
-      mode: 'reply-all',
-      originalMessageId: selectedMessage.id
-    })
-  }
-
-  const handleForward = () => {
-    if (!selectedMessage) return
-    window.orbitMail.compose.open({
-      accountId: selectedMessage.accountId,
-      mode: 'forward',
-      originalMessageId: selectedMessage.id
-    })
-  }
+  // Reply / Reply All / Forward used to live here too. They act on one message,
+  // so they belong on the message — the reader header carries all three, as do
+  // the Message menu and right-click. Here they were also dead half the time:
+  // opening a conversation nulls `selectedMessage`, which left them greyed out
+  // with a conversation open in front of you. The toolbar is for what acts on
+  // the list or the app.
 
   // Conversation view keeps selectedMessageId null, so both of these took the
   // thread branch or did nothing at all before.
@@ -292,30 +269,6 @@ export function Toolbar() {
       <div className="toolbar-divider" />
 
       <div className="toolbar-group">
-        <button
-          className="toolbar-btn"
-          title="Reply (R)"
-          onClick={handleReply}
-          disabled={!selectedMessage}
-        >
-          <ArrowBendUpLeft {...iconProps} />
-        </button>
-        <button
-          className="toolbar-btn"
-          title="Reply All"
-          onClick={handleReplyAll}
-          disabled={!selectedMessage}
-        >
-          <ArrowBendDoubleUpLeft {...iconProps} />
-        </button>
-        <button
-          className="toolbar-btn"
-          title="Forward"
-          onClick={handleForward}
-          disabled={!selectedMessage}
-        >
-          <ArrowBendUpRight {...iconProps} />
-        </button>
         <button
           className="toolbar-btn"
           title="Delete"

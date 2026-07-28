@@ -145,6 +145,12 @@ export interface ComposePayload {
   attachmentPaths?: string[]
   mode?: 'new' | 'reply' | 'reply-all' | 'forward' | 'forward-attachment' | 'redirect' | 'send-again'
   originalMessageId?: string
+  /**
+   * A message for the user shown once when the composer opens — used when main
+   * had to open it with something missing, e.g. a forward whose attachment
+   * could not be downloaded. Not part of the message being sent.
+   */
+  notice?: string
 }
 
 // A pending attachment in the composer: absolute path plus display metadata.
