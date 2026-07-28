@@ -28,6 +28,7 @@ import { DEFAULT_SYNC_DAYS, getSyncCutoffTimestamp } from './sync-policy'
 import { buildLikePattern, messageSearchableBody } from './search-index'
 import { normalizeSubject } from './thread-util'
 import { collectDisplayNames, extractName } from '../../shared/addresses'
+import { harvestContacts } from './contacts'
 
 export type { TokenData, ManualAccountCredentials, AccountCredentials }
 
@@ -340,8 +341,11 @@ export function removeAccount(accountId: string): void {
     )
     .run(accountId, accountId)
 
+  // contacts have a foreign key, so the cascade below clears them with the
+  // account — nothing collected from this mailbox outlives it.
   const db = getDb()
   db.delete(accounts).where(eq(accounts.id, accountId)).run()
+  accountEmailCache.delete(accountId)
 }
 
 export function upsertFolder(
@@ -1543,7 +1547,47 @@ export function upsertMessage(data: UpsertMessageData): { id: string; isNew: boo
     }).run()
   }
 
+  // Collect the participants for compose autocomplete — new messages only, so
+  // re-syncing a folder (which re-upserts every row) doesn't inflate the counts
+  // that decide ranking. Never let this fail a sync: a malformed header is not
+  // a reason to lose the message.
+  if (isNew) {
+    try {
+      const accountEmail = getAccountEmailCached(data.accountId)
+      if (accountEmail) {
+        harvestContacts({
+          accountId: data.accountId,
+          accountEmail,
+          from: data.from,
+          to: data.to,
+          cc: data.cc,
+          date: data.date
+        })
+      }
+    } catch (err) {
+      console.warn('[orbit-mail] contact harvest failed:', err)
+    }
+  }
+
   return { id, isNew }
+}
+
+// Account addresses, memoized — harvest needs one per message and they never
+// change for an existing account. A miss falls through to the DB, so an account
+// added after the cache warmed is still found.
+const accountEmailCache = new Map<string, string>()
+
+function getAccountEmailCached(accountId: string): string | null {
+  const cached = accountEmailCache.get(accountId)
+  if (cached !== undefined) return cached
+  const row = getDb()
+    .select({ email: accounts.email })
+    .from(accounts)
+    .where(eq(accounts.id, accountId))
+    .get()
+  if (!row) return null
+  accountEmailCache.set(accountId, row.email)
+  return row.email
 }
 
 // Upsert a batch of messages in a single transaction. Each message otherwise

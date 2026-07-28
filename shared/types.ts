@@ -213,6 +213,17 @@ export interface AiStatus {
 export type AiPriority = 'urgent' | 'high' | 'medium' | 'low'
 
 // Which messages a sweep should consider. Defaults to unread everywhere.
+// One compose-autocomplete suggestion. Collected from mail the account has sent
+// and received (see electron/services/contacts.ts) — there is no address book.
+// The counts are what ranked it and are shown to the user as "written to N
+// times", so the suggestion can be judged rather than just trusted.
+export interface ContactSuggestion {
+  address: string
+  name: string | null
+  sentCount: number
+  seenCount: number
+}
+
 export type SweepScope = 'unread' | 'all'
 
 export interface SweepTask {
@@ -393,6 +404,14 @@ export interface OrbitMailAPI {
     /** Never returns credential values — only whether each provider is usable. */
     getStatus: () => Promise<OAuthConfigStatus>
     saveCredentials: (values: Partial<Record<OAuthCredentialKey, string>>) => Promise<OAuthConfigStatus>
+  }
+  contacts: {
+    /**
+     * Addresses this account has corresponded with, matching `query`, best
+     * first. Scoped to the account so a personal contact cannot be suggested
+     * while composing from a work address.
+     */
+    suggest: (accountId: string, query: string, limit?: number) => Promise<ContactSuggestion[]>
   }
   ai: {
     analyze: (

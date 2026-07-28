@@ -118,6 +118,18 @@ function initTables(db: Database.Database): void {
     );
 
     CREATE INDEX IF NOT EXISTS sweep_tasks_folder_idx ON sweep_tasks(folder_id);
+
+    CREATE TABLE IF NOT EXISTS contacts (
+      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      address TEXT NOT NULL,
+      name TEXT,
+      sent_count INTEGER NOT NULL DEFAULT 0,
+      seen_count INTEGER NOT NULL DEFAULT 0,
+      last_seen_at INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (account_id, address)
+    );
+
+    CREATE INDEX IF NOT EXISTS contacts_account_idx ON contacts(account_id);
   `)
 
   migrateSchema(db)

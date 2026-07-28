@@ -51,6 +51,7 @@ import {
   listMessageAttachments,
   backfillSearchTextBatch
 } from './services/db-service'
+import { suggestContacts, backfillContactsBatch } from './services/contacts'
 import { authenticateGoogle } from './services/oauth-google'
 import { authenticateMicrosoft } from './services/oauth-microsoft'
 import {
@@ -1112,6 +1113,12 @@ function registerIpc(): void {
   )
 
   ipcMain.handle(
+    'contacts:suggest',
+    (_, accountId: string, query: string, limit?: number) =>
+      suggestContacts(accountId, query, limit)
+  )
+
+  ipcMain.handle(
     'ai:analyze',
     (_, messageId: string, force?: boolean, includeAttachments?: boolean) =>
       analyzeMessage(messageId, { force, includeAttachments })
@@ -1259,19 +1266,22 @@ if (!gotSingleInstanceLock) {
     // becomes a single freeze. Search stays correct throughout (it falls back to
     // body_html for rows not yet reached), and this drains once — new mail gets
     // search_text on upsert.
-    const backfillSearchTextInBackground = (): void => {
+    // The same shape serves the contacts backfill below: both walk a backlog in
+    // small batches, yielding between them, and stop when a batch reports
+    // nothing left. A failure ends that drain and is logged — neither backfill
+    // is worth degrading the app over.
+    const drainInBackground = (label: string, batch: () => number): void => {
       let done = false
       const step = (): void => {
         if (done) return
         try {
-          const processed = backfillSearchTextBatch()
-          if (processed === 0) {
+          if (batch() === 0) {
             done = true
             return
           }
         } catch (err) {
           done = true
-          console.warn('[orbit-mail] search-text backfill stopped:', err)
+          console.warn(`[orbit-mail] ${label} backfill stopped:`, err)
           return
         }
         setTimeout(step, 60)
@@ -1288,7 +1298,10 @@ if (!gotSingleInstanceLock) {
       reconcileAllAccountsFlags({ filter: (a) => a.provider !== 'pop3' }).catch(() => {})
       startBackgroundSync()
       startIdleMonitoring()
-      backfillSearchTextInBackground()
+      drainInBackground('search-text', backfillSearchTextBatch)
+      // Collect addresses from mail that was already synced when autocomplete
+      // arrived. New mail is harvested as it lands, so this drains once.
+      drainInBackground('contacts', backfillContactsBatch)
       // Export directories left by a run that crashed before it could clean up.
       const swept = sweepStaleExportDirs()
       if (swept > 0) console.log(`[orbit-mail] removed ${swept} stale export dir(s)`)

@@ -1173,6 +1173,82 @@ textarea {
   font-size: 12px;
 }
 
+/* Recipient field + its autocomplete list. The wrapper takes the flex slot the
+   bare input used to hold, so To/Cc/Bcc line up with Subject as before. */
+.recipient-input {
+  position: relative;
+  flex: 1;
+  display: flex;
+  min-width: 0;
+}
+
+.recipient-input .compose-input {
+  width: 100%;
+}
+
+.recipient-suggestions {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--bg-elevated, var(--bg-main));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.recipient-suggestion {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  border-radius: 5px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.recipient-suggestion.is-active {
+  background: var(--accent-soft);
+}
+
+.recipient-suggestion-main {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.recipient-suggestion-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.recipient-suggestion-address {
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recipient-suggestion-count {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
 /* Rich text editor + toolbar ------------------------------------------------ */
 
 .compose-editor-area {

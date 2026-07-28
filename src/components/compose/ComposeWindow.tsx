@@ -14,6 +14,7 @@ import type { AttachmentDraft, ComposePayload } from '../../../shared/types'
 import { useMailStore } from '../../stores/mailStore'
 import { loadInitialData } from '../../stores/mailStore'
 import { RichTextEditor } from './RichTextEditor'
+import { RecipientInput } from './RecipientInput'
 import { formatBytes } from '../../utils/format'
 
 const emptyPayload = (accountId: string): ComposePayload => ({
@@ -214,11 +215,12 @@ export function ComposeWindow() {
 
       <div className="compose-field">
         <span className="compose-label">To</span>
-        <input
-          className="compose-input"
+        <RecipientInput
           value={payload.to}
-          onChange={(e) => update({ to: e.target.value })}
+          accountId={payload.accountId}
+          ariaLabel="To"
           placeholder="Recipient"
+          onChange={(to) => update({ to })}
         />
         <button
           className="toolbar-btn compose-cc-toggle"
@@ -237,10 +239,11 @@ export function ComposeWindow() {
       {showCc && (
         <div className="compose-field">
           <span className="compose-label">Cc</span>
-          <input
-            className="compose-input"
+          <RecipientInput
             value={payload.cc ?? ''}
-            onChange={(e) => update({ cc: e.target.value })}
+            accountId={payload.accountId}
+            ariaLabel="Cc"
+            onChange={(cc) => update({ cc })}
           />
         </div>
       )}
@@ -248,10 +251,11 @@ export function ComposeWindow() {
       {showBcc && (
         <div className="compose-field">
           <span className="compose-label">Bcc</span>
-          <input
-            className="compose-input"
+          <RecipientInput
             value={payload.bcc ?? ''}
-            onChange={(e) => update({ bcc: e.target.value })}
+            accountId={payload.accountId}
+            ariaLabel="Bcc"
+            onChange={(bcc) => update({ bcc })}
           />
         </div>
       )}
