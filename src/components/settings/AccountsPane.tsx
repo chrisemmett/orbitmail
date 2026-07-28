@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react'
-import type { Account, AccountInfo } from '../../../shared/types'
+import type {
+  Account,
+  AccountInfo,
+  ManualAccountSettings,
+  ManualAccountSettingsUpdate
+} from '../../../shared/types'
 import {
   useMailStore,
   refreshMessages,
@@ -8,6 +13,7 @@ import {
   updateAccountDisplayName,
   updateAccountSyncDays
 } from '../../stores/mailStore'
+import { ServerFields } from '../accounts/ServerFields'
 
 const SYNC_WINDOW_OPTIONS = [
   { label: '30 days', value: 30 },
@@ -55,6 +61,172 @@ export function resolveSelectedAccountId(
   if (exists(aimedAt)) return aimedAt
   if (exists(current)) return current
   return accounts[0]?.id ?? null
+}
+
+// Server settings for a manual (IMAP/POP3) account. Renders nothing for OAuth
+// accounts, which have no servers to configure.
+//
+// The password box is always empty: main never sends the stored one, and leaving
+// it blank means "keep it". `hasPassword` is the only thing the renderer learns
+// about it.
+function ConnectionSettings({ account }: { account: Account }) {
+  const setToast = useMailStore((s) => s.setToast)
+  const [settings, setSettings] = useState<ManualAccountSettings | null>(null)
+  const [draft, setDraft] = useState<ManualAccountSettingsUpdate | null>(null)
+  const [password, setPassword] = useState('')
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  const isManual = account.provider === 'imap' || account.provider === 'pop3'
+
+  useEffect(() => {
+    if (!isManual) {
+      setSettings(null)
+      setDraft(null)
+      return
+    }
+    let cancelled = false
+    setPassword('')
+    setTestResult(null)
+    void window.orbitMail.accounts
+      .getManualSettings(account.id)
+      .then((result) => {
+        if (cancelled || !result) return
+        setSettings(result)
+        setDraft({
+          displayName: result.displayName,
+          username: result.username,
+          incoming: result.incoming,
+          outgoing: result.outgoing
+        })
+      })
+      .catch(() => {
+        if (!cancelled) setToast('Could not load this account’s server settings')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [account.id, isManual, setToast])
+
+  if (!isManual || !settings || !draft) return null
+
+  const payload = (): ManualAccountSettingsUpdate => ({
+    ...draft,
+    password: password.trim() ? password : undefined
+  })
+
+  const handleTest = async () => {
+    setTesting(true)
+    setTestResult(null)
+    try {
+      setTestResult(await window.orbitMail.accounts.testManualSettings(account.id, payload()))
+    } catch (err) {
+      setTestResult({ ok: false, error: err instanceof Error ? err.message : 'Could not connect' })
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  const handleSave = async () => {
+    setSaving(true)
+    setTestResult(null)
+    try {
+      await window.orbitMail.accounts.updateManualSettings(account.id, payload())
+      setPassword('')
+      setToast('Server settings saved')
+      const refreshed = await window.orbitMail.accounts.getManualSettings(account.id)
+      if (refreshed) setSettings(refreshed)
+    } catch (err) {
+      // The save verifies the settings first, so this is usually the servers
+      // rejecting them rather than a write failing.
+      setTestResult({
+        ok: false,
+        error: err instanceof Error ? err.message : 'Could not save these settings'
+      })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const busy = testing || saving
+
+  return (
+    <section className="settings-section">
+      <h3>Server settings</h3>
+
+      <label className="account-field">
+        <span>Email address</span>
+        <input value={settings.email} readOnly disabled />
+      </label>
+      <p className="account-hint">
+        The address and the protocol ({settings.incomingProtocol.toUpperCase()}) cannot be changed
+        here — both identify the account. To move to a different address or protocol, remove this
+        account and add it again.
+      </p>
+
+      <label className="account-field">
+        <span>Username</span>
+        <input
+          value={draft.username}
+          disabled={busy}
+          onChange={(event) => setDraft({ ...draft, username: event.target.value })}
+        />
+      </label>
+
+      <label className="account-field">
+        <span>Password</span>
+        <input
+          type="password"
+          autoComplete="off"
+          placeholder={settings.hasPassword ? 'Leave blank to keep the saved password' : ''}
+          value={password}
+          disabled={busy}
+          onChange={(event) => setPassword(event.target.value)}
+        />
+      </label>
+
+      <ServerFields
+        label={settings.incomingProtocol === 'pop3' ? 'Incoming (POP3)' : 'Incoming (IMAP)'}
+        value={draft.incoming}
+        onChange={(incoming) => setDraft({ ...draft, incoming })}
+      />
+      <ServerFields
+        label="Outgoing (SMTP)"
+        value={draft.outgoing}
+        onChange={(outgoing) => setDraft({ ...draft, outgoing })}
+      />
+
+      {testResult && (
+        <p className={`account-hint${testResult.ok ? '' : ' is-error'}`}>
+          {testResult.ok ? 'Connected successfully.' : testResult.error}
+        </p>
+      )}
+
+      <div className="settings-section-actions">
+        <button
+          type="button"
+          className="btn btn-secondary"
+          disabled={busy}
+          onClick={() => void handleTest()}
+        >
+          {testing ? 'Testing…' : 'Test connection'}
+        </button>
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={busy}
+          onClick={() => void handleSave()}
+        >
+          {saving ? 'Checking and saving…' : 'Save'}
+        </button>
+      </div>
+      <p className="account-hint">
+        Saving checks the settings against the servers first — settings that do not work are not
+        stored.
+      </p>
+    </section>
+  )
 }
 
 // One account: what it is, what it holds, and the two things you can change.
@@ -258,6 +430,8 @@ function AccountDetail({ account }: { account: Account }) {
           </button>
         </div>
       </section>
+
+      <ConnectionSettings account={account} />
 
       <section className="settings-section">
         <h3>Remove account</h3>

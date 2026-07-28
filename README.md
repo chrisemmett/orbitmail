@@ -148,7 +148,10 @@ The gear, or `Ctrl` + `,`. What you can change today:
 - **Accounts** — rename an account, choose how much mail to keep on this
   computer, see what it is using, sync it, or remove it. Removing tells you how
   many messages and how much disk space go with it; your mail on the server is
-  untouched.
+  untouched. For IMAP and POP3 accounts you can also change the server, port,
+  security and password, with a **Test connection** button — settings that do
+  not work are not saved. Changing the address itself means removing the account
+  and adding it again.
 - **AI** — your Anthropic API key.
 
 The gear beside an account in the sidebar, and right-clicking a folder, both

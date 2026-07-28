@@ -7,6 +7,7 @@ import type {
   ComposePayload,
   SyncStatus,
   ManualAccountInput,
+  ManualAccountSettingsUpdate,
   FlagColor,
   SweepScope,
   DraftTone,
@@ -46,6 +47,8 @@ import {
   getFolderById,
   searchMessages,
   updateAccountDisplayName,
+  getAccountById,
+  getManualCredentials,
   getLatestInboxMessage,
   regroupThreadsIfNeeded,
   getAttachment,
@@ -86,7 +89,12 @@ import { closeAccountPool, closeAllPools } from './services/imap-pool'
 import { reclaimFreelistIfLarge } from './db'
 import { sendMail, buildReplyPayload } from './services/smtp-send'
 import { autodetectMailSettings } from './services/mail-autoconfig'
-import { addManualAccount } from './services/manual-account'
+import {
+  addManualAccount,
+  toManualSettings,
+  updateManualAccountSettings,
+  testManualAccountSettings
+} from './services/manual-account'
 import { ensureAttachmentLocal, localizeMessageAttachments } from './services/attachment-fetch'
 import {
   isExecutableAttachment,
@@ -728,6 +736,41 @@ function registerIpc(): void {
 
   ipcMain.handle('accounts:updateSyncDays', (_, accountId: string, syncDays: number) =>
     setAccountSyncDays(accountId, syncDays)
+  )
+
+  ipcMain.handle('accounts:getManualSettings', (_, accountId: string) => {
+    const account = getAccountById(accountId)
+    if (!account || (account.provider !== 'imap' && account.provider !== 'pop3')) return null
+    const creds = getManualCredentials(accountId)
+    if (!creds) return null
+    // Projected field by field — the stored credentials carry the plaintext
+    // password and it must not cross into the renderer.
+    return toManualSettings(creds, account.provider)
+  })
+
+  ipcMain.handle(
+    'accounts:updateManualSettings',
+    async (_, accountId: string, update: ManualAccountSettingsUpdate) => {
+      const account = await updateManualAccountSettings(accountId, update)
+      // The pooled client and the IDLE monitor are still authenticated with the
+      // settings that were just replaced. accounts:remove does the same pair.
+      await closeAccountPool(accountId)
+      restartIdleMonitoring()
+      return account
+    }
+  )
+
+  ipcMain.handle(
+    'accounts:testManualSettings',
+    async (_, accountId: string, update: ManualAccountSettingsUpdate) => {
+      try {
+        await testManualAccountSettings(accountId, update)
+        return { ok: true }
+      } catch (err) {
+        // Resolved, not thrown: the form shows this inline next to the button.
+        return { ok: false, error: err instanceof Error ? err.message : 'Could not connect' }
+      }
+    }
   )
 
   ipcMain.handle(

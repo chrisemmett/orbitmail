@@ -2662,6 +2662,11 @@ textarea {
   line-height: 1.45;
 }
 
+/* A hint carrying a failure rather than an explanation. */
+.account-hint.is-error {
+  color: #ff3b30;
+}
+
 /* Account picker: one tab per account, only shown when there is more than one. */
 .settings-account-picker {
   display: flex;
