@@ -42,6 +42,11 @@ messages and pull out what you still need to do.
   italic, colour, lists, links, quotes.
 - Replies keep the original as a collapsible quote, so your own words stay at the
   top.
+- **Reply**, **Reply All** and **Forward** sit on the message itself, above the
+  email you are reading. Forwarding brings the original's attachments with it; if
+  one cannot be fetched, the composer tells you which rather than sending an
+  incomplete forward quietly. **Forward as Attachment** (Message menu, or
+  right-click) sends the whole original untouched instead.
 - Attach by clicking **Attach** or dragging files onto the window.
 - **Ctrl+Enter** sends.
 - **To, Cc and Bcc autocomplete** from the people that account has actually
@@ -107,7 +112,7 @@ plus the OAuth setup for Gmail and Microsoft, are in **[INSTALL.md](INSTALL.md)*
 | Key | Action |
 |-----|--------|
 | `C` | Compose |
-| `R` | Reply |
+| `R` | Reply — to the open conversation's latest message, or the selected one |
 | `/` | Search |
 | `Shift` / `Ctrl` + click | Select a range of rows, or add and remove single ones. Delete, Archive and Move then act on all of them |
 | `Delete` / `Backspace` | Move to Trash (or delete for good, if already in Trash). You land on the next message down |
@@ -115,9 +120,12 @@ plus the OAuth setup for Gmail and Microsoft, are in **[INSTALL.md](INSTALL.md)*
 
 ### The toolbar
 
-**Compose**, **Reply**, **Forward**, **Delete**, **Archive**, **Star**,
-**Mark unread**, **Refresh**. Plus, if you have added an API key, **Tasks** and
-**AI settings** (✦).
+**Compose**, **Delete**, **Archive**, **Star**, **Mark unread**, **Refresh**.
+Plus, if you have added an API key, **Tasks** and **AI settings** (✦).
+
+Replying and forwarding are not up here — they act on one message, so they live
+on the message you are reading, along with **Draft reply**, **Analyze**, **Add to
+tasks** and **Print**.
 
 ### Folders and accounts
 

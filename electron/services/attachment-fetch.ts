@@ -302,3 +302,30 @@ export async function ensureAttachmentLocal(attachmentId: string): Promise<strin
 
   return downloadAttachmentFromImap(attachmentId, att, occurrence)
 }
+
+/**
+ * Every attachment of a message, on disk and ready to send — what a forward
+ * needs. Parts not cached yet are downloaded, so forwarding works on a message
+ * whose attachments were never opened.
+ *
+ * One unreachable part must not sink the whole forward (the message may be gone
+ * from the server, or the connection may be down), so failures are collected and
+ * named rather than thrown: the caller forwards what it has and tells the user
+ * what is missing. Silently returning a short list is the one thing this must
+ * not do — that is how "see attached" goes out with nothing attached.
+ */
+export async function localizeMessageAttachments(
+  messageId: string
+): Promise<{ paths: string[]; failed: string[] }> {
+  const paths: string[] = []
+  const failed: string[] = []
+  for (const att of listMessageAttachments(messageId)) {
+    try {
+      paths.push(await ensureAttachmentLocal(att.id))
+    } catch (err) {
+      failed.push(att.filename)
+      console.warn(`[orbit-mail] Could not localize "${att.filename}":`, err)
+    }
+  }
+  return { paths, failed }
+}

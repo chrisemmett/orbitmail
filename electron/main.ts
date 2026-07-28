@@ -86,7 +86,7 @@ import { reclaimFreelistIfLarge } from './db'
 import { sendMail, buildReplyPayload } from './services/smtp-send'
 import { autodetectMailSettings } from './services/mail-autoconfig'
 import { addManualAccount } from './services/manual-account'
-import { ensureAttachmentLocal } from './services/attachment-fetch'
+import { ensureAttachmentLocal, localizeMessageAttachments } from './services/attachment-fetch'
 import {
   isExecutableAttachment,
   executableAttachmentWarning
@@ -310,6 +310,31 @@ async function prepareComposePayload(
       }
     } catch (err) {
       console.warn('[orbit-mail] Could not attach raw message:', err)
+    }
+  }
+
+  // A forward carries the original's attachments. Without this the quoted text
+  // went out referring to a document that wasn't there — the recipient sees
+  // "see attached" and no attachment, and the sender has no way to tell.
+  // forward-attachment above doesn't need it: the .eml it attaches is the whole
+  // message, attachments included.
+  if (payload?.originalMessageId && payload.mode === 'forward') {
+    const { paths, failed } = await localizeMessageAttachments(payload.originalMessageId)
+    if (paths.length > 0 || failed.length > 0) {
+      // Main fetched these files, so main approves them — paths that arrived in
+      // the renderer's payload are still not approved here.
+      for (const path of paths) approveAttachmentPath(path)
+      return {
+        ...finalPayload,
+        attachmentPaths: [...paths, ...(payload.attachmentPaths ?? [])],
+        // Say so rather than quietly sending an incomplete forward.
+        notice:
+          failed.length > 0
+            ? `Couldn't attach ${
+                failed.length === 1 ? failed[0] : `${failed.length} attachments`
+              } — check your connection before sending.`
+            : undefined
+      }
     }
   }
 

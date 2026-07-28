@@ -22,6 +22,7 @@ import {
   CaretRight,
   ArrowBendUpLeft,
   ArrowBendDoubleUpLeft,
+  ArrowBendUpRight,
   Printer,
   ListChecks,
   TrayArrowDown
@@ -431,6 +432,14 @@ export function MessageView() {
     })
   }
 
+  const handleForward = () => {
+    void window.orbitMail.compose.open({
+      accountId: selectedMessage.accountId,
+      mode: 'forward',
+      originalMessageId: selectedMessage.id
+    })
+  }
+
   return (
     <div
       onContextMenu={(event) => {
@@ -459,6 +468,15 @@ export function MessageView() {
             >
               <ArrowBendDoubleUpLeft size={16} weight="duotone" />
               Reply All
+            </button>
+            <button
+              type="button"
+              className="reader-ai-btn"
+              title="Forward this message"
+              onClick={handleForward}
+            >
+              <ArrowBendUpRight size={16} weight="duotone" />
+              Forward
             </button>
             <DraftReplyButton messageId={selectedMessage.id} />
             <AnalyzeButton message={selectedMessage} />
@@ -753,6 +771,14 @@ function ThreadView({ messages }: { messages: MessageDetail[] }) {
     })
   }
 
+  const handleForward = () => {
+    void window.orbitMail.compose.open({
+      accountId: latest.accountId,
+      mode: 'forward',
+      originalMessageId: latest.id
+    })
+  }
+
   const handlePrint = async () => {
     try {
       await printThreadDetails(messages)
@@ -789,6 +815,15 @@ function ThreadView({ messages }: { messages: MessageDetail[] }) {
             >
               <ArrowBendDoubleUpLeft size={16} weight="duotone" />
               Reply All
+            </button>
+            <button
+              type="button"
+              className="reader-ai-btn"
+              title="Forward the latest message"
+              onClick={handleForward}
+            >
+              <ArrowBendUpRight size={16} weight="duotone" />
+              Forward
             </button>
             <button
               type="button"
