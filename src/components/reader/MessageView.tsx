@@ -41,9 +41,14 @@ const DRAFT_TONES: { value: DraftTone; label: string; hint: string }[] = [
   { value: 'detailed', label: 'Detailed', hint: 'Thorough' }
 ]
 
-// "Draft reply ▾" split-button: pick a tone, generate a draft, open the composer.
+// "Draft reply ▾" split-button: choose who it goes to, pick a tone, generate a
+// draft, open the composer. Recipients are a sticky toggle rather than six menu
+// rows (3 tones × 2 modes) — one click sets it, and it stays put for the next
+// draft, so the common case is still a single click on a tone.
 function DraftReplyButton({ messageId }: { messageId: string }) {
   const draftingReplyId = useMailStore((s) => s.draftingReplyId)
+  const draftReplyMode = useMailStore((s) => s.draftReplyMode)
+  const setDraftReplyMode = useMailStore((s) => s.setDraftReplyMode)
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   const isDrafting = draftingReplyId === messageId
@@ -59,8 +64,11 @@ function DraftReplyButton({ messageId }: { messageId: string }) {
 
   const pick = (tone: DraftTone) => {
     setOpen(false)
-    void draftReply(messageId, tone)
+    void draftReply(messageId, tone, draftReplyMode)
   }
+
+  const isAll = draftReplyMode === 'reply-all'
+  const label = isDrafting ? 'Drafting…' : isAll ? 'Draft reply all' : 'Draft reply'
 
   return (
     <div className="draft-reply" ref={ref}>
@@ -68,11 +76,11 @@ function DraftReplyButton({ messageId }: { messageId: string }) {
         type="button"
         className="reader-ai-btn"
         disabled={isDrafting}
-        title="Draft an AI reply"
+        title={isAll ? 'Draft an AI reply to everyone' : 'Draft an AI reply to the sender'}
         onClick={() => setOpen((o) => !o)}
       >
         <Sparkle size={16} weight="duotone" />
-        {isDrafting ? 'Drafting…' : 'Draft reply'}
+        {label}
         <CaretRight
           size={12}
           weight="bold"
@@ -80,19 +88,45 @@ function DraftReplyButton({ messageId }: { messageId: string }) {
         />
       </button>
       {open && !isDrafting && (
-        <div className="draft-reply-menu" role="menu">
-          {DRAFT_TONES.map((t) => (
+        <div className="draft-reply-menu">
+          <div className="draft-reply-modes" role="radiogroup" aria-label="Reply recipients">
             <button
-              key={t.value}
               type="button"
-              className="draft-reply-option"
-              role="menuitem"
-              onClick={() => pick(t.value)}
+              role="radio"
+              aria-checked={!isAll}
+              className={`draft-reply-mode${isAll ? '' : ' active'}`}
+              title="Reply to the sender only"
+              onClick={() => setDraftReplyMode('reply')}
             >
-              <span className="draft-reply-option-label">{t.label}</span>
-              <span className="draft-reply-option-hint">{t.hint}</span>
+              <ArrowBendUpLeft size={14} weight="duotone" />
+              Reply
             </button>
-          ))}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={isAll}
+              className={`draft-reply-mode${isAll ? ' active' : ''}`}
+              title="Reply to everyone on the message"
+              onClick={() => setDraftReplyMode('reply-all')}
+            >
+              <ArrowBendDoubleUpLeft size={14} weight="duotone" />
+              Reply All
+            </button>
+          </div>
+          <div className="draft-reply-tones" role="menu">
+            {DRAFT_TONES.map((t) => (
+              <button
+                key={t.value}
+                type="button"
+                className="draft-reply-option"
+                role="menuitem"
+                onClick={() => pick(t.value)}
+              >
+                <span className="draft-reply-option-label">{t.label}</span>
+                <span className="draft-reply-option-hint">{t.hint}</span>
+              </button>
+            ))}
+          </div>
         </div>
       )}
     </div>

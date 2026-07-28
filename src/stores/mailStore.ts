@@ -90,6 +90,9 @@ interface MailState {
   aiAnalysisById: Record<string, AiAnalysis>
   aiAnalyzingId: string | null
   draftingReplyId: string | null
+  // Who the next AI draft is addressed to. Sticky for the session so a
+  // reply-all-heavy conversation doesn't mean re-picking it every time.
+  draftReplyMode: 'reply' | 'reply-all'
   flaggingTaskId: string | null
   showAiSettings: boolean
   showTasks: boolean
@@ -145,6 +148,7 @@ interface MailState {
   setAiAnalysis: (messageId: string, analysis: AiAnalysis) => void
   setAiAnalyzingId: (id: string | null) => void
   setDraftingReplyId: (id: string | null) => void
+  setDraftReplyMode: (mode: 'reply' | 'reply-all') => void
   setFlaggingTaskId: (id: string | null) => void
   setShowAiSettings: (show: boolean) => void
   setShowTasks: (show: boolean) => void
@@ -200,6 +204,7 @@ export const useMailStore = create<MailState>((set) => ({
   aiAnalysisById: {},
   aiAnalyzingId: null,
   draftingReplyId: null,
+  draftReplyMode: 'reply',
   flaggingTaskId: null,
   showAiSettings: false,
   showTasks: false,
@@ -251,6 +256,7 @@ export const useMailStore = create<MailState>((set) => ({
     set((state) => ({ aiAnalysisById: { ...state.aiAnalysisById, [messageId]: analysis } })),
   setAiAnalyzingId: (id) => set({ aiAnalyzingId: id }),
   setDraftingReplyId: (id) => set({ draftingReplyId: id }),
+  setDraftReplyMode: (mode) => set({ draftReplyMode: mode }),
   setFlaggingTaskId: (id) => set({ flaggingTaskId: id }),
   setShowAiSettings: (show) => set({ showAiSettings: show }),
   setShowTasks: (show) => set({ showTasks: show }),

@@ -33,7 +33,7 @@ import {
   setSweepMeta,
   type SweepMessage
 } from './db-service'
-import { extractAddress } from '../../shared/addresses'
+import { extractAddress, splitAddressList } from '../../shared/addresses'
 
 const AI_KEY_PREF = 'ai_api_key'
 const MODEL = 'claude-opus-4-8'
@@ -430,11 +430,23 @@ const TONE_GUIDANCE: Record<DraftTone, string> = {
 const MAX_THREAD_MESSAGES = 12
 const DRAFT_BODY_CHARS = 4000
 
-function draftSystemPrompt(userName: string, tone: DraftTone): string {
+const AUDIENCE_GUIDANCE: Record<'reply' | 'reply-all', string> = {
+  reply:
+    'This reply goes to the sender of the latest message and no one else. Address them directly, and do not write as if other people on the thread will read it.',
+  'reply-all':
+    'This reply goes to everyone on the thread — the sender plus the other recipients listed below. Address the group where that reads naturally, and do not write as if only one person will read it. Do not name people who are not on the recipient list.'
+}
+
+function draftSystemPrompt(
+  userName: string,
+  tone: DraftTone,
+  mode: 'reply' | 'reply-all'
+): string {
   return `You draft an email reply on behalf of ${userName}. Write ONLY the reply body, in the first person as ${userName}, ready to paste into the composer.
 
 Rules:
 - No subject line, no "To:"/"From:" headers, and do NOT quote or restate the original message — the composer keeps the quoted thread separately.
+- ${AUDIENCE_GUIDANCE[mode]}
 - Match the conversation's tone and language. Answer any questions asked of the user and acknowledge or address any requests made of them.
 - Do NOT invent facts, commitments, dates, numbers, or names that aren't supported by the thread. If something needs the user's input, leave a natural placeholder in [square brackets].
 - End with a simple, natural sign-off (e.g. the user's first name). Do not add a full signature block.
@@ -455,6 +467,28 @@ Subject: ${m.subject}
 ${body || '(no body content)'}`)}`
 }
 
+// The people a reply-all would add beyond the sender: everyone on the latest
+// message's To/Cc except the user's own addresses and the sender themselves.
+// Mirrors buildReplyAllCc in smtp-send, which is what actually fills the Cc
+// field — this only tells the model who else is going to read the draft.
+function otherRecipients(
+  to: string,
+  cc: string,
+  from: string,
+  userEmails: string[]
+): string[] {
+  const sender = extractAddress(from)
+  const seen = new Set<string>()
+  const others: string[] = []
+  for (const address of [...splitAddressList(to), ...splitAddressList(cc)]) {
+    const key = extractAddress(address)
+    if (key === sender || userEmails.includes(key) || seen.has(key)) continue
+    seen.add(key)
+    others.push(address)
+  }
+  return others
+}
+
 export async function draftReply(
   messageId: string,
   options: { tone?: DraftTone; mode?: 'reply' | 'reply-all' } = {}
@@ -470,6 +504,7 @@ export async function draftReply(
   }
 
   const tone: DraftTone = options.tone ?? 'neutral'
+  const mode = options.mode ?? 'reply'
   const accounts = listAccounts()
   const account = accounts.find((a) => a.id === message.accountId)
   const userName = account?.displayName?.trim() || account?.email || 'the user'
@@ -485,7 +520,22 @@ export async function draftReply(
   const context = thread.length > 0 ? thread : [message]
   const blocks = context.map((m) => threadBlock(m, isFromUser(m.from)))
 
-  const userPrompt = `Draft my reply to the most recent message in this email conversation (oldest to newest below). I am ${userName}. Write the reply I should send.
+  // In reply-all the draft is read by more than the sender, so the model is told
+  // who else is on it. The list is fenced — these are header values, as
+  // attacker-controlled as any body, and a display name is a fine place to hide
+  // an instruction.
+  const others =
+    mode === 'reply-all' ? otherRecipients(message.to, message.cc, message.from, userEmails) : []
+  const audience =
+    mode !== 'reply-all'
+      ? ''
+      : others.length === 0
+        ? '\n\nThis is a reply-all, but the message had no other recipients — write it as a reply to the sender alone.'
+        : `\n\nThis is a reply-all. Everyone listed below reads the draft, not just the sender:\n${fenceUntrusted(
+            [message.from, ...others].join('\n')
+          )}`
+
+  const userPrompt = `Draft my reply to the most recent message in this email conversation (oldest to newest below). I am ${userName}. Write the reply I should send.${audience}
 
 ${blocks.join('\n\n---\n\n')}`
 
@@ -499,7 +549,7 @@ ${blocks.join('\n\n---\n\n')}`
         effort: 'low',
         format: jsonSchemaOutputFormat(DRAFT_SCHEMA)
       },
-      system: draftSystemPrompt(userName, tone),
+      system: draftSystemPrompt(userName, tone, mode),
       messages: [{ role: 'user', content: userPrompt }]
     })
 
