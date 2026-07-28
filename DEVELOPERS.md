@@ -457,7 +457,15 @@ store shows what the OS actually did.
 
 The dialog is `src/components/settings/SettingsDialog.tsx` — the usual
 `.modal-overlay` / `.modal` skeleton plus a category rail, opened by the toolbar
-gear, `Ctrl/Cmd+,`, or `openSettings(category, accountId)` in `mailStore`. The
+gear, `Ctrl/Cmd+,`, or `openSettings(category, accountId)` in `mailStore`.
+
+**`.modal-settings` is fixed size, not `max-*`.** It is held at what the tallest
+pane needs and the pane body scrolls inside it, because sizing to content made
+the dialog resize as you moved between categories — the rail and the Close button
+slid out from under the pointer, so aiming at Privacy landed on AI.
+`.settings-pane` also sets `scrollbar-gutter: stable` so a pane that needs a
+scrollbar and one that does not lay their content on the same left edge. Anything
+added past that height must scroll, not grow the box. The
 old `AiSettingsDialog` is now `AiPane` inside it. Writes go through
 `setGlobalPreference`, which is optimistic with rollback (the same contract as
 the message actions) and sends **only the changed key** — a whole-blob save would

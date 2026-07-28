@@ -2526,16 +2526,20 @@ textarea {
 
 /* ---- Settings dialog ---------------------------------------------------- */
 
-/* Wider than .tasks-modal (560px) because of the category rail. The pane body
-   scrolls rather than the whole modal, so the rail stays put while reading a
-   long section. */
+/* Wider than .tasks-modal (560px) because of the category rail.
+   Both dimensions are FIXED, not max-*: sizing to content meant the dialog
+   resized as you moved between categories, so the rail and the Close button
+   slid out from under the pointer — you would go to click Privacy and land on
+   AI. It is held at the size the tallest pane needs, and the pane body scrolls
+   inside it. Anything added below that height must scroll, not grow the box. */
 .modal-settings {
-  max-width: 720px;
-  width: 100%;
+  width: 720px;
+  max-width: calc(100vw - 32px);
+  height: min(86vh, 600px);
   padding: 0;
   display: flex;
   flex-direction: column;
-  max-height: min(90vh, 620px);
+  overflow: hidden;
 }
 
 .settings-body {
@@ -2588,6 +2592,11 @@ textarea {
   min-width: 0;
   padding: 20px 24px;
   overflow-y: auto;
+  /* Reserve the scrollbar's width whether or not this pane needs one, so a tall
+     pane and a short one lay their content out on the same left edge. Without
+     it the text jogs sideways on every category change — the same jarring as
+     the box resizing, just smaller. */
+  scrollbar-gutter: stable;
 }
 
 .settings-section {
