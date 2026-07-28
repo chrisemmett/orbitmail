@@ -170,17 +170,27 @@ function MainApp() {
         const accountId = store.accounts[0]?.id
         if (accountId) window.orbitMail.compose.open({ accountId })
       }
-      if (e.key === 'r' && !e.metaKey && !e.ctrlKey) {
-        // Reply to the latest message of the open thread, or the selected message.
-        const thread = store.selectedThread
-        const replyTo = thread && thread.length > 0 ? thread[thread.length - 1] : store.selectedMessage
-        if (replyTo) {
-          window.orbitMail.compose.open({
-            accountId: replyTo.accountId,
-            mode: 'reply',
-            originalMessageId: replyTo.id
-          })
-        }
+      // What a per-message shortcut acts on: the open conversation's latest
+      // message, or the selected one. Conversation view keeps selectedMessage
+      // null, so without the thread branch these do nothing with a conversation
+      // open — which is exactly how the old toolbar buttons went dead.
+      const thread = store.selectedThread
+      const activeMessage =
+        thread && thread.length > 0 ? thread[thread.length - 1] : store.selectedMessage
+
+      if (e.key === 'r' && !e.metaKey && !e.ctrlKey && activeMessage) {
+        window.orbitMail.compose.open({
+          accountId: activeMessage.accountId,
+          mode: 'reply',
+          originalMessageId: activeMessage.id
+        })
+      }
+      if (e.key === 'f' && !e.metaKey && !e.ctrlKey && activeMessage) {
+        window.orbitMail.compose.open({
+          accountId: activeMessage.accountId,
+          mode: 'forward',
+          originalMessageId: activeMessage.id
+        })
       }
       if (e.key === '/' && !e.metaKey && !e.ctrlKey) {
         e.preventDefault()
