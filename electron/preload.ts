@@ -23,7 +23,13 @@ const api: OrbitMailAPI = {
     updateDisplayName: (accountId, displayName) =>
       ipcRenderer.invoke('accounts:updateDisplayName', accountId, displayName),
     updateSyncDays: (accountId, syncDays) =>
-      ipcRenderer.invoke('accounts:updateSyncDays', accountId, syncDays)
+      ipcRenderer.invoke('accounts:updateSyncDays', accountId, syncDays),
+    getManualSettings: (accountId) =>
+      ipcRenderer.invoke('accounts:getManualSettings', accountId),
+    updateManualSettings: (accountId, update) =>
+      ipcRenderer.invoke('accounts:updateManualSettings', accountId, update),
+    testManualSettings: (accountId, update) =>
+      ipcRenderer.invoke('accounts:testManualSettings', accountId, update)
   },
   folders: {
     list: (accountId) => ipcRenderer.invoke('folders:list', accountId),

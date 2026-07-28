@@ -184,6 +184,41 @@ export interface UiPreferences {
   searchField: SearchField
 }
 
+/**
+ * A manual (IMAP/POP3) account's server settings **without the password**.
+ *
+ * The stored credentials include the plaintext password, and this is what the
+ * renderer is allowed to see instead. The renderer is the process whose whole
+ * job is displaying untrusted email HTML, so a password that reaches it lands in
+ * component state and is readable by anything that gets script execution there.
+ * `hasPassword` is all it needs to know.
+ */
+export interface ManualAccountSettings {
+  email: string
+  displayName: string
+  username: string
+  incomingProtocol: 'imap' | 'pop3'
+  incoming: ServerConfig
+  outgoing: ServerConfig
+  hasPassword: boolean
+}
+
+/**
+ * An edit to those settings. `email` and `incomingProtocol` are absent by
+ * design: `saveManualAccount` matches on email and would create a *second*
+ * account row rather than editing this one, and `assertProviderUnchanged`
+ * refuses an IMAP↔POP3 switch outright. Changing either means removing the
+ * account and adding it again.
+ */
+export interface ManualAccountSettingsUpdate {
+  displayName: string
+  username: string
+  incoming: ServerConfig
+  outgoing: ServerConfig
+  /** Omitted or empty = keep the stored password. It never round-trips. */
+  password?: string
+}
+
 export interface WindowPreferences {
   width: number
   height: number
@@ -343,6 +378,24 @@ export interface OrbitMailAPI {
     getInfo: (accountId: string) => Promise<AccountInfo>
     updateDisplayName: (accountId: string, displayName: string) => Promise<Account>
     updateSyncDays: (accountId: string, syncDays: number) => Promise<Account>
+    /**
+     * A manual account's server settings. Never includes the password — see
+     * ManualAccountSettings. Null for OAuth accounts, which have none.
+     */
+    getManualSettings: (accountId: string) => Promise<ManualAccountSettings | null>
+    /** Verifies the settings before persisting them; throws if they fail. */
+    updateManualSettings: (
+      accountId: string,
+      update: ManualAccountSettingsUpdate
+    ) => Promise<Account>
+    /**
+     * Try the settings without saving. Resolves `{ ok: false, error }` rather
+     * than rejecting, so the form can show the failure inline.
+     */
+    testManualSettings: (
+      accountId: string,
+      update: ManualAccountSettingsUpdate
+    ) => Promise<{ ok: boolean; error?: string }>
   }
   messages: {
     list: (

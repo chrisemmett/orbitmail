@@ -495,14 +495,41 @@ Two things worth keeping:
   invisible until it happens: removing the selected account leaves the pane
   pointing at an id that no longer exists and rendering nothing at all.
 
-`ServerFields` moved out of `AddAccountWizard.tsx` into its own file
-(`src/components/accounts/ServerFields.tsx`) unchanged, so the settings screen
-can edit an existing account's servers with the same control the wizard sets them
-with. Nothing uses it there yet.
+**Editing a manual account's server settings** is the one place in this app where
+a stored secret could cross into the renderer, so it is worth reading before
+changing:
 
-**Not handled yet:** editing manual IMAP/POP3 server settings and passwords (the
-next PR — `testManualAccountInput` already exists in `manual-account.ts` and
-needs only a channel); the muted and blocked sender lists are deliberately absent
+- `getManualCredentials` returns `ManualAccountCredentials`, which **includes the
+  plaintext password**. `accounts:getManualSettings` never returns it — it goes
+  through `toManualSettings` (`manual-account.ts`), which projects **field by
+  field and never spreads**. A `{ ...creds }` or a later `omit`-style denylist
+  helper is one careless edit from serialising the password into the process
+  whose whole job is displaying untrusted email HTML. Listing the allowed fields
+  means a new secret is excluded by default. The renderer gets `hasPassword`, and
+  the test asserts on the **absence of the key**, not its value — `password:
+  undefined` still serialises the field name.
+- An omitted password means "keep the stored one", resolved in main by re-reading
+  it. It never round-trips through the renderer.
+- **Email and protocol are read-only.** `saveManualAccount` matches on *email*,
+  so a changed address creates a second account row and orphans this one's mail;
+  `assertProviderUnchanged` refuses an IMAP↔POP3 switch outright. The form greys
+  both and says to remove and re-add instead.
+- **Settings are verified before they are persisted.** Saving a broken host would
+  leave the account unable to sync with no route back but the Add Account wizard.
+- Both the save and the Test button go through a 30s `Promise.race` timeout.
+  `testManualAccountInput` does a live IMAP/POP3 login *and* an SMTP verify;
+  POP3 has its own socket timeout but IMAP and SMTP rely on library defaults, so
+  a host that accepts a connection and then says nothing never settles.
+- After a change, main closes the account's IMAP pool and restarts IDLE — the
+  pooled client and the monitor are still authenticated with what was just
+  replaced. `accounts:remove` does the same pair.
+- `accounts:testManualSettings` **resolves** `{ ok, error }` rather than
+  rejecting, so the form shows the failure inline next to the button.
+
+`ServerFields` lives in `src/components/accounts/ServerFields.tsx`, shared
+unchanged between the Add Account wizard and this pane.
+
+**Not handled yet:** the muted and blocked sender lists are deliberately absent
 from the Privacy pane because neither does anything to your mail yet (listing
 them would imply otherwise); and the image allowlist can still only be added to,
 not removed from.
@@ -909,6 +936,7 @@ reimplementing them, so it exercises the shipping code paths:
 | Account identity | Re-adding an address with the *same* provider updates the row in place (re-authentication, password changes) and stores the new credentials; re-adding it with a *different* provider is refused, naming both providers, and leaves the existing account and its OAuth refresh token untouched. Other addresses are unaffected. |
 | Account removal | Deleting an account removes its AI Tasks (per-folder, and unified-inbox tasks tied to its messages) as well as its mail — `sweep_tasks` has no foreign key, so the cascade misses them — while another account's tasks survive. |
 | Settings / preferences | A blob written before the settings keys existed reads back with close-to-tray and notifications **on** and remote images **blocked**, and the settings that were already in it survive untouched; a patch of an unrelated key does not drop those defaults; a global setting can actually be turned *off* (the `??`-vs-`||` trap) without disturbing the others, and an emptied sender list stays empty. Renderer side: defaults survive an old blob, an explicit `false` is not mistaken for an absent key, a toggle applies immediately and sends only the changed key, a rejected write rolls back and says so, and a mailto registration the OS refused does not show as on. |
+| Account credentials | `toManualSettings` has **no `password` key at all** (asserted on key absence, since `password: undefined` still serialises the name) and no key beyond the seven it declares, reports `hasPassword`, and carries the server settings through intact. An update omitting the password keeps the stored one — proved by the account still authenticating afterwards — applies the rest of the edit, and leaves the sync window alone. An edit that cannot connect is rejected *and nothing is written*. Testing a wrong password fails; testing the stored settings succeeds. |
 | Accounts pane selection | `resolveSelectedAccountId` — shows the first account by default, the one Settings was opened *for* when that account still exists, keeps an existing selection otherwise, and falls back rather than pointing at an account that has just been removed (which would render an empty pane). |
 | Remote-image gating | `isRemoteContentBlocked` — blocked by default, never "blocked" without remote content, unblocked by the global setting, by this sender's allowlist entry (but not another sender's), or by loading once this session. Whether a tracking pixel fires is not left to a manual click-through. |
 | Forward | A forward is `Fwd:`-prefixed with no recipient pre-filled and keeps the original as *quoted* text (not in the editable body), and the original's attachments come with it as real files rather than placeholders. An attachment that cannot be fetched is reported by name instead of being silently dropped, and the reachable ones still go. `forward-attachment` keeps the original whole rather than quoting it. |

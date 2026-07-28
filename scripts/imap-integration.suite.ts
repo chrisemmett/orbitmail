@@ -1249,6 +1249,114 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Account settings: the password never leaves the main process')
+  // -------------------------------------------------------------------------
+  {
+    // The renderer's whole job is displaying untrusted email HTML. A password
+    // that reaches it lands in component state and is readable by anything that
+    // gets script execution there — which is the threat the sanitizer, the CSP
+    // and the navigation guards all exist for. So the read channel projects the
+    // stored credentials field by field.
+    const manual = await import('../electron/services/manual-account')
+
+    const stored = {
+      authType: 'password' as const,
+      email: EMAIL,
+      displayName: 'Integration',
+      username: LOGIN,
+      password: PASSWORD,
+      incoming: { host: HOST, port: IMAP_PORT, security: 'none' as const },
+      outgoing: { host: HOST, port: SMTP_PORT, security: 'none' as const }
+    }
+
+    const projected = manual.toManualSettings(stored, 'imap')
+    // On the *absence of the key*, not on its value: `password: undefined` still
+    // serialises the field name, and a later `{ ...creds, password: undefined }`
+    // "fix" would pass a value check while leaking the shape.
+    ok('the projection has no password field at all',
+      !('password' in projected),
+      Object.keys(projected).join(', '))
+    ok('nor any other key beyond the ones it declares',
+      Object.keys(projected).sort().join(',') ===
+        'displayName,email,hasPassword,incoming,incomingProtocol,outgoing,username',
+      Object.keys(projected).sort().join(','))
+    ok('it says whether a password is stored, which is all the renderer needs',
+      projected.hasPassword === true)
+    ok('and the server settings survive the projection intact',
+      projected.incoming.host === HOST &&
+        projected.incoming.port === IMAP_PORT &&
+        projected.outgoing.port === SMTP_PORT &&
+        projected.incomingProtocol === 'imap',
+      JSON.stringify(projected.incoming))
+    ok('an account with no stored password says so',
+      manual.toManualSettings({ ...stored, password: '' }, 'pop3').hasPassword === false)
+
+    // An omitted password means "keep the stored one", resolved in main. The
+    // proof it worked is that the account still authenticates afterwards.
+    const before = db.getManualCredentials(account.id)
+    const syncDaysBefore = db.getAccountSyncDays(account.id)
+    await manual.updateManualAccountSettings(account.id, {
+      displayName: 'Integration Renamed',
+      username: LOGIN,
+      incoming: { host: HOST, port: IMAP_PORT, security: 'none' },
+      outgoing: { host: HOST, port: SMTP_PORT, security: 'none' }
+    })
+    const after = db.getManualCredentials(account.id)
+    ok('an update with no password keeps the stored one',
+      after?.password === before?.password && after?.password === PASSWORD)
+    ok('and the rest of the edit is applied', after?.displayName === 'Integration Renamed',
+      after?.displayName)
+    ok('the sync window is not collateral damage',
+      db.getAccountSyncDays(account.id) === syncDaysBefore,
+      String(db.getAccountSyncDays(account.id)))
+
+    // It still connects — the real check that the credentials survived.
+    const verify = rawClient()
+    await verify.connect()
+    await verify.logout()
+    ok('the account still authenticates after the edit', true)
+
+    // Settings that do not work are refused rather than saved: persisting a
+    // broken host would leave the account unable to sync with no way back
+    // except the Add Account wizard.
+    const broken = await rejects(() =>
+      manual.updateManualAccountSettings(account.id, {
+        displayName: 'Integration Renamed',
+        username: LOGIN,
+        incoming: { host: HOST, port: 1, security: 'none' },
+        outgoing: { host: HOST, port: SMTP_PORT, security: 'none' }
+      })
+    )
+    ok('an edit that cannot connect is rejected', broken !== null, broken?.message)
+    ok('and nothing was written', db.getManualCredentials(account.id)?.incoming.port === IMAP_PORT,
+      String(db.getManualCredentials(account.id)?.incoming.port))
+
+    // The test channel reports rather than throwing, so the form can show it.
+    const badPassword = await rejects(() =>
+      manual.testManualAccountSettings(account.id, {
+        displayName: 'Integration Renamed',
+        username: LOGIN,
+        password: 'not-the-password',
+        incoming: { host: HOST, port: IMAP_PORT, security: 'none' },
+        outgoing: { host: HOST, port: SMTP_PORT, security: 'none' }
+      })
+    )
+    ok('testing a wrong password fails', badPassword !== null, badPassword?.message)
+    ok('testing the stored settings succeeds',
+      (await rejects(() =>
+        manual.testManualAccountSettings(account.id, {
+          displayName: 'Integration Renamed',
+          username: LOGIN,
+          incoming: { host: HOST, port: IMAP_PORT, security: 'none' },
+          outgoing: { host: HOST, port: SMTP_PORT, security: 'none' }
+        })
+      )) === null)
+
+    // Restore the display name so later sections see what they expect.
+    db.updateAccountDisplayName(account.id, 'Integration')
+  }
+
+  // -------------------------------------------------------------------------
   section('Preferences: an install predating a setting keeps its old behaviour')
   // -------------------------------------------------------------------------
   {
