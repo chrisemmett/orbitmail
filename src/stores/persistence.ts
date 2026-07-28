@@ -19,13 +19,13 @@ export function getUiSnapshot(): UiPreferences {
 }
 
 export function applyUiPreferences(ui: UiPreferences): void {
-  useThemeStore.getState().setDarkMode(ui.darkMode, { persist: false })
+  useThemeStore.getState().setDarkMode(ui.darkMode ?? false, { persist: false })
   useMailStore.setState({
-    selectedFolderId: ui.selectedFolderId,
-    selectedMessageId: ui.selectedMessageId,
-    collapsedAccountIds: ui.collapsedAccountIds,
-    favoriteFolderIds: ui.favoriteFolderIds,
-    threadedView: ui.threadedView,
+    selectedFolderId: ui.selectedFolderId ?? 'unified',
+    selectedMessageId: ui.selectedMessageId ?? null,
+    collapsedAccountIds: ui.collapsedAccountIds ?? {},
+    favoriteFolderIds: ui.favoriteFolderIds ?? [],
+    threadedView: ui.threadedView ?? true,
     unreadFilterByAccount: ui.unreadFilterByAccount ?? {},
     searchField: ui.searchField ?? 'all'
   })
@@ -33,8 +33,18 @@ export function applyUiPreferences(ui: UiPreferences): void {
 
 export async function loadPersistedPreferences(): Promise<void> {
   const state = await window.orbitMail.preferences.get()
-  applyUiPreferences(state.ui)
-  useMailStore.getState().setImageAllowedSenders(state.imageAllowedSenders ?? [])
+  applyUiPreferences(state.ui ?? ({} as UiPreferences))
+  const mail = useMailStore.getState()
+  mail.setImageAllowedSenders(state.imageAllowedSenders ?? [])
+  // Each global default is written out rather than relying on the main process
+  // having supplied it: a blob saved before these keys existed has them absent,
+  // and the absent case must mean "what the app did before there was a switch".
+  mail.setGlobalPreferences({
+    closeToTray: state.closeToTray !== false,
+    desktopNotifications: state.desktopNotifications !== false,
+    alwaysLoadRemoteImages: state.alwaysLoadRemoteImages === true,
+    handleMailtoLinks: state.handleMailtoLinks === true
+  })
 }
 
 export function scheduleSaveUiPreferences(patch?: Partial<UiPreferences>): void {

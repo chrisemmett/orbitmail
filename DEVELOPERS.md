@@ -414,6 +414,75 @@ before this column existed has no `server_uid`, so a server-side delete of it
   matching (`mail` matches `gmail`) rather than breaking it the way a word-token FTS
   would. Not done here — it re-adds FTS machinery and wants its own justification.
 
+### Settings and the preference model
+
+All preferences live in **one JSON blob** — `app_preferences`, key `app_state`,
+managed by `electron/services/preferences-service.ts`. `PersistedAppState` and
+`UiPreferences` are declared **once**, in `shared/types.ts`, and the main process
+imports them; they used to be written out again in `preferences-service.ts` and
+the two copies had already drifted (the sender arrays were required in one and
+optional in the other).
+
+Adding a field means three lines, not one: a default in `DEFAULT_APP_STATE`, a
+merge in `readRawState`, **and** a merge in `patchAppState`. The last is the one
+that bites — a patch that does not mention a key drops it on the next merge. Use
+`??` and never `||`: these are booleans and arrays whose falsy value is a real
+setting, and `false || true` is `true`, which would make every toggle impossible
+to turn off.
+
+**Defaults are the upgrade path.** Every existing install has a blob written
+before these keys existed, so each default has to equal what the app already did:
+`closeToTray` and `desktopNotifications` default **on**, `alwaysLoadRemoteImages`
+defaults **off**. Consumers read `!== false` for the true-by-default pair and
+`=== true` for the false-by-default one, so an absent key means today's behaviour
+in both directions. There is no version field and no migration.
+
+Where each setting acts:
+
+| Setting | Consumed at |
+|---|---|
+| `closeToTray` | the main window's `close` handler, read *at close time* so it applies without a restart |
+| `desktopNotifications` | one guard at the top of `showNewMailNotification`; both callers (poll and IDLE) route through it. Deliberately **not** gated in the sync layer — the unread badge and tray count must keep updating either way |
+| `alwaysLoadRemoteImages` | `isRemoteContentBlocked` in `src/components/reader/RemoteContentBar.tsx`, the single chokepoint for the reader and the thread view |
+| `handleMailtoLinks` | already wired end to end; the settings toggle was the only missing piece |
+
+**No toggle may lie.** `app:getPlatformCapabilities` reports `trayActive`,
+`notificationsSupported` and `mailtoHandlerActive`, and the General pane disables
+a control with a reason rather than offering one that would do nothing — there is
+no tray on most non-Linux desktops, and `setAsDefaultProtocolClient` silently
+no-ops without an installed `.desktop` file, which is every `npm run dev` run.
+For the same reason `preferences:setHandleMailtoLinks` returns the live
+`app.isDefaultProtocolClient('mailto')` rather than echoing its argument, and the
+store shows what the OS actually did.
+
+The dialog is `src/components/settings/SettingsDialog.tsx` — the usual
+`.modal-overlay` / `.modal` skeleton plus a category rail, opened by the toolbar
+gear, `Ctrl/Cmd+,`, or `openSettings(category, accountId)` in `mailStore`.
+
+**`.modal-settings` is fixed size, not `max-*`.** It is held at what the tallest
+pane needs and the pane body scrolls inside it, because sizing to content made
+the dialog resize as you moved between categories — the rail and the Close button
+slid out from under the pointer, so aiming at Privacy landed on AI.
+`.settings-pane` also sets `scrollbar-gutter: stable` so a pane that needs a
+scrollbar and one that does not lay their content on the same left edge. Anything
+added past that height must scroll, not grow the box. The
+old `AiSettingsDialog` is now `AiPane` inside it. Writes go through
+`setGlobalPreference`, which is optimistic with rollback (the same contract as
+the message actions) and sends **only the changed key** — a whole-blob save would
+race the debounced UI-preference write.
+
+**The global shortcut handler is now dialog-aware.** `App.tsx`'s `keydown` only
+skipped `INPUT`/`TEXTAREA`, which is fine for a form and wrong for a dialog made
+of buttons: with Settings open and a tab focused, `f` opened a Forward window
+behind it and `Delete` deleted the mail still selected underneath. It bails on
+`showSettings || showAddAccount || showTasks`. `Ctrl/Cmd+,` is the one shortcut
+that still fires with a dialog open, because it is how you reach Settings.
+
+**Not handled yet:** the Accounts pane is a placeholder; the muted and blocked
+sender lists are deliberately absent from the Privacy pane because neither does
+anything to your mail yet (listing them would imply otherwise); and the image
+allowlist can still only be added to, not removed from.
+
 ### Forwarding
 
 `buildReplyPayload` (`smtp-send.ts`) produces only the *body* of a forward — the
@@ -815,6 +884,8 @@ reimplementing them, so it exercises the shipping code paths:
 | Attachment allowlist | Only files approved in this compose session can be attached: an unapproved path in the list refuses the whole send, the refusal names the offending file, equivalent path spellings (`/tmp/./x`) do not decide approval, `sendMail` refuses before touching credentials or a transport, and closing compose withdraws approval. |
 | Account identity | Re-adding an address with the *same* provider updates the row in place (re-authentication, password changes) and stores the new credentials; re-adding it with a *different* provider is refused, naming both providers, and leaves the existing account and its OAuth refresh token untouched. Other addresses are unaffected. |
 | Account removal | Deleting an account removes its AI Tasks (per-folder, and unified-inbox tasks tied to its messages) as well as its mail — `sweep_tasks` has no foreign key, so the cascade misses them — while another account's tasks survive. |
+| Settings / preferences | A blob written before the settings keys existed reads back with close-to-tray and notifications **on** and remote images **blocked**, and the settings that were already in it survive untouched; a patch of an unrelated key does not drop those defaults; a global setting can actually be turned *off* (the `??`-vs-`||` trap) without disturbing the others, and an emptied sender list stays empty. Renderer side: defaults survive an old blob, an explicit `false` is not mistaken for an absent key, a toggle applies immediately and sends only the changed key, a rejected write rolls back and says so, and a mailto registration the OS refused does not show as on. |
+| Remote-image gating | `isRemoteContentBlocked` — blocked by default, never "blocked" without remote content, unblocked by the global setting, by this sender's allowlist entry (but not another sender's), or by loading once this session. Whether a tracking pixel fires is not left to a manual click-through. |
 | Forward | A forward is `Fwd:`-prefixed with no recipient pre-filled and keeps the original as *quoted* text (not in the editable body), and the original's attachments come with it as real files rather than placeholders. An attachment that cannot be fetched is reported by name instead of being silently dropped, and the reachable ones still go. `forward-attachment` keeps the original whole rather than quoting it. |
 | Contacts | Autocomplete addresses are collected with the right polarity — an incoming sender (and anyone cc'd alongside the user) counts as *seen*, a recipient of the user's own mail as *written to*, and the user's own address is never collected. Re-syncing the same message does not inflate the counts. Someone written to once outranks a stranger seen twelve times, while the stranger is still offered lower down; a display name is searchable and a match at the start beats one buried mid-string; a bare address does not erase a known display name; a `LIKE` wildcard in the query matches literally. Suggestions are per-account (another account's contact is not offered, and is offered for its own), removing an account deletes what it collected, and the backfill spans several batches, is a no-op once drained, and does not double-count on a re-run. |
 | Task-orphan cleanup | The one-time migration for tasks left by pre-fix deletions removes a per-folder orphan (folder gone), leaves a unified task whose source message is merely missing (could be a valid todo that aged out of the cache), and is idempotent. |

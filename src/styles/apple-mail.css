@@ -2524,6 +2524,179 @@ textarea {
   user-select: none;
 }
 
+/* ---- Settings dialog ---------------------------------------------------- */
+
+/* Wider than .tasks-modal (560px) because of the category rail.
+   Both dimensions are FIXED, not max-*: sizing to content meant the dialog
+   resized as you moved between categories, so the rail and the Close button
+   slid out from under the pointer — you would go to click Privacy and land on
+   AI. It is held at the size the tallest pane needs, and the pane body scrolls
+   inside it. Anything added below that height must scroll, not grow the box. */
+.modal-settings {
+  width: 720px;
+  max-width: calc(100vw - 32px);
+  height: min(86vh, 600px);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.settings-body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+}
+
+.settings-nav {
+  width: 168px;
+  flex-shrink: 0;
+  padding: 20px 12px;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0 0 12px 8px;
+}
+
+.settings-nav-item {
+  text-align: left;
+  padding: 7px 10px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.settings-nav-item:hover {
+  background: var(--hover-overlay);
+  color: var(--text-primary);
+}
+
+.settings-nav-item.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.settings-pane {
+  flex: 1;
+  min-width: 0;
+  padding: 20px 24px;
+  overflow-y: auto;
+  /* Reserve the scrollbar's width whether or not this pane needs one, so a tall
+     pane and a short one lay their content out on the same left edge. Without
+     it the text jogs sideways on every category change — the same jarring as
+     the box resizing, just smaller. */
+  scrollbar-gutter: stable;
+}
+
+.settings-section {
+  margin-bottom: 26px;
+}
+
+.settings-section:last-child {
+  margin-bottom: 0;
+}
+
+.settings-section h3 {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0 0 10px;
+}
+
+.settings-section-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* Label on the left, control hard right. */
+.setting-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 9px 0;
+}
+
+.setting-row.is-disabled .setting-row-label {
+  color: var(--text-muted);
+}
+
+.setting-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.setting-row-label {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.setting-row-description {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.settings-sender-list {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.settings-sender-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 10px;
+  font-size: 12px;
+}
+
+.settings-sender-row + .settings-sender-row {
+  border-top: 1px solid var(--border);
+}
+
+.settings-sender-address {
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* .modal-actions stretches its children by default; the footer here wants a
+   natural-width Close, the same opt-out .tasks-modal makes. */
+.modal-settings .modal-actions {
+  margin: 0;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+}
+
+.modal-settings .modal-actions .btn {
+  flex: 0 0 auto;
+}
+
+.theme-switch:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .theme-switch {
   position: relative;
   width: 40px;

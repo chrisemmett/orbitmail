@@ -3,7 +3,8 @@ import {
   toggleThreadedView,
   toggleUnreadFilter,
   isUnreadOnlyView,
-  openTasksDialog
+  openTasksDialog,
+  openSettings
 } from '../../stores/mailStore'
 import { iconProps, Funnel, Stack, ListChecks, Sparkle } from '../icons'
 
@@ -45,7 +46,7 @@ export function MessageListHeader() {
       <button
         className="toolbar-btn"
         title="AI settings"
-        onClick={() => useMailStore.getState().setShowAiSettings(true)}
+        onClick={() => openSettings('ai')}
       >
         <Sparkle {...iconProps} />
       </button>

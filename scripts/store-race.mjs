@@ -125,10 +125,30 @@ const backend = {
   savedUi: [],
   completedSaves: 0,
   holdSaveUi: false,
-  releaseSaveUi: null
+  releaseSaveUi: null,
+  // Global settings: what the stored blob looks like, what was written, and
+  // whether the write (or the OS-level mailto registration) succeeds.
+  persistedState: {},
+  savedPreferences: [],
+  preferenceSaveFails: false,
+  mailtoRegistrationSucceeds: true,
+  capabilities: { trayActive: true, notificationsSupported: true, mailtoHandlerActive: false }
 }
 
 function installWindowStub() {
+  // Enough DOM for applyTheme, which stamps the theme onto the root element.
+  // Loading persisted preferences applies dark mode, so this is unavoidable
+  // once the settings tests exercise that path.
+  globalThis.document = { documentElement: { dataset: {} } }
+  globalThis.localStorage = {
+    store: new Map(),
+    getItem(key) {
+      return this.store.has(key) ? this.store.get(key) : null
+    },
+    setItem(key, value) {
+      this.store.set(key, String(value))
+    }
+  }
   globalThis.window = {
     addEventListener() {},
     removeEventListener() {},
@@ -185,13 +205,30 @@ function installWindowStub() {
         ]
       },
       preferences: {
-        get: async () => ({}),
+        // Deliberately the shape an install predating the settings screen has:
+        // no `ui`, none of the global keys. loadPersistedPreferences has to
+        // cope, because that blob exists on every machine running an old build.
+        get: async () => backend.persistedState,
         saveUi: async (ui) => {
           backend.savedUi.push(ui)
           if (backend.holdSaveUi) await new Promise((r) => { backend.releaseSaveUi = r })
           backend.completedSaves++
           return ui
+        },
+        save: async (patch) => {
+          if (backend.preferenceSaveFails) throw new Error('disk is full')
+          backend.savedPreferences.push(patch)
+          return patch
+        },
+        setHandleMailtoLinks: async (enabled) => {
+          if (backend.preferenceSaveFails) throw new Error('disk is full')
+          backend.savedPreferences.push({ handleMailtoLinks: enabled })
+          // The OS gets the last word; the harness can make it disagree.
+          return backend.mailtoRegistrationSucceeds ? enabled : false
         }
+      },
+      app: {
+        getPlatformCapabilities: async () => backend.capabilities
       },
       ai: { getCachedAnalysis: async () => null }
     }
@@ -216,6 +253,35 @@ async function main() {
     format: 'cjs',
     platform: 'node',
     outfile: join(outDir, 'persistence.cjs'),
+    logLevel: 'silent'
+  })
+
+  // mailStore and persistence bundled together, so they share one module
+  // instance. Bundling them separately gives each its own copy of the Zustand
+  // store, and a preference loaded through one is invisible to the other — the
+  // assertions then read untouched defaults and pass no matter what.
+  await build({
+    stdin: {
+      contents: [
+        "export * from './mailStore'",
+        "export { loadPersistedPreferences } from './persistence'"
+      ].join('\n'),
+      resolveDir: join(root, 'src/stores'),
+      loader: 'ts'
+    },
+    bundle: true,
+    format: 'cjs',
+    platform: 'node',
+    outfile: join(outDir, 'settings.cjs'),
+    logLevel: 'silent'
+  })
+
+  await build({
+    entryPoints: [join(root, 'src/components/reader/RemoteContentBar.tsx')],
+    bundle: true,
+    format: 'cjs',
+    platform: 'node',
+    outfile: join(outDir, 'remoteContent.cjs'),
     logLevel: 'silent'
   })
 
@@ -647,6 +713,97 @@ async function main() {
   ok('it resolves once the write completes', backend.completedSaves === 1,
     `${backend.completedSaves} completed`)
   backend.holdSaveUi = false
+
+  // -------------------------------------------------------------------------
+  section('Settings: globals are optimistic, and defaults survive an old blob')
+  // -------------------------------------------------------------------------
+  {
+    // This bundle carries its own store instance (see the build above), so every
+    // assertion here reads through `settings`, not the outer `state()`.
+    const settings = require(join(outDir, 'settings.cjs'))
+    const pref = () => settings.useMailStore.getState()
+
+    backend.persistedState = {}
+    await settings.loadPersistedPreferences()
+    ok('a blob with no settings keys loads without throwing', true)
+    ok('close-to-tray defaults on', pref().closeToTray === true, String(pref().closeToTray))
+    ok('notifications default on',
+      pref().desktopNotifications === true, String(pref().desktopNotifications))
+    ok('remote images default to blocked — the private default is the absent one',
+      pref().alwaysLoadRemoteImages === false, String(pref().alwaysLoadRemoteImages))
+
+    // An explicitly-off blob must not be read as "absent, so on".
+    backend.persistedState = { ui: {}, closeToTray: false, alwaysLoadRemoteImages: true }
+    await settings.loadPersistedPreferences()
+    ok('an explicit false is not mistaken for an absent key',
+      pref().closeToTray === false && pref().alwaysLoadRemoteImages === true,
+      `tray=${pref().closeToTray} images=${pref().alwaysLoadRemoteImages}`)
+
+    // Toggling is optimistic and sends only the key that changed — a whole-blob
+    // save would race the debounced UI write.
+    backend.savedPreferences = []
+    await settings.setGlobalPreference('desktopNotifications', false)
+    ok('the toggle applies immediately', pref().desktopNotifications === false)
+    ok('and only the changed key is sent',
+      backend.savedPreferences.length === 1 &&
+        JSON.stringify(backend.savedPreferences[0]) === '{"desktopNotifications":false}',
+      JSON.stringify(backend.savedPreferences))
+
+    // A rejected write must not leave the UI claiming a setting that did not
+    // stick — the same contract the message actions have.
+    backend.preferenceSaveFails = true
+    await settings.setGlobalPreference('desktopNotifications', true)
+    ok('a failed save rolls the toggle back',
+      pref().desktopNotifications === false, String(pref().desktopNotifications))
+    ok('and says so', !!pref().toast, pref().toast ?? 'no toast')
+    backend.preferenceSaveFails = false
+
+    // mailto is the one where the OS overrules us: on Linux the registration
+    // needs an installed .desktop file, so a dev build cannot take it.
+    backend.mailtoRegistrationSucceeds = false
+    pref().setToast(null)
+    await settings.setGlobalPreference('handleMailtoLinks', true)
+    ok('a mailto registration the OS refused does not show as on',
+      pref().handleMailtoLinks === false, String(pref().handleMailtoLinks))
+    ok('and explains why', !!pref().toast, pref().toast ?? 'no toast')
+    backend.mailtoRegistrationSucceeds = true
+
+    // Opening settings aims the dialog, and closing clears the account it was
+    // aimed at so the next open does not land on a stale one.
+    settings.openSettings('accounts', 'acct-7')
+    ok('openSettings opens on the category asked for',
+      pref().showSettings && pref().settingsCategory === 'accounts',
+      `${pref().showSettings}/${pref().settingsCategory}`)
+    ok('and remembers which account it was aimed at', pref().settingsAccountId === 'acct-7')
+    await tick()
+    ok('it asks what this desktop supports, so a toggle cannot lie',
+      pref().platformCapabilities?.trayActive === true,
+      JSON.stringify(pref().platformCapabilities))
+    pref().setShowSettings(false)
+    ok('closing clears the aimed-at account', pref().settingsAccountId === null)
+
+    // Whether a tracking pixel fires is not a decision to leave to a manual
+    // click-through, so the predicate behind it is exported and asserted here.
+    const { isRemoteContentBlocked } = require(join(outDir, 'remoteContent.cjs'))
+    const base = {
+      alwaysLoad: false,
+      allowed: [],
+      senderEmail: 'news@stripe.com',
+      loadedThisSession: false,
+      hasRemote: true
+    }
+    ok('remote content is blocked by default', isRemoteContentBlocked(base) === true)
+    ok('a message with no remote content is never "blocked"',
+      isRemoteContentBlocked({ ...base, hasRemote: false }) === false)
+    ok('the global setting unblocks every sender',
+      isRemoteContentBlocked({ ...base, alwaysLoad: true }) === false)
+    ok('an allowlisted sender unblocks without the global',
+      isRemoteContentBlocked({ ...base, allowed: ['news@stripe.com'] }) === false)
+    ok('a different allowlisted sender does not unblock this one',
+      isRemoteContentBlocked({ ...base, allowed: ['someone@else.com'] }) === true)
+    ok('loading once this session unblocks that message',
+      isRemoteContentBlocked({ ...base, loadedThisSession: true }) === false)
+  }
 
   // -------------------------------------------------------------------------
   section('Recipient autocomplete: only the address under the caret is rewritten')

@@ -1,0 +1,106 @@
+import { useEffect, useState } from 'react'
+import { useMailStore } from '../../stores/mailStore'
+
+// The body of what used to be AiSettingsDialog, minus its overlay and Close
+// button — the settings shell owns both now.
+export function AiPane() {
+  const setToast = useMailStore((s) => s.setToast)
+  const [configured, setConfigured] = useState<boolean | null>(null)
+  const [key, setKey] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    void window.orbitMail.ai
+      .getStatus()
+      .then((status) => {
+        if (!cancelled) setConfigured(status.configured)
+      })
+      .catch(() => {
+        if (!cancelled) setConfigured(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const handleSave = async () => {
+    if (!key.trim()) return
+    setSaving(true)
+    try {
+      await window.orbitMail.ai.setApiKey(key.trim())
+      setKey('')
+      setConfigured(true)
+      setToast('Anthropic API key saved')
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : 'Failed to save API key')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleClear = async () => {
+    setSaving(true)
+    try {
+      await window.orbitMail.ai.clearApiKey()
+      setConfigured(false)
+      setToast('Anthropic API key removed')
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : 'Failed to remove API key')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <section className="settings-section">
+      <h3>Anthropic API key</h3>
+      <p className="account-hint">
+        Orbit Mail uses Anthropic&apos;s Claude to analyze the email you&apos;re reading, draft
+        replies and sweep a folder for tasks. Your key is stored encrypted on this device and
+        never leaves it except to call the Anthropic API.
+      </p>
+
+      <div className="account-info-row">
+        <dt>Status</dt>
+        <dd>{configured === null ? 'Checking…' : configured ? 'API key configured' : 'No API key'}</dd>
+      </div>
+
+      <label className="account-field">
+        <span>API key</span>
+        <input
+          type="password"
+          autoComplete="off"
+          placeholder="sk-ant-…"
+          value={key}
+          disabled={saving}
+          onChange={(event) => setKey(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') void handleSave()
+          }}
+        />
+      </label>
+
+      <div className="settings-section-actions">
+        {configured && (
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={saving}
+            onClick={() => void handleClear()}
+          >
+            Remove key
+          </button>
+        )}
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={saving || !key.trim()}
+          onClick={() => void handleSave()}
+        >
+          {saving ? 'Saving…' : 'Save key'}
+        </button>
+      </div>
+    </section>
+  )
+}

@@ -1,35 +1,17 @@
-import type { SearchField } from '../../shared/types'
+// The types live in shared/types.ts and are imported, not re-declared. They used
+// to be written out again here, and the two copies had already drifted — the
+// sender arrays were required in one and optional in the other, so main and the
+// renderer disagreed about whether they could be absent.
+import type {
+  PersistedAppState,
+  UiPreferences,
+  WindowPreferences
+} from '../../shared/types'
 import { getRawSqlite } from '../db'
 
+export type { PersistedAppState, UiPreferences, WindowPreferences }
+
 const PREFERENCES_KEY = 'app_state'
-
-export interface UiPreferences {
-  darkMode: boolean
-  selectedFolderId: string | 'unified'
-  selectedMessageId: string | null
-  collapsedAccountIds: Record<string, boolean>
-  favoriteFolderIds: string[]
-  threadedView: boolean
-  unreadFilterByAccount: Record<string, boolean>
-  searchField: SearchField
-}
-
-export interface WindowPreferences {
-  width: number
-  height: number
-  x?: number
-  y?: number
-}
-
-export interface PersistedAppState {
-  ui: UiPreferences
-  lastSyncAt: number | null
-  handleMailtoLinks?: boolean
-  window?: WindowPreferences
-  mutedSenders?: string[]
-  blockedSenders?: string[]
-  imageAllowedSenders?: string[]
-}
 
 export const DEFAULT_UI_PREFERENCES: UiPreferences = {
   darkMode: false,
@@ -46,6 +28,12 @@ export const DEFAULT_APP_STATE: PersistedAppState = {
   ui: DEFAULT_UI_PREFERENCES,
   lastSyncAt: null,
   handleMailtoLinks: false,
+  // The two true-by-default flags describe what the app already did before
+  // there was a switch, so an existing install behaves identically until the
+  // user touches one.
+  closeToTray: true,
+  desktopNotifications: true,
+  alwaysLoadRemoteImages: false,
   mutedSenders: [],
   blockedSenders: [],
   imageAllowedSenders: []
@@ -65,6 +53,9 @@ function readRawState(): PersistedAppState {
       ui: { ...DEFAULT_UI_PREFERENCES, ...parsed.ui },
       lastSyncAt: parsed.lastSyncAt ?? null,
       handleMailtoLinks: parsed.handleMailtoLinks ?? false,
+      closeToTray: parsed.closeToTray ?? true,
+      desktopNotifications: parsed.desktopNotifications ?? true,
+      alwaysLoadRemoteImages: parsed.alwaysLoadRemoteImages ?? false,
       mutedSenders: parsed.mutedSenders ?? [],
       blockedSenders: parsed.blockedSenders ?? [],
       imageAllowedSenders: parsed.imageAllowedSenders ?? [],
@@ -123,6 +114,18 @@ export function appStateWriteCount(): number {
   return writes
 }
 
+/**
+ * Test seam: drop the cache so the next read comes from the database.
+ *
+ * The upgrade path — an `app_state` blob written before a setting existed — can
+ * only be exercised by writing such a blob directly and reading it back, and the
+ * cache would otherwise serve the state from before that write.
+ */
+export function resetPreferencesCacheForTests(): void {
+  cachedState = null
+  persistedJson = null
+}
+
 export function patchAppState(patch: Partial<PersistedAppState>): PersistedAppState {
   const current = getAppState()
   const next: PersistedAppState = {
@@ -130,6 +133,14 @@ export function patchAppState(patch: Partial<PersistedAppState>): PersistedAppSt
     ...patch,
     ui: { ...current.ui, ...patch.ui },
     handleMailtoLinks: patch.handleMailtoLinks ?? current.handleMailtoLinks ?? false,
+    // `??` and not `||`: these are booleans and arrays where the falsy value is
+    // a legitimate setting. `false || true` is true, so `||` here would make
+    // every one of these impossible to turn off, and an emptied sender list
+    // would spring back to its previous contents.
+    closeToTray: patch.closeToTray ?? current.closeToTray ?? true,
+    desktopNotifications: patch.desktopNotifications ?? current.desktopNotifications ?? true,
+    alwaysLoadRemoteImages:
+      patch.alwaysLoadRemoteImages ?? current.alwaysLoadRemoteImages ?? false,
     mutedSenders: patch.mutedSenders ?? current.mutedSenders ?? [],
     blockedSenders: patch.blockedSenders ?? current.blockedSenders ?? [],
     imageAllowedSenders: patch.imageAllowedSenders ?? current.imageAllowedSenders ?? []
@@ -188,4 +199,58 @@ export function blockSender(email: string): void {
   const current = getAppState()
   if (current.blockedSenders?.includes(normalized)) return
   patchAppState({ blockedSenders: [...(current.blockedSenders ?? []), normalized] })
+}
+
+// Removal. Each returns the resulting list so a caller can update its own copy
+// without a second read. Entries were normalized on the way in, so the address
+// is normalized here too — otherwise "Bob <BOB@x>" could never remove "bob@x".
+
+function withoutSender(list: string[] | undefined, email: string): string[] {
+  const normalized = normalizeEmail(email)
+  return (list ?? []).filter((entry) => entry !== normalized)
+}
+
+export function unmuteSender(email: string): string[] {
+  const next = withoutSender(getAppState().mutedSenders, email)
+  patchAppState({ mutedSenders: next })
+  return next
+}
+
+export function unblockSender(email: string): string[] {
+  const next = withoutSender(getAppState().blockedSenders, email)
+  patchAppState({ blockedSenders: next })
+  return next
+}
+
+export function revokeSenderImages(email: string): string[] {
+  const next = withoutSender(getAppState().imageAllowedSenders, email)
+  patchAppState({ imageAllowedSenders: next })
+  return next
+}
+
+/**
+ * Whether a sender is blocked or muted. Both take a raw `From` header and
+ * compare the mailbox part, never the display name — the display name is
+ * attacker-controlled, so `"blocked@x" <attacker@y>` must not read as blocked
+ * (and, worse, `"trusted@x" <blocked@y>` must not read as unblocked).
+ *
+ * These read the cache directly rather than through `getAppState()`: that clones
+ * the whole blob on every call, and sync asks this question once per message.
+ */
+function currentState(): PersistedAppState {
+  if (!cachedState) {
+    cachedState = readRawState()
+    persistedJson = JSON.stringify(cachedState)
+  }
+  return cachedState
+}
+
+export function isSenderBlocked(from: string): boolean {
+  const normalized = normalizeEmail(from)
+  return !!normalized && (currentState().blockedSenders ?? []).includes(normalized)
+}
+
+export function isSenderMuted(from: string): boolean {
+  const normalized = normalizeEmail(from)
+  return !!normalized && (currentState().mutedSenders ?? []).includes(normalized)
 }

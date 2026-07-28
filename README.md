@@ -118,15 +118,38 @@ plus the OAuth setup for Gmail and Microsoft, are in **[INSTALL.md](INSTALL.md)*
 | `Shift` / `Ctrl` + click | Select a range of rows, or add and remove single ones. Delete, Archive and Move then act on all of them |
 | `Delete` / `Backspace` | Move to Trash (or delete for good, if already in Trash). You land on the next message down |
 | `Ctrl` + `Enter` | Send, in the compose window |
+| `Ctrl` + `,` | Settings |
 
 ### The toolbar
 
-**Compose**, **Delete**, **Archive**, **Star**, **Mark unread**, **Refresh**.
-Plus, if you have added an API key, **Tasks** and **AI settings** (✦).
+**Compose**, **Delete**, **Archive**, **Star**, **Mark unread**, **Refresh**,
+and **Settings** (the gear). Plus, if you have added an API key, **Tasks** and
+**AI settings** (✦).
 
 Replying and forwarding are not up here — they act on one message, so they live
 on the message you are reading, along with **Draft reply**, **Analyze**, **Add to
 tasks** and **Print**.
+
+### Settings
+
+The gear, or `Ctrl` + `,`. What you can change today:
+
+- **Appearance** — dark mode, and whether mail is grouped into conversations.
+- **When you close the window** — keep running in the tray, or quit. (If your
+  desktop has no tray, this says so instead of offering a switch that would do
+  nothing.)
+- **Notifications** — on or off. The unread count and tray icon keep updating
+  either way.
+- **Default mail app** — open `mailto:` links in Orbit Mail. This registers with
+  your desktop, so it needs an installed copy rather than a development build,
+  and the switch reflects what actually took effect.
+- **Privacy** — load remote images everywhere instead of being asked per sender,
+  and see which senders you have already allowed.
+- **AI** — your Anthropic API key.
+
+Per-account settings are still where they were — the gear beside an account in
+the sidebar, and right-click a folder for account info. They move into this
+screen next.
 
 ### Folders and accounts
 

@@ -184,20 +184,57 @@ export interface UiPreferences {
   searchField: SearchField
 }
 
+export interface WindowPreferences {
+  width: number
+  height: number
+  x?: number
+  y?: number
+}
+
+// The persisted app state. This is the single declaration — the main process
+// imports it from here rather than keeping its own copy, which is how the two
+// used to drift (the sender arrays were required in one and optional in the
+// other).
+//
+// Every field added here needs a default in DEFAULT_APP_STATE *and* a line in
+// both readRawState and patchAppState (electron/services/preferences-service.ts).
+// patchAppState is the one that bites: a patch that does not mention a key drops
+// it on the next merge.
 export interface PersistedAppState {
   ui: UiPreferences
   lastSyncAt: number | null
+  /** Register as the system handler for mailto: links. */
   handleMailtoLinks?: boolean
+  /**
+   * Closing the main window hides it to the tray instead of quitting. Only has
+   * an effect where a tray actually exists — see `app:getPlatformCapabilities`.
+   * Absent means true: an install predating this key keeps today's behaviour.
+   */
+  closeToTray?: boolean
+  /** Desktop notification on new mail. Absent means true. */
+  desktopNotifications?: boolean
+  /**
+   * Load remote images in every message, skipping the per-sender prompt. Absent
+   * means false — the privacy-preserving default is the one you get by omission.
+   */
+  alwaysLoadRemoteImages?: boolean
   mutedSenders: string[]
   blockedSenders: string[]
   /** Senders whose remote images are loaded without the block prompt. */
   imageAllowedSenders: string[]
-  window?: {
-    width: number
-    height: number
-    x?: number
-    y?: number
-  }
+  window?: WindowPreferences
+}
+
+/**
+ * What this desktop can actually do. The settings UI reads it so a toggle never
+ * lies: there is no tray on most non-Linux desktops (and none on a Linux one
+ * without a StatusNotifier host), and `setAsDefaultProtocolClient` silently
+ * no-ops without an installed .desktop file — which is every `npm run dev` run.
+ */
+export interface PlatformCapabilities {
+  trayActive: boolean
+  notificationsSupported: boolean
+  mailtoHandlerActive: boolean
 }
 
 export interface AiAnalysis {
@@ -385,6 +422,11 @@ export interface OrbitMailAPI {
     onUnexpectedError: (callback: (message: string) => void) => () => void
     /** Whether OS-level encryption (safeStorage) is available for stored secrets. */
     getSecureStorageStatus: () => Promise<{ available: boolean }>
+    /**
+     * What this desktop supports, so Settings can disable a control rather than
+     * offer one that silently does nothing.
+     */
+    getPlatformCapabilities: () => Promise<PlatformCapabilities>
   }
   attachments: {
     download: (attachmentId: string) => Promise<string>
