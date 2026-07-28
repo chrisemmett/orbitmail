@@ -4,12 +4,11 @@ import { accountUnreadCount, shouldShowFolderUnreadBadge } from '../../../shared
 import {
   useMailStore,
   selectFolder,
-  removeAccountById,
-  syncAccountById
+  syncAccountById,
+  openSettings
 } from '../../stores/mailStore'
 import { AppBrand } from '../brand/AppBrand'
 import { FolderContextMenu } from './FolderContextMenu'
-import { AccountInfoDialog } from './AccountInfoDialog'
 import {
   sidebarIconProps,
   FOLDER_ICON_MAP,
@@ -17,8 +16,7 @@ import {
   TrayArrowDown,
   PlusCircle,
   GearSix,
-  ArrowsClockwise,
-  Trash
+  ArrowsClockwise
 } from '../icons'
 
 const STANDARD_TYPES: FolderType[] = ['inbox', 'sent', 'drafts', 'trash', 'junk']
@@ -76,13 +74,12 @@ function AccountMenu({
     await syncAccountById(account.id)
   }
 
-  const handleRemove = async () => {
+  // Removal moved into Settings → Accounts, which can say how much mail is
+  // about to be deleted. This used to be a window.confirm — a bare OS dialog
+  // that named the address and nothing else.
+  const handleSettings = () => {
     onClose()
-    const confirmed = window.confirm(
-      `Remove ${account.email}? Local cached mail for this account will be deleted.`
-    )
-    if (!confirmed) return
-    await removeAccountById(account.id)
+    openSettings('accounts', account.id)
   }
 
   return (
@@ -91,9 +88,9 @@ function AccountMenu({
         <ArrowsClockwise size={14} weight="duotone" />
         Sync now
       </button>
-      <button type="button" className="account-menu-item danger" onClick={handleRemove}>
-        <Trash size={14} weight="duotone" />
-        Remove account
+      <button type="button" className="account-menu-item" onClick={handleSettings}>
+        <GearSix size={14} weight="duotone" />
+        Account settings…
       </button>
     </div>
   )
@@ -216,7 +213,6 @@ export function Sidebar() {
   const selectedFolderId = useMailStore((s) => s.selectedFolderId)
   const setShowAddAccount = useMailStore((s) => s.setShowAddAccount)
   const [folderMenu, setFolderMenu] = useState<FolderContextTarget | null>(null)
-  const [accountInfoId, setAccountInfoId] = useState<string | null>(null)
 
   const favoriteFolders = useMemo(() => {
     const byId = new Map(folders.map((folder) => [folder.id, folder]))
@@ -298,15 +294,11 @@ export function Sidebar() {
           x={folderMenu.x}
           y={folderMenu.y}
           onClose={() => setFolderMenu(null)}
-          onShowAccountInfo={(accountId) => {
+          onOpenAccountSettings={(accountId) => {
             setFolderMenu(null)
-            setAccountInfoId(accountId)
+            openSettings('accounts', accountId)
           }}
         />
-      )}
-
-      {accountInfoId && (
-        <AccountInfoDialog accountId={accountInfoId} onClose={() => setAccountInfoId(null)} />
       )}
     </div>
   )

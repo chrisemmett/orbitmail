@@ -277,6 +277,15 @@ async function main() {
   })
 
   await build({
+    entryPoints: [join(root, 'src/components/settings/AccountsPane.tsx')],
+    bundle: true,
+    format: 'cjs',
+    platform: 'node',
+    outfile: join(outDir, 'accountsPane.cjs'),
+    logLevel: 'silent'
+  })
+
+  await build({
     entryPoints: [join(root, 'src/components/reader/RemoteContentBar.tsx')],
     bundle: true,
     format: 'cjs',
@@ -803,6 +812,24 @@ async function main() {
       isRemoteContentBlocked({ ...base, allowed: ['someone@else.com'] }) === true)
     ok('loading once this session unblocks that message',
       isRemoteContentBlocked({ ...base, loadedThisSession: true }) === false)
+
+    // Which account the Accounts pane shows. The failure this prevents is
+    // invisible until it happens: remove the selected account and the pane is
+    // left pointing at an id that no longer exists, rendering nothing.
+    const { resolveSelectedAccountId } = require(join(outDir, 'accountsPane.cjs'))
+    const three = [{ id: 'a1' }, { id: 'a2' }, { id: 'a3' }]
+    ok('with nothing chosen it shows the first account',
+      resolveSelectedAccountId(three, null, null) === 'a1')
+    ok('opening Settings for an account shows that one',
+      resolveSelectedAccountId(three, 'a3', 'a1') === 'a3')
+    ok('an existing selection is kept when nothing is aimed at',
+      resolveSelectedAccountId(three, null, 'a2') === 'a2')
+    ok('removing the selected account falls back rather than showing nothing',
+      resolveSelectedAccountId([{ id: 'a1' }, { id: 'a3' }], null, 'a2') === 'a1')
+    ok('an aimed-at account that no longer exists does not win',
+      resolveSelectedAccountId(three, 'gone', 'a2') === 'a2')
+    ok('with no accounts at all it resolves to nothing',
+      resolveSelectedAccountId([], 'a1', 'a2') === null)
   }
 
   // -------------------------------------------------------------------------

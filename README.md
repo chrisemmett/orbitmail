@@ -145,11 +145,14 @@ The gear, or `Ctrl` + `,`. What you can change today:
   and the switch reflects what actually took effect.
 - **Privacy** — load remote images everywhere instead of being asked per sender,
   and see which senders you have already allowed.
+- **Accounts** — rename an account, choose how much mail to keep on this
+  computer, see what it is using, sync it, or remove it. Removing tells you how
+  many messages and how much disk space go with it; your mail on the server is
+  untouched.
 - **AI** — your Anthropic API key.
 
-Per-account settings are still where they were — the gear beside an account in
-the sidebar, and right-click a folder for account info. They move into this
-screen next.
+The gear beside an account in the sidebar, and right-clicking a folder, both
+open this screen on that account.
 
 ### Folders and accounts
 

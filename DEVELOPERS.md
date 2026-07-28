@@ -478,10 +478,34 @@ behind it and `Delete` deleted the mail still selected underneath. It bails on
 `showSettings || showAddAccount || showTasks`. `Ctrl/Cmd+,` is the one shortcut
 that still fires with a dialog open, because it is how you reach Settings.
 
-**Not handled yet:** the Accounts pane is a placeholder; the muted and blocked
-sender lists are deliberately absent from the Privacy pane because neither does
-anything to your mail yet (listing them would imply otherwise); and the image
-allowlist can still only be added to, not removed from.
+**The Accounts pane** (`AccountsPane.tsx`) collects what used to be scattered:
+display name (a `window.prompt` in the folder context menu), the sync window (a
+dialog reachable only by right-clicking a *folder* → Get Account Info), account
+stats, Sync now, and removal (a `window.confirm` naming only the address). It
+adds no IPC — `accounts:getInfo/updateDisplayName/updateSyncDays/remove` and
+`sync:refresh` all already existed.
+
+Two things worth keeping:
+
+- **Removal is a two-step confirm inside the pane**, and it says how many
+  messages and how many bytes are about to be deleted. The `window.confirm` it
+  replaces was an OS dialog stacked on a modal that could not say either. Do not
+  regress this to a `confirm()`.
+- `resolveSelectedAccountId` is exported and tested because its failure is
+  invisible until it happens: removing the selected account leaves the pane
+  pointing at an id that no longer exists and rendering nothing at all.
+
+`ServerFields` moved out of `AddAccountWizard.tsx` into its own file
+(`src/components/accounts/ServerFields.tsx`) unchanged, so the settings screen
+can edit an existing account's servers with the same control the wizard sets them
+with. Nothing uses it there yet.
+
+**Not handled yet:** editing manual IMAP/POP3 server settings and passwords (the
+next PR — `testManualAccountInput` already exists in `manual-account.ts` and
+needs only a channel); the muted and blocked sender lists are deliberately absent
+from the Privacy pane because neither does anything to your mail yet (listing
+them would imply otherwise); and the image allowlist can still only be added to,
+not removed from.
 
 ### Forwarding
 
@@ -885,6 +909,7 @@ reimplementing them, so it exercises the shipping code paths:
 | Account identity | Re-adding an address with the *same* provider updates the row in place (re-authentication, password changes) and stores the new credentials; re-adding it with a *different* provider is refused, naming both providers, and leaves the existing account and its OAuth refresh token untouched. Other addresses are unaffected. |
 | Account removal | Deleting an account removes its AI Tasks (per-folder, and unified-inbox tasks tied to its messages) as well as its mail — `sweep_tasks` has no foreign key, so the cascade misses them — while another account's tasks survive. |
 | Settings / preferences | A blob written before the settings keys existed reads back with close-to-tray and notifications **on** and remote images **blocked**, and the settings that were already in it survive untouched; a patch of an unrelated key does not drop those defaults; a global setting can actually be turned *off* (the `??`-vs-`||` trap) without disturbing the others, and an emptied sender list stays empty. Renderer side: defaults survive an old blob, an explicit `false` is not mistaken for an absent key, a toggle applies immediately and sends only the changed key, a rejected write rolls back and says so, and a mailto registration the OS refused does not show as on. |
+| Accounts pane selection | `resolveSelectedAccountId` — shows the first account by default, the one Settings was opened *for* when that account still exists, keeps an existing selection otherwise, and falls back rather than pointing at an account that has just been removed (which would render an empty pane). |
 | Remote-image gating | `isRemoteContentBlocked` — blocked by default, never "blocked" without remote content, unblocked by the global setting, by this sender's allowlist entry (but not another sender's), or by loading once this session. Whether a tracking pixel fires is not left to a manual click-through. |
 | Forward | A forward is `Fwd:`-prefixed with no recipient pre-filled and keeps the original as *quoted* text (not in the editable body), and the original's attachments come with it as real files rather than placeholders. An attachment that cannot be fetched is reported by name instead of being silently dropped, and the reachable ones still go. `forward-attachment` keeps the original whole rather than quoting it. |
 | Contacts | Autocomplete addresses are collected with the right polarity — an incoming sender (and anyone cc'd alongside the user) counts as *seen*, a recipient of the user's own mail as *written to*, and the user's own address is never collected. Re-syncing the same message does not inflate the counts. Someone written to once outranks a stranger seen twelve times, while the stranger is still offered lower down; a display name is searchable and a match at the start beats one buried mid-string; a bare address does not erase a known display name; a `LIKE` wildcard in the query matches literally. Suggestions are per-account (another account's contact is not offered, and is offered for its own), removing an account deletes what it collected, and the backfill spans several batches, is a no-op once drained, and does not double-count on a re-run. |

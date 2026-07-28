@@ -1534,6 +1534,17 @@ textarea {
   background: var(--border);
 }
 
+/* For the confirm step of something destructive. Same red the account menu
+   already uses for Remove. */
+.btn-danger {
+  background: #ff3b30;
+  color: #fff;
+}
+
+.btn-danger:hover {
+  background: #e0271d;
+}
+
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -2649,6 +2660,42 @@ textarea {
   font-size: 11px;
   color: var(--text-muted);
   line-height: 1.45;
+}
+
+/* Account picker: one tab per account, only shown when there is more than one. */
+.settings-account-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 18px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-account-tab {
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  background: transparent;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-account-tab:hover {
+  background: var(--hover-overlay);
+  color: var(--text-primary);
+}
+
+.settings-account-tab.is-active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .settings-sender-list {

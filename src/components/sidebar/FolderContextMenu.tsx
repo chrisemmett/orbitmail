@@ -7,8 +7,7 @@ import {
   emptyTrashForAccount,
   exportMailbox,
   markAllReadInFolder,
-  syncAccountById,
-  updateAccountDisplayName
+  syncAccountById
 } from '../../stores/mailStore'
 import {
   FolderPlus,
@@ -18,8 +17,7 @@ import {
   WarningCircle,
   EnvelopeOpen,
   ArrowsClockwise,
-  PencilSimple,
-  Info
+  GearSix
 } from '../icons'
 
 interface FolderContextMenuProps {
@@ -28,7 +26,7 @@ interface FolderContextMenuProps {
   x: number
   y: number
   onClose: () => void
-  onShowAccountInfo: (accountId: string) => void
+  onOpenAccountSettings: (accountId: string) => void
 }
 
 function accountShortName(account: Account): string {
@@ -41,7 +39,7 @@ export function FolderContextMenu({
   x,
   y,
   onClose,
-  onShowAccountInfo
+  onOpenAccountSettings
 }: FolderContextMenuProps) {
   const favoriteFolderIds = useMailStore((s) => s.favoriteFolderIds)
   const folders = useMailStore((s) => s.folders)
@@ -132,20 +130,13 @@ export function FolderContextMenu({
       onClick: () => run(() => syncAccountById(account.id))
     },
     {
-      id: 'edit',
-      label: `Edit ${accountName}`,
-      icon: <PencilSimple size={16} weight="duotone" />,
-      onClick: () => {
-        const next = window.prompt('Account display name:', account.displayName)
-        if (!next?.trim() || next.trim() === account.displayName) return
-        run(() => updateAccountDisplayName(account.id, next))
-      }
-    },
-    {
-      id: 'account-info',
-      label: 'Get Account Info',
-      icon: <Info size={16} weight="duotone" />,
-      onClick: () => onShowAccountInfo(account.id)
+      // Renaming and the account's details are both in Settings → Accounts now.
+      // Renaming used to be a window.prompt, which cannot validate, cannot say
+      // what the name is for, and looks nothing like the rest of the app.
+      id: 'account-settings',
+      label: `${accountName} settings…`,
+      icon: <GearSix size={16} weight="duotone" />,
+      onClick: () => onOpenAccountSettings(account.id)
     }
   ]
 
