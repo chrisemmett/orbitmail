@@ -1,4 +1,4 @@
-// Renderer-store regression tests, run under plain node.
+// Renderer regression tests, run under plain node.
 //
 // The store is the one piece of app logic the GreenMail suite cannot reach: it
 // lives in the renderer and talks to the main process only through
@@ -11,6 +11,9 @@
 // still says "here". Any refresh in that window (the `sync:messagesUpdated`
 // debounce, the sync-complete subscription, a background poll, an IDLE push)
 // used to reload the page from the DB and resurrect the row.
+//
+// The same harness suits any pure renderer logic that would otherwise need a
+// GUI to exercise — see the recipient-autocomplete section at the end.
 
 import { build } from 'esbuild'
 import { createRequire } from 'module'
@@ -213,6 +216,15 @@ async function main() {
     format: 'cjs',
     platform: 'node',
     outfile: join(outDir, 'persistence.cjs'),
+    logLevel: 'silent'
+  })
+
+  await build({
+    entryPoints: [join(root, 'src/components/compose/RecipientInput.tsx')],
+    bundle: true,
+    format: 'cjs',
+    platform: 'node',
+    outfile: join(outDir, 'recipientInput.cjs'),
     logLevel: 'silent'
   })
 
@@ -635,6 +647,51 @@ async function main() {
   ok('it resolves once the write completes', backend.completedSaves === 1,
     `${backend.completedSaves} completed`)
   backend.holdSaveUi = false
+
+  // -------------------------------------------------------------------------
+  section('Recipient autocomplete: only the address under the caret is rewritten')
+  // -------------------------------------------------------------------------
+  {
+    // The To/Cc/Bcc fields stay a plain comma-separated string, so accepting a
+    // suggestion is string surgery on one token. Getting the bounds wrong eats
+    // an address the user already typed, which they would only notice after
+    // sending — worth pinning down without a GUI.
+    const { activeToken, applySuggestion } = require(join(outDir, 'recipientInput.cjs'))
+    const contact = (address, name = null) => ({ address, name, sentCount: 3, seenCount: 1 })
+
+    ok('the token is the address the caret sits in',
+      activeToken('alice@x.com, rob', 16).text === 'rob',
+      activeToken('alice@x.com, rob', 16).text)
+    ok('a caret back inside an earlier address selects that one',
+      activeToken('alice@x.com, rob', 5).text === 'alice@x.com',
+      activeToken('alice@x.com, rob', 5).text)
+    // A display name may legitimately contain a comma.
+    ok('a comma inside a quoted display name does not split the list',
+      activeToken('"Doe, Jane" <j@x.com>, rob', 25).text === 'rob',
+      activeToken('"Doe, Jane" <j@x.com>, rob', 25).text)
+
+    const completed = applySuggestion('alice@x.com, rob', 16, contact('robin@acme.co', 'Robin Hayes'))
+    ok('accepting keeps the addresses already entered',
+      completed.value === 'alice@x.com, Robin Hayes <robin@acme.co>, ',
+      JSON.stringify(completed.value))
+    ok('and leaves the caret ready for the next address',
+      completed.caret === 'alice@x.com, Robin Hayes <robin@acme.co>'.length + 2,
+      String(completed.caret))
+
+    const middle = applySuggestion('rob, carol@x.com', 3, contact('robin@acme.co', 'Robin Hayes'))
+    ok('completing an address mid-list does not disturb what follows',
+      middle.value === 'Robin Hayes <robin@acme.co>, carol@x.com',
+      JSON.stringify(middle.value))
+
+    const commaName = applySuggestion('', 0, contact('j@x.com', 'Doe, Jane'))
+    ok('a display name containing a comma is quoted, so the list still parses',
+      commaName.value.startsWith('"Doe, Jane" <j@x.com>'),
+      JSON.stringify(commaName.value))
+
+    const bare = applySuggestion('ro', 2, contact('rob@x.com'))
+    ok('a contact with no display name inserts the bare address',
+      bare.value === 'rob@x.com, ', JSON.stringify(bare.value))
+  }
 
   console.log(
     `\n${failures === 0 ? 'all store checks passed' : `${failures} store check(s) FAILED`}`

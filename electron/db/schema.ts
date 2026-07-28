@@ -164,3 +164,28 @@ export const sweepTasks = sqliteTable(
     index('sweep_tasks_folder_idx').on(t.folderId)
   ]
 )
+
+// Addresses collected from mail, per account, for compose autocomplete. There
+// is no address book to sync and no contacts UI — a row appears because the
+// account corresponded with it. `address` is the lowercased mailbox part, which
+// is the identity; `name` is the best display name seen for it. The two counts
+// are kept apart because they mean different things when ranking: sentCount is
+// people the user chose to write to, seenCount is people who turned up in their
+// mail, and a stranger who mailed once must never outrank a real correspondent.
+export const contacts = sqliteTable(
+  'contacts',
+  {
+    accountId: text('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    address: text('address').notNull(),
+    name: text('name'),
+    sentCount: integer('sent_count').notNull().default(0),
+    seenCount: integer('seen_count').notNull().default(0),
+    lastSeenAt: integer('last_seen_at').notNull().default(0)
+  },
+  (t) => [
+    primaryKey({ columns: [t.accountId, t.address] }),
+    index('contacts_account_idx').on(t.accountId)
+  ]
+)

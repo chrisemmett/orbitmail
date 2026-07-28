@@ -44,6 +44,11 @@ messages and pull out what you still need to do.
   top.
 - Attach by clicking **Attach** or dragging files onto the window.
 - **Ctrl+Enter** sends.
+- **To, Cc and Bcc autocomplete** from the people that account has actually
+  corresponded with — no address book to maintain, and it works on the mail you
+  already have. Anyone you have written to is offered before anyone who merely
+  wrote to you, so a newsletter never sits above a colleague. Arrow keys to move,
+  Enter or Tab to accept, Esc to dismiss.
 
 ### Accounts
 
@@ -156,8 +161,13 @@ Everything Orbit Mail knows lives on your machine:
   the prompt and the model is told to ignore instructions inside it — but that is
   a mitigation, not a guarantee, so read a draft before you send it, as you would
   anything a model wrote.
+- **Addresses for autocomplete are collected on your machine** from the mail an
+  account has sent and received, and are never uploaded or shared between
+  accounts — composing from your work address only suggests people that account
+  knows. There is currently no way to edit or delete a single collected address;
+  removing the account clears all of them.
 - **Removing an account removes its data** — cached mail, attachments, saved
-  tasks and stored credentials.
+  tasks, collected addresses and stored credentials.
 
 ## What it can't do yet
 

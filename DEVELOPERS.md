@@ -414,6 +414,46 @@ before this column existed has no `server_uid`, so a server-side delete of it
   matching (`mail` matches `gmail`) rather than breaking it the way a word-token FTS
   would. Not done here — it re-adds FTS machinery and wants its own justification.
 
+### Contacts (compose autocomplete)
+
+There is no address book, no contacts UI, and nothing synced from a server. The
+`contacts` table is a by-product of mail the account has already handled:
+`harvestContacts` (`electron/services/contacts.ts`) runs from `upsertMessage` for
+every **new** message and again in `sendMail` the moment a send succeeds, so an
+address is suggestible on the next compose without waiting for a Sent sync.
+
+- **Polarity decides the counter.** A message whose `From` is the account's own
+  address credits its To/Cc to `sent_count`; anything else credits the sender —
+  and the other recipients — to `seen_count`. Ranking puts *every* address with
+  `sent_count > 0` above every address without one, so a newsletter that arrives
+  daily cannot outrank a colleague written to once. Within a tier: a match at the
+  start of the name or address, then frequency, then recency.
+- **Harvest is new-messages-only.** Re-syncing a folder re-upserts every row, and
+  counting those would inflate whoever synced most often rather than whoever the
+  user writes to.
+- **Per-account.** Suggestions are scoped to the `From` account, so a personal
+  contact cannot surface while composing from a work address. Switching the
+  `From` account re-filters the list. The FK to `accounts` means removing an
+  account takes its collected addresses with it.
+- **Backfill.** Mail synced before this existed is harvested by
+  `backfillContactsBatch`, drained in the background at startup (alongside the
+  `search_text` backfill, via the same `drainInBackground` helper in `main.ts`).
+  It walks `messages` by rowid and advances a cursor in `app_preferences`
+  (`contacts_backfill_rowid`) inside the same transaction as the writes, so an
+  interrupted run resumes rather than double-counting.
+- **The UI stays free text.** `RecipientInput` (`src/components/compose/`) is the
+  same comma-separated string the send path always took; autocomplete only ever
+  rewrites the token the caret sits in. `activeToken`/`applySuggestion` are
+  exported and quote a display name containing a comma, so `"Doe, Jane" <j@x>`
+  does not split the list on its way out. ↑/↓ move, Enter/Tab accept, Esc
+  dismisses, and ⌘/Ctrl+Enter is left alone so send stays send.
+- **Not handled:** there is no way to edit, merge, or delete a collected address
+  short of removing the account, and no import from CardDAV or Google Contacts.
+  A one-off correspondent is collected the same as anyone else — ranked bottom,
+  but present. Matching is a `LIKE` scan of the account's contacts on each
+  keystroke (debounced 90ms, ≤6 shown); the table is small enough that this is
+  not indexed beyond `account_id`.
+
 ### Performance notes
 
 - **Optimistic UI** — read/star/flag/move/delete update the list (and open reader)
@@ -519,6 +559,7 @@ orbit-mail/
 | `electron/services/imap-pool.ts` | Pooled per-account IMAP client + per-account op mutex |
 | `electron/services/imap-idle.ts` | IMAP IDLE per account (new mail, flag + expunge push) |
 | `electron/services/db-service.ts` | SQLite CRUD, scope-aware search, unread recalculation |
+| `electron/services/contacts.ts` | Addresses collected from mail for compose autocomplete: harvest, ranking, backfill |
 | `electron/services/ai-service.ts` | Optional AI: message analysis, incremental inbox task sweep (unread/all scope, persisted + cached tasks), encrypted Anthropic key storage |
 | `electron/preload.ts` | Typed `window.orbitMail` IPC bridge |
 | `shared/types.ts` | Shared types and `OrbitMailAPI` contract |
@@ -742,6 +783,7 @@ reimplementing them, so it exercises the shipping code paths:
 | Attachment allowlist | Only files approved in this compose session can be attached: an unapproved path in the list refuses the whole send, the refusal names the offending file, equivalent path spellings (`/tmp/./x`) do not decide approval, `sendMail` refuses before touching credentials or a transport, and closing compose withdraws approval. |
 | Account identity | Re-adding an address with the *same* provider updates the row in place (re-authentication, password changes) and stores the new credentials; re-adding it with a *different* provider is refused, naming both providers, and leaves the existing account and its OAuth refresh token untouched. Other addresses are unaffected. |
 | Account removal | Deleting an account removes its AI Tasks (per-folder, and unified-inbox tasks tied to its messages) as well as its mail — `sweep_tasks` has no foreign key, so the cascade misses them — while another account's tasks survive. |
+| Contacts | Autocomplete addresses are collected with the right polarity — an incoming sender (and anyone cc'd alongside the user) counts as *seen*, a recipient of the user's own mail as *written to*, and the user's own address is never collected. Re-syncing the same message does not inflate the counts. Someone written to once outranks a stranger seen twelve times, while the stranger is still offered lower down; a display name is searchable and a match at the start beats one buried mid-string; a bare address does not erase a known display name; a `LIKE` wildcard in the query matches literally. Suggestions are per-account (another account's contact is not offered, and is offered for its own), removing an account deletes what it collected, and the backfill spans several batches, is a no-op once drained, and does not double-count on a re-run. |
 | Task-orphan cleanup | The one-time migration for tasks left by pre-fix deletions removes a per-folder orphan (folder gone), leaves a unified task whose source message is merely missing (could be a valid todo that aged out of the cache), and is idempotent. |
 | DB maintenance | The freelist reclaim fires only above the 25% / 20MB threshold and not on a small or freshly compacted database; the real `VACUUM` path shrinks the file and zeroes the freelist. |
 | Search | Body search matches a word inside an HTML message (via `search_text`) but not an HTML tag name; an un-backfilled row still matches via the `body_html` fallback; the backfill repopulates `search_text`; the result limit is clamped. |
@@ -786,6 +828,10 @@ one piece of app logic the GreenMail suite cannot reach — it lives in the
 renderer and only talks to the main process through IPC — and it is where the
 optimistic-UI invariants live.
 
+The same harness reaches any pure renderer logic worth pinning down without a
+GUI: it also bundles `src/components/compose/RecipientInput.tsx` for the
+address-token functions below.
+
 | Area | What it asserts |
 |------|-----------------|
 | Delete/refresh race | A list refresh landing *while* a delete is in flight does not resurrect the row, in the list or the count. The main process removes the local SQLite row only after the IMAP round-trip returns, so a refresh in that window reads a DB that still holds the message; `withPendingRemoval` holds it out until the op settles. |
@@ -797,6 +843,7 @@ optimistic-UI invariants live.
 | Reader open failures | A rejected `getThread`/`get` stops the loading flag, records `readerError` with the message and the retry target, and leaves the row selected; `retryReaderLoad` re-runs the right one; a later selection clears the error so it cannot outlive its subject. |
 | Optimistic rollback in conversation view | A star applied to a message in the open conversation, or in an inline-expanded one, shows immediately and updates the collapsed row's aggregate; when the server rejects the write, both the message and the aggregate roll back. The flat list keeps its existing behaviour. |
 | Bulk archive and move | Archive and move batch a multi-selection into one `moveMany`, in both views, with every item aimed at the resolved destination; the rows leave the list; archive does not go out over the delete channel; and a move to the folder the messages are already in is a no-op rather than a round-trip. |
+| Recipient autocomplete | `activeToken` picks the address the caret is in — including when the caret is back inside an earlier one, and without splitting on a comma inside a quoted display name — and `applySuggestion` rewrites only that token: the addresses already entered survive, a completion mid-list leaves what follows intact, the caret lands ready for the next address, a display name containing a comma is re-quoted so the list still parses, and a contact with no name inserts the bare address. Getting these bounds wrong eats an address the user typed, which they would not notice until after sending. |
 
 The stub is deliberately thin — it is the IPC surface the store touches, nothing
 more — so adding a check usually means adding one more method to it. Extend this

@@ -102,8 +102,10 @@ no Electron). `scripts/store-race.mjs` bundles `mailStore.ts` with esbuild, stub
 reach renderer logic: the main-process suite must not import renderer code. It
 covers the optimistic-UI invariants — a refresh landing mid-delete must not
 resurrect the row, a rejected op must release the hold so the rollback restores
-it, and the selection advances to the next row down. Run it after touching
-`src/stores/`. Details in DEVELOPERS.md → Store tests.
+it, and the selection advances to the next row down. It also bundles
+`RecipientInput.tsx` for the address-token math behind recipient autocomplete —
+the same trick works for any pure renderer logic. Run it after touching
+`src/stores/` or that component. Details in DEVELOPERS.md → Store tests.
 
 The larger one is `npm run test:imap` — a growing suite of checks against a real GreenMail server in Docker, inside a windowless Electron main process (the DB needs `app.getPath`, and `better-sqlite3` is built for Electron's ABI). It covers the sync layer (STARTTLS, sync, UIDVALIDITY rebuild, IDLE reconnect, send, lane contention), the security controls (OAuth loopback `state`, credential handling, attachment classification), account-data hygiene (removal deletes AI tasks; freelist reclaim), and pure-logic invariants (launcher badge signal, IPC contract, docs-match-code). It runs in CI on every push. Run it locally after touching anything in `electron/services/`. Details in DEVELOPERS.md → Integration tests.
 
@@ -146,7 +148,7 @@ The schema is defined **twice** and both must be kept consistent:
 
 **To add a column:** add it to the Drizzle table in `schema.ts`, to the `CREATE TABLE` in `index.ts` (for fresh DBs), and append a new `ALTER TABLE ... ADD COLUMN` step to `migrateSchema` (for existing DBs). Migrations are idempotent-by-position — only append, never reorder or edit existing steps.
 
-Notable schema facts (see DEVELOPERS.md for full rationale): Gmail labels are stored as one message row per folder, deduped by `message_id` at query time; threading is derived (`thread_id`) and always scoped by `(account_id, thread_id)`; AI results cache on the `messages` row (`ai_analysis`, `sweep_cache`) as partial columns so ordinary sync upserts leave them intact; there is **no** full-text index — search is a scope-aware `LIKE` over `messages`, and the old contentless `messages_fts` was removed (it was written on every sync and never queried); thread listing depends on two *expression* indexes on `COALESCE(thread_id, id)`, which `schema.ts` can only describe with `sql\`\`` — the `CREATE INDEX` statements in `index.ts` are what actually run.
+Notable schema facts (see DEVELOPERS.md for full rationale): Gmail labels are stored as one message row per folder, deduped by `message_id` at query time; `contacts` is a by-product of sync, not an address book — `harvestContacts` writes it from `upsertMessage` for new messages only (re-counting a re-sync would corrupt the ranking) and it is scoped per account by a cascading FK; threading is derived (`thread_id`) and always scoped by `(account_id, thread_id)`; AI results cache on the `messages` row (`ai_analysis`, `sweep_cache`) as partial columns so ordinary sync upserts leave them intact; there is **no** full-text index — search is a scope-aware `LIKE` over `messages`, and the old contentless `messages_fts` was removed (it was written on every sync and never queried); thread listing depends on two *expression* indexes on `COALESCE(thread_id, id)`, which `schema.ts` can only describe with `sql\`\`` — the `CREATE INDEX` statements in `index.ts` are what actually run.
 
 ## The IPC contract is checked, not just documented
 

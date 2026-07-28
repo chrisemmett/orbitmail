@@ -138,6 +138,10 @@ const api: OrbitMailAPI = {
     getStatus: () => ipcRenderer.invoke('oauth:getStatus'),
     saveCredentials: (values) => ipcRenderer.invoke('oauth:saveCredentials', values)
   },
+  contacts: {
+    suggest: (accountId: string, query: string, limit?: number) =>
+      ipcRenderer.invoke('contacts:suggest', accountId, query, limit)
+  },
   ai: {
     analyze: (messageId: string, force?: boolean, includeAttachments?: boolean) =>
       ipcRenderer.invoke('ai:analyze', messageId, force, includeAttachments),

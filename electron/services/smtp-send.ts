@@ -17,6 +17,7 @@ import { smtpTransportOptions } from './account-credentials'
 import { resolveGoogleAccessToken } from './oauth-google'
 import { refreshMicrosoftToken } from './oauth-microsoft'
 import { assertAttachmentsApproved } from './attachment-allowlist'
+import { harvestContacts } from './contacts'
 
 async function ensureFreshToken(
   accountId: string,
@@ -155,6 +156,24 @@ export async function sendMail(
     await transport.sendMail({ raw, envelope })
   } finally {
     transport.close()
+  }
+
+  // Collect the recipients now rather than waiting for this message to come back
+  // round through a Sent sync — the address you just used should autocomplete on
+  // the very next compose. Bcc is deliberately included: it is a recipient the
+  // user chose, and contacts are local. Harvest must never fail a completed
+  // send, so it is advisory.
+  try {
+    harvestContacts({
+      accountId: payload.accountId,
+      accountEmail: fromAddress,
+      from: fromAddress,
+      to: [payload.to, payload.bcc].filter(Boolean).join(', '),
+      cc: payload.cc,
+      date: Date.now()
+    })
+  } catch (err) {
+    console.warn('[orbit-mail] contact harvest after send failed:', err)
   }
 
   // Only manual IMAP accounts need this. Gmail files SMTP-submitted mail into

@@ -737,6 +737,158 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Contacts: collected from mail, ranked by who you actually write to')
+  // -------------------------------------------------------------------------
+  {
+    // Compose autocomplete has no address book behind it — every suggestion is
+    // an address this account corresponded with. What matters is the polarity
+    // (did the user write to them, or did they just turn up?), because that is
+    // what keeps a one-off stranger below a real correspondent.
+    const { getRawSqlite } = await import('../electron/db')
+    const { suggestContacts, harvestContacts, backfillContactsBatch } = await import(
+      '../electron/services/contacts'
+    )
+    const raw = getRawSqlite()
+    const folder = db.upsertFolder(account.id, 'ContactsBox', 'ContactsBox', 'custom')
+    const me = `Me <${EMAIL}>`
+    const countOf = (address: string) =>
+      raw
+        .prepare('SELECT sent_count AS sent, seen_count AS seen FROM contacts WHERE account_id = ? AND address = ?')
+        .get(account.id, address) as { sent: number; seen: number } | undefined
+
+    raw.prepare('DELETE FROM contacts WHERE account_id = ?').run(account.id)
+
+    // Incoming: the sender is credited as seen, and so are the people cc'd
+    // alongside the user — reply-all is exactly when their addresses are needed.
+    db.upsertMessage({
+      folderId: folder.id, accountId: account.id, uid: 5001,
+      from: 'Nadia Okonjo <nadia@partner.example>', to: me,
+      cc: 'Team Lead <lead@partner.example>',
+      subject: 'Proposal', snippet: '', date: 1000,
+      isRead: true, isStarred: false, hasAttachments: false
+    })
+    ok('an incoming sender is collected as seen, not written-to',
+      countOf('nadia@partner.example')?.seen === 1 && countOf('nadia@partner.example')?.sent === 0,
+      JSON.stringify(countOf('nadia@partner.example')))
+    ok('someone cc’d alongside the user is collected too',
+      countOf('lead@partner.example')?.seen === 1)
+
+    // Outgoing: the account's own address in From is what marks it, and the
+    // recipients are credited as written-to.
+    db.upsertMessage({
+      folderId: folder.id, accountId: account.id, uid: 5002,
+      from: me, to: 'Nadia Okonjo <nadia@partner.example>',
+      subject: 'Re: Proposal', snippet: '', date: 2000,
+      isRead: true, isStarred: false, hasAttachments: false
+    })
+    ok('a recipient of the user’s own mail is collected as written-to',
+      countOf('nadia@partner.example')?.sent === 1,
+      JSON.stringify(countOf('nadia@partner.example')))
+    ok('the user’s own address is never collected as a contact',
+      countOf(EMAIL.toLowerCase()) === undefined)
+
+    // Re-syncing a folder re-upserts every row. If that re-counted, ranking
+    // would drift upward for whatever synced most often rather than whoever the
+    // user actually writes to.
+    db.upsertMessage({
+      folderId: folder.id, accountId: account.id, uid: 5002,
+      from: me, to: 'Nadia Okonjo <nadia@partner.example>',
+      subject: 'Re: Proposal', snippet: '', date: 2000,
+      isRead: true, isStarred: false, hasAttachments: false
+    })
+    ok('re-syncing the same message does not inflate the counts',
+      countOf('nadia@partner.example')?.sent === 1,
+      JSON.stringify(countOf('nadia@partner.example')))
+
+    // A stranger with a much louder presence in the mailbox than the person the
+    // user actually corresponds with.
+    for (let i = 0; i < 12; i++) {
+      db.upsertMessage({
+        folderId: folder.id, accountId: account.id, uid: 5100 + i,
+        from: 'noreply@nadir-newsletter.example', to: me,
+        subject: `Bulletin ${i}`, snippet: '', date: 3000 + i,
+        isRead: true, isStarred: false, hasAttachments: false
+      })
+    }
+    const ranked = suggestContacts(account.id, 'na')
+    ok('someone written to outranks a stranger seen far more often',
+      ranked[0]?.address === 'nadia@partner.example',
+      ranked.map((r) => `${r.address}(s${r.sentCount}/v${r.seenCount})`).join(' | '))
+    ok('the noisy stranger is still offered, just lower',
+      ranked.some((r) => r.address === 'noreply@nadir-newsletter.example'))
+
+    // A display name is searchable, and a match at the start beats one buried
+    // mid-string: typing a name should not be ambushed by a substring hit.
+    harvestContacts({ accountId: account.id, accountEmail: EMAIL, from: me,
+      to: 'Ola Nadal <ola@example.org>', date: 4000 })
+    harvestContacts({ accountId: account.id, accountEmail: EMAIL, from: me,
+      to: 'Nadia Zetterlund <nadia.z@example.org>', date: 4001 })
+    const byName = suggestContacts(account.id, 'nad')
+    const rankOf = (address: string) => byName.findIndex((r) => r.address === address)
+    ok('a display name is searchable, not just the address',
+      rankOf('ola@example.org') >= 0,
+      byName.map((r) => `${r.name ?? '-'} <${r.address}>`).join(' | '))
+    // "Ola Nadal" contains "nad" mid-word; both Nadias start with it. All three
+    // were written to, so nothing but the prefix rule separates them.
+    ok('a match at the start of a name or address beats one buried mid-string',
+      rankOf('ola@example.org') > rankOf('nadia@partner.example') &&
+        rankOf('ola@example.org') > rankOf('nadia.z@example.org'),
+      byName.map((r) => `${r.name ?? '-'} <${r.address}>`).join(' | '))
+
+    // A bare address must not overwrite a real display name learned earlier.
+    harvestContacts({ accountId: account.id, accountEmail: EMAIL, from: me,
+      to: 'nadia@partner.example', date: 5000 })
+    ok('a later bare address does not erase a known display name',
+      suggestContacts(account.id, 'nadia@partner')[0]?.name === 'Nadia Okonjo',
+      String(suggestContacts(account.id, 'nadia@partner')[0]?.name))
+
+    // Wildcards are LIKE syntax; a query containing one must match literally or
+    // a single underscore would suggest the entire address book.
+    ok('a wildcard in the query is escaped, not honoured',
+      suggestContacts(account.id, 'nadi_').length === 0,
+      String(suggestContacts(account.id, 'nadi_').length))
+
+    // Scoping: a second account's correspondents must not surface here.
+    const other = db.saveManualAccount('imap', {
+      authType: 'password', email: 'second@example.com', displayName: 'Second',
+      username: LOGIN, password: PASSWORD,
+      incoming: { host: HOST, port: IMAP_PORT, security: 'none' },
+      outgoing: { host: HOST, port: SMTP_PORT, security: 'none' }
+    })
+    harvestContacts({ accountId: other.id, accountEmail: 'second@example.com',
+      from: 'second@example.com', to: 'Nadine Private <nadine@personal.example>', date: 6000 })
+    ok('another account’s contact is not suggested for this one',
+      suggestContacts(account.id, 'nadine').length === 0)
+    ok('and is suggested for its own account',
+      suggestContacts(other.id, 'nadine')[0]?.address === 'nadine@personal.example')
+
+    // Removing an account takes its collected addresses with it (FK cascade).
+    db.removeAccount(other.id)
+    ok('removing an account deletes the addresses collected from it',
+      (raw.prepare('SELECT COUNT(*) AS n FROM contacts WHERE account_id = ?').get(other.id) as { n: number }).n === 0)
+
+    // The backfill walks mail that predates the feature. It must be resumable
+    // without double-counting: the cursor advances in the same transaction as
+    // the writes, so re-running it changes nothing.
+    raw.prepare('DELETE FROM contacts WHERE account_id = ?').run(account.id)
+    raw.prepare("DELETE FROM app_preferences WHERE key = 'contacts_backfill_rowid'").run()
+    let drained = 0
+    while (backfillContactsBatch(5) > 0) drained++
+    const afterFirst = countOf('nadia@partner.example')
+    ok('the backfill collects addresses from mail already in the database',
+      !!afterFirst && afterFirst.sent >= 1 && afterFirst.seen >= 1,
+      JSON.stringify(afterFirst))
+    ok('it takes more than one batch, so the cursor is doing the work', drained > 1, `batches=${drained}`)
+    ok('re-running the drained backfill is a no-op', backfillContactsBatch(5) === 0)
+    ok('and the counts did not move', JSON.stringify(countOf('nadia@partner.example')) === JSON.stringify(afterFirst),
+      JSON.stringify(countOf('nadia@partner.example')))
+
+    raw.prepare('DELETE FROM messages WHERE folder_id = ?').run(folder.id)
+    raw.prepare('DELETE FROM contacts WHERE account_id = ?').run(account.id)
+    raw.prepare("DELETE FROM app_preferences WHERE key = 'contacts_backfill_rowid'").run()
+  }
+
+  // -------------------------------------------------------------------------
   section('POP3: a stalled server times out instead of wedging all sync')
   // -------------------------------------------------------------------------
   {
