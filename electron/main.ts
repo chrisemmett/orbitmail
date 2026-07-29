@@ -1405,8 +1405,8 @@ function registerIpc(): void {
       draftReply(messageId, { tone, mode })
   )
 
-  ipcMain.handle('ai:sweep', (_, folderId: string, scope: SweepScope) =>
-    sweepTasks(folderId, scope)
+  ipcMain.handle('ai:sweep', (_, folderId: string, scope: SweepScope, force?: boolean) =>
+    sweepTasks(folderId, scope, force === true)
   )
 
   ipcMain.handle('ai:getTasks', (_, folderId: string) => getPersistedTasks(folderId))

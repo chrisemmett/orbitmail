@@ -59,6 +59,11 @@ function readRawState(): PersistedAppState {
       mutedSenders: parsed.mutedSenders ?? [],
       blockedSenders: parsed.blockedSenders ?? [],
       imageAllowedSenders: parsed.imageAllowedSenders ?? [],
+      // Left as read: `resolveAiModel`/`resolveAiEffort` do the validating at
+      // the point of use, so an unrecognised value here is inert rather than
+      // silently rewritten to the default behind the user's back.
+      aiModel: parsed.aiModel,
+      aiEffort: parsed.aiEffort,
       window: parsed.window
     }
   } catch {
@@ -143,7 +148,9 @@ export function patchAppState(patch: Partial<PersistedAppState>): PersistedAppSt
       patch.alwaysLoadRemoteImages ?? current.alwaysLoadRemoteImages ?? false,
     mutedSenders: patch.mutedSenders ?? current.mutedSenders ?? [],
     blockedSenders: patch.blockedSenders ?? current.blockedSenders ?? [],
-    imageAllowedSenders: patch.imageAllowedSenders ?? current.imageAllowedSenders ?? []
+    imageAllowedSenders: patch.imageAllowedSenders ?? current.imageAllowedSenders ?? [],
+    aiModel: patch.aiModel ?? current.aiModel,
+    aiEffort: patch.aiEffort ?? current.aiEffort
   }
   saveAppState(next)
   return next

@@ -16,6 +16,7 @@ import type {
   DraftTone,
   PlatformCapabilities
 } from '../../shared/types'
+import { DEFAULT_AI_EFFORT, DEFAULT_AI_MODEL, type AiEffort } from '../../shared/ai-models'
 import {
   loadPersistedPreferences,
   scheduleSaveUiPreferences
@@ -39,6 +40,8 @@ export interface GlobalPreferences {
   desktopNotifications: boolean
   alwaysLoadRemoteImages: boolean
   handleMailtoLinks: boolean
+  aiModel: string
+  aiEffort: AiEffort
 }
 
 interface MailState {
@@ -106,6 +109,11 @@ interface MailState {
   desktopNotifications: boolean
   alwaysLoadRemoteImages: boolean
   handleMailtoLinks: boolean
+  // Which model the AI features call, and how hard it thinks. Held here for the
+  // settings pane; the main process reads the persisted values itself rather
+  // than being told, so an AI request never depends on the renderer.
+  aiModel: string
+  aiEffort: AiEffort
   // What this desktop can actually do; null until asked. Settings disables a
   // control rather than offering one that would do nothing.
   platformCapabilities: PlatformCapabilities | null
@@ -255,6 +263,8 @@ export const useMailStore = create<MailState>((set) => ({
   desktopNotifications: true,
   alwaysLoadRemoteImages: false,
   handleMailtoLinks: false,
+  aiModel: DEFAULT_AI_MODEL,
+  aiEffort: DEFAULT_AI_EFFORT,
   platformCapabilities: null,
   showTasks: false,
   sweeping: false,
@@ -2570,8 +2580,10 @@ export async function openTasksDialog(): Promise<void> {
 }
 
 // Run a fresh sweep of the current folder for outstanding tasks using the
-// selected scope. Errors surface via toast (and open AI settings if no key).
-export async function runSweep(scope?: SweepScope): Promise<void> {
+// selected scope. `force` re-sends mail that has already been analyzed, which
+// costs tokens — the caller is expected to have asked first.
+// Errors surface via toast (and open AI settings if no key).
+export async function runSweep(scope?: SweepScope, force = false): Promise<void> {
   const store = useMailStore.getState()
   if (store.sweeping) return
   const useScope = scope ?? store.sweepScope
@@ -2579,7 +2591,7 @@ export async function runSweep(scope?: SweepScope): Promise<void> {
   store.setShowTasks(true)
   store.setSweeping(true)
   try {
-    const result = await window.orbitMail.ai.sweep(store.selectedFolderId, useScope)
+    const result = await window.orbitMail.ai.sweep(store.selectedFolderId, useScope, force)
     if ('error' in result) {
       store.setToast(result.error)
       const status = await window.orbitMail.ai.getStatus()
@@ -2591,7 +2603,7 @@ export async function runSweep(scope?: SweepScope): Promise<void> {
       store.setToast(
         result.freshCount === 0
           ? 'No new mail to analyze — reused cached results (no tokens spent).'
-          : `Analyzed ${result.freshCount} new message${result.freshCount === 1 ? '' : 's'}.`
+          : `Analyzed ${result.freshCount} ${force ? '' : 'new '}message${result.freshCount === 1 ? '' : 's'}.`
       )
     }
   } catch (err) {

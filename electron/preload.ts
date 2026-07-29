@@ -171,8 +171,8 @@ const api: OrbitMailAPI = {
       ipcRenderer.invoke('ai:analyze', messageId, force, includeAttachments),
     draftReply: (messageId: string, tone: DraftTone, mode?: 'reply' | 'reply-all') =>
       ipcRenderer.invoke('ai:draftReply', messageId, tone, mode),
-    sweep: (folderId: string, scope: SweepScope) =>
-      ipcRenderer.invoke('ai:sweep', folderId, scope),
+    sweep: (folderId: string, scope: SweepScope, force?: boolean) =>
+      ipcRenderer.invoke('ai:sweep', folderId, scope, force),
     getTasks: (folderId: string) => ipcRenderer.invoke('ai:getTasks', folderId),
     flagAsTask: (folderId: string, messageId: string) =>
       ipcRenderer.invoke('ai:flagAsTask', folderId, messageId),

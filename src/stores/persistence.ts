@@ -1,4 +1,5 @@
 import type { UiPreferences } from '../../shared/types'
+import { resolveAiEffort, resolveAiModel } from '../../shared/ai-models'
 import { useThemeStore } from './themeStore'
 import { useMailStore } from './mailStore'
 
@@ -45,7 +46,12 @@ export async function loadPersistedPreferences(): Promise<void> {
     closeToTray: state.closeToTray !== false,
     desktopNotifications: state.desktopNotifications !== false,
     alwaysLoadRemoteImages: state.alwaysLoadRemoteImages === true,
-    handleMailtoLinks: state.handleMailtoLinks === true
+    handleMailtoLinks: state.handleMailtoLinks === true,
+    // Resolved, not taken as read: the settings pane has to show the model that
+    // will actually be called, and main falls back the same way for a value it
+    // does not recognise.
+    aiModel: resolveAiModel(state.aiModel),
+    aiEffort: resolveAiEffort(state.aiEffort)
   })
 }
 

@@ -1800,6 +1800,19 @@ async function main(): Promise<void> {
     ok('remote images are still blocked — the private default is the absent one',
       migrated.alwaysLoadRemoteImages === false,
       String(migrated.alwaysLoadRemoteImages))
+
+    // The AI model pair is the one place where absent does *not* mean "keep
+    // doing what you did": the stored value is read through a resolver, so an
+    // install that never chose a model gets the current default.
+    const models = await import('../shared/ai-models')
+    ok('a blob with no AI model resolves to the default',
+      migrated.aiModel === undefined &&
+        models.resolveAiModel(migrated.aiModel) === models.DEFAULT_AI_MODEL,
+      String(migrated.aiModel))
+    ok('and no AI effort resolves to the default',
+      migrated.aiEffort === undefined &&
+        models.resolveAiEffort(migrated.aiEffort) === models.DEFAULT_AI_EFFORT,
+      String(migrated.aiEffort))
     ok('and the settings that were already there survive untouched',
       migrated.ui.darkMode === true &&
         migrated.ui.threadedView === false &&
@@ -1821,6 +1834,69 @@ async function main(): Promise<void> {
       raw
         .prepare("UPDATE app_preferences SET value = ? WHERE key = 'app_state'")
         .run(saved.value)
+    } else {
+      raw.prepare("DELETE FROM app_preferences WHERE key = 'app_state'").run()
+    }
+    prefs.resetPreferencesCacheForTests()
+  }
+
+  // -------------------------------------------------------------------------
+  section('AI model: a stored choice round-trips, a bad one falls back')
+  // -------------------------------------------------------------------------
+  {
+    // The model and effort reach the API from a JSON blob on disk, so what is
+    // in that blob is untrusted input: a value written by a build that offered
+    // a model this one does not would otherwise be sent verbatim and 404 every
+    // AI feature. The resolvers are what keep that from happening, and the
+    // catalogue itself has a constraint — every entry must support `effort`,
+    // which is why Haiku is not in it.
+    const models = await import('../shared/ai-models')
+    const prefs = await import('../electron/services/preferences-service')
+    const { getRawSqlite } = await import('../electron/db')
+    const raw = getRawSqlite()
+    const saved = raw
+      .prepare("SELECT value FROM app_preferences WHERE key = 'app_state'")
+      .get() as { value: string } | undefined
+
+    ok('the default model is in the catalogue',
+      models.AI_MODELS.some((m) => m.id === models.DEFAULT_AI_MODEL),
+      models.DEFAULT_AI_MODEL)
+    ok('the default effort is in the catalogue',
+      models.AI_EFFORTS.some((e) => e.value === models.DEFAULT_AI_EFFORT),
+      models.DEFAULT_AI_EFFORT)
+
+    ok('a known model is kept as chosen',
+      models.resolveAiModel('claude-sonnet-5') === 'claude-sonnet-5')
+    ok('an unknown model falls back rather than reaching the API',
+      models.resolveAiModel('claude-does-not-exist') === models.DEFAULT_AI_MODEL,
+      models.resolveAiModel('claude-does-not-exist'))
+    ok('an unknown effort falls back too',
+      models.resolveAiEffort('xhigh') === models.DEFAULT_AI_EFFORT,
+      models.resolveAiEffort('xhigh'))
+
+    // Haiku 4.5 does structured outputs but rejects `output_config.effort`, so
+    // listing it would mean a per-model conditional on every request. If it is
+    // ever added, that conditional has to be added with it.
+    ok('no listed model rejects the effort parameter',
+      !models.AI_MODELS.some((m) => m.id.includes('haiku')),
+      models.AI_MODELS.map((m) => m.id).join(', '))
+
+    prefs.patchAppState({ aiModel: 'claude-opus-4-8', aiEffort: 'high' })
+    prefs.resetPreferencesCacheForTests()
+    const reread = prefs.getAppState()
+    ok('a chosen model survives a fresh read of the blob',
+      reread.aiModel === 'claude-opus-4-8' && reread.aiEffort === 'high',
+      JSON.stringify({ model: reread.aiModel, effort: reread.aiEffort }))
+
+    // Patching something else must not drop it — the same failure the explicit
+    // per-key merge lines in patchAppState exist to prevent.
+    prefs.patchAppState({ lastSyncAt: 2 })
+    ok('a patch of an unrelated key leaves the model alone',
+      prefs.getAppState().aiModel === 'claude-opus-4-8',
+      String(prefs.getAppState().aiModel))
+
+    if (saved) {
+      raw.prepare("UPDATE app_preferences SET value = ? WHERE key = 'app_state'").run(saved.value)
     } else {
       raw.prepare("DELETE FROM app_preferences WHERE key = 'app_state'").run()
     }

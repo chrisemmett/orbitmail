@@ -34,9 +34,10 @@ import {
   type SweepMessage
 } from './db-service'
 import { extractAddress, splitAddressList } from '../../shared/addresses'
+import { resolveAiEffort, resolveAiModel, type AiEffort } from '../../shared/ai-models'
+import { getAppState } from './preferences-service'
 
 const AI_KEY_PREF = 'ai_api_key'
-const MODEL = 'claude-opus-4-8'
 const MAX_BODY_CHARS = 8000
 // Attachments are opt-in for analysis (they cost extra tokens). Bound what we
 // send: skip anything larger than this, and truncate extracted text.
@@ -49,6 +50,34 @@ const SWEEP_BODY_CHARS = 1500
 const COMPLETED_TASK_TTL_MS = 30 * 24 * 60 * 60 * 1000
 // How many recent completed tasks to show the model as "already done".
 const COMPLETED_CONTEXT_LIMIT = 25
+
+// `max_tokens` bounds the model's thinking *and* its reply together, and Claude
+// Opus 5 thinks by default where Opus 4.8 did not. A budget sized for the JSON
+// alone can therefore be spent reasoning and truncate the answer — which the
+// schema-constrained parse then rejects outright, so it reads as "the model
+// returned nothing usable" rather than as a token limit. These are small
+// extractions; the headroom is only billed if it is used.
+const ANALYSIS_MAX_TOKENS = 8192
+const DRAFT_MAX_TOKENS = 8192
+const SWEEP_MAX_TOKENS = 16384
+const FLAG_TASK_MAX_TOKENS = 4096
+
+/**
+ * Which model to call and how hard to let it think, read fresh on every request
+ * rather than captured at module load — the settings pane can change either
+ * between one AI action and the next.
+ *
+ * Both values are resolved through `shared/ai-models.ts`, so a preferences blob
+ * naming a model this build does not offer falls back to the default instead of
+ * turning every AI feature into a 404.
+ */
+function modelConfig(): { model: string; effort: AiEffort } {
+  const state = getAppState()
+  return {
+    model: resolveAiModel(state.aiModel),
+    effort: resolveAiEffort(state.aiEffort)
+  }
+}
 
 // ---------------------------------------------------------------------------
 // API key storage (encrypted at rest via Electron safeStorage, mirrors the
@@ -361,13 +390,14 @@ ${body || '(no body content)'}`)}`
   }
 
   const client = new Anthropic({ apiKey })
+  const { model, effort } = modelConfig()
 
   try {
     const response = await client.messages.parse({
-      model: MODEL,
-      max_tokens: 2048,
+      model,
+      max_tokens: ANALYSIS_MAX_TOKENS,
       output_config: {
-        effort: 'low',
+        effort,
         format: jsonSchemaOutputFormat(ANALYSIS_SCHEMA)
       },
       system: SYSTEM_PROMPT,
@@ -540,13 +570,14 @@ export async function draftReply(
 ${blocks.join('\n\n---\n\n')}`
 
   const client = new Anthropic({ apiKey })
+  const { model, effort } = modelConfig()
 
   try {
     const response = await client.messages.parse({
-      model: MODEL,
-      max_tokens: 2048,
+      model,
+      max_tokens: DRAFT_MAX_TOKENS,
       output_config: {
-        effort: 'low',
+        effort,
         format: jsonSchemaOutputFormat(DRAFT_SCHEMA)
       },
       system: draftSystemPrompt(userName, tone, mode),
@@ -699,7 +730,8 @@ function taskDedupeKey(sourceMessageId: string, task: string): string {
 
 export async function sweepTasks(
   folderId: string | 'unified',
-  scope: SweepScope = 'unread'
+  scope: SweepScope = 'unread',
+  force = false
 ): Promise<SweepResult | { error: string }> {
   const apiKey = getApiKey()
   if (!apiKey) {
@@ -725,7 +757,14 @@ export async function sweepTasks(
   // Incremental sweep: only messages we've never analyzed need an API call.
   // Everything else reuses its cached per-message extraction, so a re-sweep of
   // an unchanged inbox spends zero tokens.
-  const uncached = msgs.filter((m) => m.sweepCache === null)
+  //
+  // `force` sends everything in scope again and overwrites the cache with the
+  // new answer. The cache is otherwise never invalidated — an IMAP body does
+  // not change, so the only reason to re-read one is that *we* changed, by
+  // moving to a different model or a longer-thinking one. That is a decision
+  // the user makes and pays for, so it is a separate button rather than
+  // something a sweep does on its own.
+  const uncached = force ? msgs : msgs.filter((m) => m.sweepCache === null)
   const extracted = new Map<string, CachedTask[]>()
 
   if (uncached.length > 0) {
@@ -745,13 +784,14 @@ export async function sweepTasks(
 
     const client = new Anthropic({ apiKey })
     const allowedIds = new Set(uncached.map((m) => m.id))
+    const { model, effort } = modelConfig()
 
     try {
       const response = await client.messages.parse({
-        model: MODEL,
-        max_tokens: 4096,
+        model,
+        max_tokens: SWEEP_MAX_TOKENS,
         output_config: {
-          effort: 'low',
+          effort,
           format: jsonSchemaOutputFormat(SWEEP_SCHEMA)
         },
         system: SWEEP_SYSTEM_PROMPT,
@@ -870,10 +910,11 @@ export async function flagMessageAsTask(
   let priority: AiPriority = 'medium'
   try {
     const client = new Anthropic({ apiKey })
+    const { model, effort } = modelConfig()
     const response = await client.messages.parse({
-      model: MODEL,
-      max_tokens: 1024,
-      output_config: { effort: 'low', format: jsonSchemaOutputFormat(FLAG_TASK_SCHEMA) },
+      model,
+      max_tokens: FLAG_TASK_MAX_TOKENS,
+      output_config: { effort, format: jsonSchemaOutputFormat(FLAG_TASK_SCHEMA) },
       system: FLAG_TASK_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: `Identify the task from this email.\n\n${block}` }]
     })
