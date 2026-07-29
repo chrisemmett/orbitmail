@@ -1,10 +1,19 @@
 import { useEffect, useState } from 'react'
-import { useMailStore } from '../../stores/mailStore'
+import {
+  AI_EFFORTS,
+  AI_MODELS,
+  resolveAiEffort,
+  resolveAiModel,
+  type AiEffort
+} from '../../../shared/ai-models'
+import { useMailStore, setGlobalPreference } from '../../stores/mailStore'
 
 // The body of what used to be AiSettingsDialog, minus its overlay and Close
 // button — the settings shell owns both now.
 export function AiPane() {
   const setToast = useMailStore((s) => s.setToast)
+  const aiModel = useMailStore((s) => s.aiModel)
+  const aiEffort = useMailStore((s) => s.aiEffort)
   const [configured, setConfigured] = useState<boolean | null>(null)
   const [key, setKey] = useState('')
   const [saving, setSaving] = useState(false)
@@ -52,7 +61,11 @@ export function AiPane() {
     }
   }
 
+  const modelHint = AI_MODELS.find((m) => m.id === resolveAiModel(aiModel))?.hint
+  const effortHint = AI_EFFORTS.find((e) => e.value === resolveAiEffort(aiEffort))?.hint
+
   return (
+    <>
     <section className="settings-section">
       <h3>Anthropic API key</h3>
       <p className="account-hint">
@@ -102,5 +115,53 @@ export function AiPane() {
         </button>
       </div>
     </section>
+
+    <section className="settings-section">
+      <h3>Model</h3>
+      <p className="account-hint">
+        Which Claude model the AI features call, and how long it may think before answering.
+        Both affect what you are billed by Anthropic — a more capable model and a higher effort
+        cost more per message.
+      </p>
+
+      <label className="account-field">
+        <span>Model</span>
+        <select
+          value={resolveAiModel(aiModel)}
+          onChange={(event) => void setGlobalPreference('aiModel', event.target.value)}
+        >
+          {AI_MODELS.map((model) => (
+            <option key={model.id} value={model.id}>
+              {model.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      {modelHint && <p className="account-hint">{modelHint}</p>}
+
+      <label className="account-field">
+        <span>Effort</span>
+        <select
+          value={resolveAiEffort(aiEffort)}
+          onChange={(event) =>
+            void setGlobalPreference('aiEffort', event.target.value as AiEffort)
+          }
+        >
+          {AI_EFFORTS.map((effort) => (
+            <option key={effort.value} value={effort.value}>
+              {effort.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      {effortHint && <p className="account-hint">{effortHint}</p>}
+
+      <p className="account-hint">
+        A change applies to the next analysis, draft or sweep. Results already saved are kept —
+        the Tasks dialog has a <strong>Re-analyze all</strong> button for re-running a folder
+        under the new setting.
+      </p>
+    </section>
+    </>
   )
 }

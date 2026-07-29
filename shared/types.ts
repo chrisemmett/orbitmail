@@ -1,3 +1,5 @@
+import type { AiEffort } from './ai-models'
+
 export type Provider = 'gmail' | 'o365' | 'imap' | 'pop3'
 
 export type FolderType = 'inbox' | 'sent' | 'drafts' | 'trash' | 'junk' | 'custom'
@@ -290,6 +292,13 @@ export interface PersistedAppState {
   blockedSenders: string[]
   /** Senders whose remote images are loaded without the block prompt. */
   imageAllowedSenders: string[]
+  /**
+   * Which Claude model the AI features call, and how hard it may think. Absent
+   * means the defaults in `shared/ai-models.ts`; anything unrecognised is
+   * resolved back to them rather than sent to the API.
+   */
+  aiModel?: string
+  aiEffort?: AiEffort
   window?: WindowPreferences
 }
 
@@ -591,7 +600,16 @@ export interface OrbitMailAPI {
       tone: DraftTone,
       mode?: 'reply' | 'reply-all'
     ) => Promise<AiDraftResult>
-    sweep: (folderId: string | 'unified', scope: SweepScope) => Promise<AiSweepResult>
+    /**
+     * `force` re-runs the model over every message in scope, ignoring the
+     * per-message cache. Without it a sweep only sends mail it has never
+     * analyzed, so a re-sweep of an unchanged folder spends nothing.
+     */
+    sweep: (
+      folderId: string | 'unified',
+      scope: SweepScope,
+      force?: boolean
+    ) => Promise<AiSweepResult>
     getTasks: (folderId: string | 'unified') => Promise<SweepResult>
     // Force one email into the current task list, using the model to identify
     // the action. Persists as a manual task that sweeps won't remove.

@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { AiPriority, SweepScope, SweepTask } from '../../../shared/types'
 import {
   useMailStore,
@@ -45,6 +46,9 @@ export function TasksDialog({ onClose }: TasksDialogProps) {
   const scope = useMailStore((s) => s.sweepScope)
   const setSweepScope = useMailStore((s) => s.setSweepScope)
   const sweptAt = useMailStore((s) => s.sweepSweptAt)
+  // A re-sweep is free when nothing has arrived; re-analyzing everything is
+  // not, so it confirms first and says what it is about to spend.
+  const [confirmingReanalyze, setConfirmingReanalyze] = useState(false)
 
   const handleOpen = (task: SweepTask) => {
     void selectMessage(task.sourceMessageId)
@@ -79,6 +83,16 @@ export function TasksDialog({ onClose }: TasksDialogProps) {
                 </button>
               ))}
             </div>
+            {hasSwept && (
+              <button
+                type="button"
+                className="reader-ai-regenerate"
+                disabled={sweeping}
+                onClick={() => setConfirmingReanalyze(true)}
+              >
+                Re-analyze all
+              </button>
+            )}
             <button
               type="button"
               className="reader-ai-regenerate"
@@ -89,6 +103,36 @@ export function TasksDialog({ onClose }: TasksDialogProps) {
             </button>
           </div>
         </div>
+
+        {confirmingReanalyze && !sweeping && (
+          <div className="tasks-reanalyze-confirm">
+            <p className="account-hint">
+              Re-analyze all sends every {scopeLabel} in this folder to the model again, including
+              the ones already analyzed, and replaces their saved results. It costs tokens — a
+              plain Re-sweep only looks at mail that has arrived since. Worth it after changing the
+              model or effort in Settings.
+            </p>
+            <div className="settings-section-actions">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setConfirmingReanalyze(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => {
+                  setConfirmingReanalyze(false)
+                  void runSweep(scope, true)
+                }}
+              >
+                Re-analyze all
+              </button>
+            </div>
+          </div>
+        )}
 
         {sweeping ? (
           <p className="tasks-loading">Reviewing {scope === 'all' ? 'your mail' : 'unread mail'} for outstanding tasks…</p>

@@ -2079,6 +2079,18 @@ textarea {
   margin: 4px 0 12px;
 }
 
+.tasks-reanalyze-confirm {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--accent-soft);
+  padding: 10px 12px;
+  margin: 10px 0 4px;
+}
+
+.tasks-reanalyze-confirm .account-hint {
+  margin-top: 0;
+}
+
 .tasks-list {
   display: flex;
   flex-direction: column;

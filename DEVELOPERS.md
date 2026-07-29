@@ -126,7 +126,34 @@ MICROSOFT_TENANT_ID=common
 
 The AI features — per-message **Analyze**, **Draft reply**, and the folder **Tasks** sweep — are off unless the user supplies an Anthropic API key. Unlike the OAuth credentials above, this key is **not** read from `.env`: it's entered in-app (✦ toolbar button → AI settings), encrypted with Electron `safeStorage`, and stored in the `app_preferences` table under `ai_api_key`. So there is nothing to configure at build time for AI.
 
-`electron/services/ai-service.ts` uses `@anthropic-ai/sdk` with model `claude-opus-4-8` and structured output. Message content is sent to Anthropic only when the user triggers a feature. On **Analyze**, the user can opt to include a message's attachments for extra context (text extracted inline; images and PDFs sent as native content blocks) — the UI prompts first because attachments increase token usage.
+`electron/services/ai-service.ts` uses `@anthropic-ai/sdk` with structured output (`messages.parse` against a JSON schema, one per feature). Message content is sent to Anthropic only when the user triggers a feature. On **Analyze**, the user can opt to include a message's attachments for extra context (text extracted inline; images and PDFs sent as native content blocks) — the UI prompts first because attachments increase token usage.
+
+### Model and effort
+
+The model and the `output_config.effort` level are user preferences, chosen in
+Settings → AI and stored in the `app_state` blob as `aiModel` / `aiEffort`.
+`modelConfig()` reads them **per request**, so a change applies to the next
+action rather than the next launch, and main reads the persisted values itself —
+the renderer never passes a model over IPC.
+
+The catalogue is `shared/ai-models.ts`, shared because both sides need it: the
+settings pane renders the options, and main validates against it.
+`resolveAiModel` / `resolveAiEffort` **fall back rather than trust** what they
+are handed — the values come out of a JSON blob that an older build or a hand
+edit may have written, and an unrecognised model string is a 404 that would look
+like every AI feature failing at once. Defaults: `claude-opus-5`, effort `low`.
+
+Every listed model must support **both** structured outputs and `effort`. Claude
+Haiku 4.5 supports the first and not the second, so it is deliberately absent
+rather than handled with a per-model conditional at each call site; `test:imap`
+pins that no listed model rejects `effort`.
+
+`max_tokens` bounds the model's thinking *and* its reply together. Claude Opus 5
+thinks by default where Opus 4.8 did not, so the four per-feature budgets
+(`ANALYSIS_MAX_TOKENS` and friends) carry headroom: a budget sized for the JSON
+alone can be spent reasoning and truncate the answer, and a truncated answer
+fails the schema-constrained parse — surfacing as "the model returned nothing
+usable" rather than as a token limit. Unused output tokens are not billed.
 
 **Draft reply** (`ai:draftReply`, `draftReply` in `ai-service.ts`) takes a tone
 (`DraftTone` — brief / neutral / detailed) and a mode (`'reply' | 'reply-all'`),
@@ -168,6 +195,7 @@ the control, and the README says so.
 
 - The sweep scans **unread** mail by default or **all** messages in the folder (`SweepScope`, chosen in the dialog).
 - Each message's extracted tasks are cached on its own row (`sweep_cache` = JSON `{ task, priority }[]`, `sweep_cache_at`). A NULL cache means "never analysed"; an empty array means "analysed, produced no tasks". A sweep only sends messages whose cache is NULL, so re-sweeping an unchanged folder makes **no** API call — the result reports `freshCount: 0`. The cache is a partial column so ordinary sync/flag updates in `upsertMessage` leave it intact, and it cascade-deletes with the message.
+- The cache is never invalidated on its own: an IMAP body does not change, so the only reason to re-read one is that *we* changed — a different model, or a longer-thinking one. `ai:sweep` therefore takes a third `force` argument which sends everything in scope again and overwrites the cache. It is a separate, confirmed **Re-analyze all** button in the Tasks dialog rather than something a re-sweep does, because it costs tokens where a re-sweep does not.
 - Sweep results are persisted per folder in the `sweep_tasks` table (composite PK `(folder_id, id)`, where `id` is a stable dedupe key of source message + normalised task text). `open` rows are the outstanding tasks and are replaced on each sweep; `completed` rows are the user's ticked-off history (pruned after 30 days). Completed tasks are fed back into the prompt ("do NOT list these again") and filtered client-side so they never resurface. Per-folder sweep metadata (last run time, count, scope) lives in `app_preferences` under `ai_sweep_meta`.
 - Opening the Tasks dialog calls `ai:getTasks` (a pure DB read, no tokens); `ai:sweep` runs a fresh incremental sweep; `ai:completeTask` / `ai:reopenTask` toggle a task's status. `ai:exportTasks` writes the current list to a Markdown file — the renderer builds the Markdown (`src/utils/taskExport.ts`) and main handles the save dialog + file write. The **Print** button reuses the generic `print:document` channel: `taskExport.ts` also builds a self-contained HTML document (`buildTasksPrintHtml`, headed by the selected account's name) which main loads into a hidden `javascript: false` window and sends to the OS print dialog — no task-specific IPC.
 
@@ -198,7 +226,7 @@ the control, and the README says so.
 | SMTP | nodemailer |
 | Parsing | mailparser |
 | OAuth | google-auth-library, @azure/msal-node |
-| AI (optional) | @anthropic-ai/sdk (Claude Opus 4.8) |
+| AI (optional) | @anthropic-ai/sdk (Claude Opus 5 by default; chosen in Settings → AI) |
 | Storage | better-sqlite3, Drizzle ORM |
 | HTML sanitization | DOMPurify |
 
@@ -935,6 +963,7 @@ orbit-mail/
 | `electron/services/ai-service.ts` | Optional AI: message analysis, incremental inbox task sweep (unread/all scope, persisted + cached tasks), encrypted Anthropic key storage |
 | `electron/preload.ts` | Typed `window.orbitMail` IPC bridge |
 | `shared/types.ts` | Shared types and `OrbitMailAPI` contract |
+| `shared/ai-models.ts` | The selectable Claude models and effort levels, and the resolvers that validate a stored choice |
 | `src/stores/mailStore.ts` | Renderer state, message list refresh |
 | `src/stores/persistence.ts` | UI preference persistence |
 
@@ -1159,6 +1188,7 @@ reimplementing them, so it exercises the shipping code paths:
 | Drafts | An empty composer is not saved (nor a quoted reply with nothing typed); a draft with content saves, edits update the *same* row rather than accumulating one per keystroke burst, and clearing it deletes the row. It appears in the Drafts folder in both flat and threaded views with `countMessages` agreeing, and does not leak into another folder or its count. Reopening restores the body **and the threading headers**, so a resumed reply still lands in its conversation, and carries its own id back. An attachment still on disk is restored; one that has vanished is named rather than silently dropped. Drafts are per account and cascade away with it. |
 | Blocked senders | A blocked sender disappears from the flat list, the conversation list, search and the unread count — **and `countMessages`/`countThreads` agree with what is listed**, which is the bug that would otherwise ship. An address that merely *contains* a blocked one (`notspam@` vs `spam@`) is not hidden. Unblocking restores everything with no refetch and nothing was deleted from the database. A Sent folder is exempt, so blocking your own address cannot empty it. A muted sender is still listed and still counted — mute is not block. Blocking normalizes the address, unblocking matches case-insensitively, and removing a sender who was never listed writes nothing. |
 | Account credentials | `toManualSettings` has **no `password` key at all** (asserted on key absence, since `password: undefined` still serialises the name) and no key beyond the seven it declares, reports `hasPassword`, and carries the server settings through intact. An update omitting the password keeps the stored one — proved by the account still authenticating afterwards — applies the rest of the edit, and leaves the sync window alone. An edit that cannot connect is rejected *and nothing is written*. Testing a wrong password fails; testing the stored settings succeeds. |
+| AI model choice | A chosen model and effort survive a fresh read of the blob and are not dropped by a patch of an unrelated key; a blob predating the setting resolves to the defaults; an unknown model or effort — from an older build or a hand edit — falls back instead of reaching the API, where it would 404 every AI feature. Both defaults are in the catalogue, and no listed model rejects `output_config.effort` (which is why Haiku is absent). |
 | Accounts pane selection | `resolveSelectedAccountId` — shows the first account by default, the one Settings was opened *for* when that account still exists, keeps an existing selection otherwise, and falls back rather than pointing at an account that has just been removed (which would render an empty pane). |
 | Remote-image gating | `isRemoteContentBlocked` — blocked by default, never "blocked" without remote content, unblocked by the global setting, by this sender's allowlist entry (but not another sender's), or by loading once this session. Whether a tracking pixel fires is not left to a manual click-through. |
 | Forward | A forward is `Fwd:`-prefixed with no recipient pre-filled and keeps the original as *quoted* text (not in the editable body), and the original's attachments come with it as real files rather than placeholders. An attachment that cannot be fetched is reported by name instead of being silently dropped, and the reachable ones still go. `forward-attachment` keeps the original whole rather than quoting it. |

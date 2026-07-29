@@ -107,8 +107,10 @@ Off by default. Nothing is sent anywhere until you add an
   tells the draft whether it is writing to one person or to the whole thread.
 - **Tasks** sweeps a whole folder into one prioritised list, each task linking
   back to its email. Tick things off and they stay off. Re-running a sweep only
-  looks at mail it has not seen before, so it does not spend tokens twice. You
-  can print the list for an account, or export it to a Markdown file.
+  looks at mail it has not seen before, so it does not spend tokens twice —
+  **Re-analyze all** is there for when you do want the whole folder read again,
+  and says so before it spends anything. You can print the list for an account,
+  or export it to a Markdown file.
 
 ## Install
 
@@ -169,7 +171,10 @@ The gear, or `Ctrl` + `,`. What you can change today:
   security and password, with a **Test connection** button — settings that do
   not work are not saved. Changing the address itself means removing the account
   and adding it again.
-- **AI** — your Anthropic API key.
+- **AI** — your Anthropic API key, and which Claude model the AI features use
+  and how long it may think before answering. A more capable model, or a higher
+  effort, costs more per message on your Anthropic bill. A change applies to the
+  next thing you ask for; results already saved are kept.
 
 The gear beside an account in the sidebar, and right-clicking a folder, both
 open this screen on that account.
