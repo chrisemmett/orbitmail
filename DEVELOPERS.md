@@ -609,10 +609,24 @@ Details worth keeping:
 - Only an **image** paste is intercepted; pasting text keeps the browser's own
   handling, which carries formatting across.
 
-**Not handled:** inline images in *received* mail still do not render. Nothing
-resolves a `cid:` reference to the stored attachment — the attachments table has
-no `content_id` column to match on — so this predates the feature above and
-applies equally to the copy of your own message in Sent. See TODO.md.
+**Reading them needs nothing.** `simpleParser` rewrites `cid:` references to
+data: URIs while parsing, *before* the body is stored, so received inline images
+— and the copy of your own message in Sent — already render. Grepping this
+codebase for `cid:` handling finds none and suggests otherwise; the work happens
+in mailparser. A `content_id` column and a reader-side resolver were built on
+that misreading and thrown away.
+
+Two facts from that detour, since they are not obvious and cost time to
+establish:
+
+- **DOMPurify blocks `file:`** — its default URI allowlist covers
+  http/https/mailto/tel/callto/sms/cid/xmpp/matrix, and nothing else with a
+  scheme. `data:` is permitted separately, but only on `img`/`audio`/`video`/
+  `source`/`image`/`track` (`DATA_URI_TAGS`), which is exactly why pasted images
+  survive sanitizing. Anything pointing the reader at a local file will be
+  stripped silently.
+- Because mailparser inlines them, `body_html` for image-heavy mail holds the
+  images as base64 and is larger than it looks on disk.
 
 ### Drafts
 
