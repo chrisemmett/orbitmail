@@ -733,6 +733,20 @@ Things that are load-bearing:
   the latter, so composing while reading one account saved the draft under
   another, and it appeared in a Drafts folder the user was not looking at. On
   close, main names the account in a toast (`app:toast`) for the same reason.
+- **Selecting a draft is not the same as opening it.** A single click selects
+  the row like any other — `messages:get` projects the draft into a
+  `MessageDetail` via `getDraftAsMessage`, so the reader needs no separate path
+  — and the reader header swaps Reply/Reply All/Forward for **Continue
+  editing** and **Discard draft**. Double-click opens the composer. Clicking
+  used to open it outright, which meant a draft could never be selected, and so
+  never deleted or even read without committing to editing it.
+- **Closing the composer asks.** Keeping the draft silently was the original
+  design and testing showed it wrong: an unsent message quietly filed somewhere
+  is indistinguishable from one lost, and drafts pile up from composers opened
+  and thought better of. The order is deliberate — **save, then ask** — so a
+  failure between the question and the answer cannot lose the message; Discard
+  deletes what was just saved, and Cancel returns to editing with the draft
+  intact.
 - In the list, a draft row is identified by `draftId` on `MessageSummary` /
   `ThreadSummary`. Clicking one reopens the composer instead of the reader, and
   deleting one discards it rather than trying to trash a message the server has

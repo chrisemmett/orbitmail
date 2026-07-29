@@ -1484,6 +1484,25 @@ async function main(): Promise<void> {
     ok('and it carries its own id back, so saving again updates it',
       reopened?.payload.draftId === id)
 
+    // A draft has to be selectable in the list without being forced open in the
+    // composer — that is how it gets read, and how it gets deleted. It is
+    // projected into the reader's own shape so there is no parallel path.
+    const asMessage = drafts.getDraftAsMessage(id!, draftsFolder.id)
+    ok('a draft projects into the shape the reader reads',
+      asMessage?.id === `draft:${id}` && asMessage?.draftId === id,
+      JSON.stringify({ id: asMessage?.id, draftId: asMessage?.draftId }))
+    ok('carrying the recipient, subject and body it was written with',
+      asMessage?.to === 'alice@example.com' &&
+        asMessage?.subject === 'Half written' &&
+        asMessage?.bodyText === 'The first half of a sentence',
+      JSON.stringify({ to: asMessage?.to, subject: asMessage?.subject }))
+    const unsubjected = drafts.saveDraft({ accountId: account.id, bodyText: 'no subject here' })!
+    ok('an unsubjected draft still reads as something rather than blank',
+      drafts.getDraftAsMessage(unsubjected, draftsFolder.id)?.subject === '(no subject)')
+    drafts.deleteDraft(unsubjected)
+    ok('a draft that no longer exists projects to nothing',
+      drafts.getDraftAsMessage('does-not-exist', draftsFolder.id) === null)
+
     // Attachments: a path that has since disappeared is reported rather than
     // silently dropped — sending without a file you attached is the failure this
     // whole feature exists to avoid.

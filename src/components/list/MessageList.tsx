@@ -20,7 +20,8 @@ import {
   selectAdjacentThread,
   toggleThreadExpanded,
   loadMoreMessages,
-  searchWholeMailbox
+  searchWholeMailbox,
+  openDraft
 } from '../../stores/mailStore'
 import { resolveSearchAccountId, searchAccountLabel } from '../../utils/search'
 import { EmptyState } from '../EmptyState'
@@ -97,6 +98,11 @@ const MessageRow = memo(function MessageRow({
         if (event.shiftKey) event.preventDefault()
       }}
       onClick={(event) => onSelect(event, message.id)}
+      // A draft opens on double-click. Single click selects it like any other
+      // row, so it can be read or deleted without being forced into editing.
+      onDoubleClick={() => {
+        if (message.draftId) void openDraft(message.draftId)
+      }}
       onContextMenu={(event) => onContextMenu(event, message)}
     >
       <div className={`unread-dot${isRead ? ' read' : ''}`} />
@@ -172,6 +178,9 @@ const ThreadRow = memo(function ThreadRow({
         if (event.shiftKey) event.preventDefault()
       }}
       onClick={(event) => onSelect(event, thread.accountId, thread.threadId)}
+      onDoubleClick={() => {
+        if (thread.draftId) void openDraft(thread.draftId)
+      }}
       onContextMenu={(event) => onContextMenu(event, thread)}
     >
       {expandable ? (

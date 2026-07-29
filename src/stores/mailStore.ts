@@ -825,19 +825,6 @@ async function currentFolders(): Promise<Folder[]> {
 export async function selectThread(accountId: string, threadId: string): Promise<void> {
   const store = useMailStore.getState()
 
-  // Drafts appear in the threaded view as one-message rows. Same as the flat
-  // list: clicking resumes writing rather than opening a reader.
-  const draft = store.threads.find((t) => t.threadId === threadId)?.draftId
-  if (draft) {
-    try {
-      await window.orbitMail.drafts.open(draft)
-    } catch (err) {
-      store.setToast(err instanceof Error ? err.message : 'Could not open that draft')
-      await refreshMessages()
-    }
-    return
-  }
-
   // A plain click collapses any multi-selection down to this one row.
   store.setSelectedThreadKeys([expandKey(accountId, threadId)])
   store.setThreadAnchorKey(expandKey(accountId, threadId))
@@ -1676,6 +1663,38 @@ export function composeAccountId(): string | undefined {
   return fromFolder ?? store.accounts[0]?.id
 }
 
+/**
+ * Resume writing a draft.
+ *
+ * Separate from selecting one. A single click *selects* a draft — so it can be
+ * read, or deleted — and this is what opening it means: double-click, or the
+ * button in the reader.
+ */
+export async function openDraft(draftId: string): Promise<void> {
+  const store = useMailStore.getState()
+  try {
+    await window.orbitMail.drafts.open(draftId)
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : 'Could not open that draft')
+    await refreshMessages()
+  }
+}
+
+/** Discard a draft and drop it from the list. */
+export async function discardDraft(draftId: string): Promise<void> {
+  const store = useMailStore.getState()
+  try {
+    await window.orbitMail.drafts.discard(draftId)
+    store.setSelectedMessageId(null)
+    store.setSelectedMessage(null)
+    store.setSelectedMessageIds([])
+    await refreshMessages()
+    store.setToast('Draft discarded')
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : 'Could not discard that draft')
+  }
+}
+
 /** The saved draft behind a list row, if that row is one. */
 function draftIdForRow(store: MailState, rowId: string): string | undefined {
   return (
@@ -1686,19 +1705,6 @@ function draftIdForRow(store: MailState, rowId: string): string | undefined {
 
 export async function selectMessage(messageId: string): Promise<void> {
   const store = useMailStore.getState()
-
-  // A draft row is not a message: there is nothing to read, so clicking it
-  // resumes writing it instead of opening an empty reader.
-  const draftId = draftIdForRow(store, messageId)
-  if (draftId) {
-    try {
-      await window.orbitMail.drafts.open(draftId)
-    } catch (err) {
-      store.setToast(err instanceof Error ? err.message : 'Could not open that draft')
-      await refreshMessages()
-    }
-    return
-  }
 
   // Selecting a single message (e.g. a search result) supersedes any open thread.
   store.setSelectedThreadId(null)

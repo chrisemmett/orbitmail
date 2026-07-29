@@ -48,11 +48,13 @@ messages and pull out what you still need to do.
   one cannot be fetched, the composer tells you which rather than sending an
   incomplete forward quietly. **Forward as Attachment** (Message menu, or
   right-click) sends the whole original untouched instead.
-- **Drafts save themselves as you type.** Close the window, quit, or lose power
-  and what you wrote is still there — find it in **Drafts** in the sidebar and
-  click to carry on. Sending removes it. An empty composer is not saved, so
-  changing your mind leaves nothing behind. Drafts stay on this computer; they
-  do not appear in webmail or on your phone.
+- **Drafts save themselves as you type**, so losing power or closing by accident
+  does not lose what you wrote. Closing the window asks whether to keep it.
+  Drafts live in **Drafts** in the sidebar: click one to read it, double-click
+  (or **Continue editing**) to carry on, **Discard** or press Delete to throw it
+  away. Sending removes it. An empty composer is not saved, so changing your
+  mind leaves nothing behind. Drafts stay on this computer; they do not appear
+  in webmail or on your phone.
 - **Signatures**, per account, set in Settings → Accounts. They can be formatted
   and can include a pasted logo, and are added to the end of what you write —
   above the quoted text on a reply. Note the signature is chosen when the window

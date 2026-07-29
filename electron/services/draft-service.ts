@@ -7,7 +7,7 @@
 
 import { randomUUID } from 'crypto'
 import { existsSync } from 'fs'
-import type { ComposePayload, DraftSummary } from '../../shared/types'
+import type { ComposePayload, DraftSummary, MessageDetail } from '../../shared/types'
 import { getRawSqlite } from '../db'
 
 interface DraftRow {
@@ -202,4 +202,45 @@ export function countDrafts(accountId: string): number {
     .prepare('SELECT COUNT(*) AS n FROM drafts WHERE account_id = ?')
     .get(accountId) as { n: number }
   return row.n
+}
+
+/**
+ * A draft shaped as a MessageDetail, so selecting one in the list can use the
+ * ordinary reader path instead of a parallel one.
+ *
+ * Clicking a draft used to open the composer immediately, which meant a draft
+ * could never be *selected* — and so could never be deleted, or even looked at
+ * without committing to editing it.
+ */
+export function getDraftAsMessage(draftId: string, folderId: string): MessageDetail | null {
+  const row = getRawSqlite().prepare('SELECT * FROM drafts WHERE id = ?').get(draftId) as
+    | DraftRow
+    | undefined
+  if (!row) return null
+
+  return {
+    id: `draft:${row.id}`,
+    folderId,
+    accountId: row.account_id,
+    uid: 0,
+    messageId: null,
+    from: '',
+    to: row.to_addr,
+    cc: row.cc,
+    subject: row.subject || '(no subject)',
+    snippet: row.body_text.replace(/\s+/g, ' ').trim().slice(0, 200),
+    date: row.updated_at,
+    isRead: true,
+    isStarred: false,
+    flagColor: null,
+    hasAttachments: parsePaths(row.attachment_paths).length > 0,
+    threadId: null,
+    draftId: row.id,
+    references: null,
+    bodyHtml: row.body_html,
+    bodyText: row.body_text,
+    // The paths are on disk, not attachment rows, so there is nothing for the
+    // reader's attachment list to fetch. The composer restores them on open.
+    attachments: []
+  }
 }
