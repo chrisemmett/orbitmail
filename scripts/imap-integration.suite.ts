@@ -1997,7 +1997,7 @@ async function main(): Promise<void> {
     // This cannot check prose. It checks the claims that are mechanically
     // verifiable — the ones that go stale silently.
     const { existsSync, readFileSync } = await import('fs')
-    const docs = ['README.md', 'INSTALL.md', 'DEVELOPERS.md', 'CLAUDE.md'].filter((f) =>
+    const docs = ['README.md', 'INSTALL.md', 'DEVELOPERS.md', 'CLAUDE.md', 'CHANGELOG.md'].filter((f) =>
       existsSync(join(process.cwd(), f))
     )
     const text = docs.map((f) => readFileSync(join(process.cwd(), f), 'utf8')).join('\n')
@@ -2033,6 +2033,13 @@ async function main(): Promise<void> {
     const actual = /(\d+)/.exec(pkg.devDependencies?.electron ?? '')?.[1]
     ok('the documented Electron version matches package.json',
       !claimed || !actual || claimed === actual, `docs=${claimed} package.json=${actual}`)
+
+    // 3b. The app version in the README badge matches package.json. Two copies
+    //     of one fact drift — the badge was still claiming 0.1.0 while the
+    //     package had moved on, and nothing noticed because nothing checked.
+    const badged = /badge\/version-([\d.]+)-/.exec(text)?.[1]
+    ok('the README version badge matches package.json',
+      !badged || badged === pkg.version, `badge=${badged} package.json=${pkg.version}`)
 
     // 4. Rule 5's counterpart in prose: no document may describe credentials as
     //    compiled into a build, because that is the behaviour rule 5 forbids.
