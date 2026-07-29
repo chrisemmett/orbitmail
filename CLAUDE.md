@@ -95,6 +95,8 @@ Two habits that prevent the worst of it:
 - `npm run build` — **this is the verification gate.** It compiles main, preload, and renderer via electron-vite/esbuild. Run it after changes to confirm they're sound.
 - `npm run dist` / `dist:deb` / `dist:appimage` — package (runs `icons` + `build` + electron-builder). Packages contain **no** OAuth credentials (rule 5); they are resolved at runtime, so there is nothing to rebuild after editing `.env`.
 
+- `npm run ui:preview` — serve the built renderer to a browser with the IPC bridge stubbed, so UI changes can be looked at where Electron will not start. Not a test; see the GUI note below.
+
 There is **no unit-test framework and no linter** in this repo. Verification = `npm run build` passes, plus two test commands.
 
 `npm run test:store` — renderer-store checks under plain node (~1s, no Docker,
@@ -112,8 +114,10 @@ The larger one is `npm run test:imap` — a growing suite of checks against a re
 
 **Do not treat `tsc -b` as a pass/fail gate.** The source does not cleanly pass a standalone `tsc -b` even on `main` (target/lib and third-party typing mismatches that esbuild transpiles past). Use `npm run build`.
 
-**`npm run dev` fails here** (GPU sandbox crash) — ask the user to click through UI changes. But headless Electron *does* work, which is more than "no GUI testing" implies:
+**`npm run dev` fails here** (GPU sandbox crash), but that does *not* mean UI changes can only be checked by asking the user. Do the check yourself first, and only ask for what genuinely needs a human.
 
+- **`npm run ui:preview`** — serves the built renderer to an ordinary browser with `window.orbitMail` stubbed (`npm run build` first; then `http://localhost:4321`). Drive it with whatever browser automation is available: click through, screenshot, **read the screenshot back** and actually look at it. This is how you verify layout, styling, both themes, and that a control renders and reacts. Details and the fixture trap in DEVELOPERS.md → Looking at the UI without Electron.
+- **It proves nothing main-process.** Every IPC answer is a fixture, so a pane can look right while its channel is missing. That is `test:imap`'s job, not this one. Say which of the two you did.
 - **Windowless main process** — `app.whenReady()` with no BrowserWindow, plus `app.disableHardwareAcceleration()` and `--no-sandbox`. Hosts the real DB layer, which is how `npm run test:imap` runs.
 - **Hidden `BrowserWindow({ show: false })`** — renders real pages; used to verify CSP enforcement, console errors, and whether React mounted. Attach `out/preload/index.js` or the renderer errors on missing IPC.
 - **`offscreen: true` hangs forever.** That is the thing that does not work, and what made "the GUI can't run" look absolute.

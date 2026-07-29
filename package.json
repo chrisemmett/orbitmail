@@ -20,7 +20,8 @@
     "dist:appimage": "npm run icons && npm run build && electron-builder --linux AppImage",
     "postinstall": "electron-builder install-app-deps && bash scripts/install-electron.sh",
     "test:imap": "node scripts/imap-integration.mjs",
-    "test:store": "node scripts/store-race.mjs"
+    "test:store": "node scripts/store-race.mjs",
+    "ui:preview": "node scripts/ui-preview.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",

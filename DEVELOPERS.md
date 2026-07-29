@@ -1126,6 +1126,7 @@ their own. Approval is cleared when the compose window closes.
 | `npm run install:desktop` | Install a dev `.desktop` launcher |
 | `npm run test:imap` | Integration suite against a real IMAP/SMTP server (see below) |
 | `npm run test:store` | Renderer-store checks under plain node (see below) — no Docker, no Electron |
+| `npm run ui:preview` | Serve the built renderer to a browser with the IPC bridge stubbed, for looking at the UI where Electron cannot run (see below) |
 | `npm run dist` | Build icons, compile, and package (.deb + AppImage) |
 | `npm run dist:deb` | Debian package only |
 | `npm run dist:appimage` | AppImage only |
@@ -1259,6 +1260,46 @@ more — so adding a check usually means adding one more method to it. Extend th
 rather than the GreenMail suite for anything renderer-side: it needs no
 container, and the renderer bundle must not be pulled into the main-process
 suite (`tsconfig.node.json` and `tsconfig.web.json` are separate contexts).
+
+## Looking at the UI without Electron (`ui:preview`)
+
+```bash
+npm run build && npm run ui:preview   # then open http://localhost:4321
+```
+
+`npm run dev` cannot start in every environment (a GPU sandbox crash is the
+common one), which used to make "someone please click through this" the last
+step of every UI change. It does not have to be: the renderer is a plain React
+app, and the only reason it will not run in an ordinary browser is that it
+errors on a missing `window.orbitMail`.
+
+`scripts/ui-preview.mjs` serves `out/renderer` over HTTP and injects a stubbed
+bridge — the same trick `store-race.mjs` uses to reach renderer logic under
+node, done in a real DOM so the result can be looked at, screenshotted, and
+driven by browser automation. The stub is a `Proxy`: named fixtures for the
+calls whose shape matters, and a generic rule (list-ish names return `[]`,
+`count*` returns `0`, `save`/`update`/`set` echo their argument) for the rest.
+Event subscribers (`on*`) return a no-op unsubscribe synchronously. The stub is
+served as its own file rather than inlined because the production CSP is
+`script-src 'self'`; Google Fonts links are stripped so the page does not wait
+on the network.
+
+**What it proves:** layout, styling, both themes, whether a control renders and
+reacts, and that the renderer mounts with no console errors.
+
+**What it does not:** anything main-process. Every answer is a fixture, so a
+pane can look perfect while the channel behind it is missing or wrong. The IPC
+contract check and the behaviour tests in `npm run test:imap` cover that, and
+this replaces neither.
+
+**A fixture missing a field does not degrade — it throws**, in the component,
+with a stack that looks exactly like an app bug (`info.unreadCount` is
+`undefined`, so `.toLocaleString()` fails). Both of the first two panes tried
+crashed this way. When a pane blows up here, suspect the fixture first and check
+it against the interface in `shared/types.ts`.
+
+Browser automation writes page snapshots and console logs to `.playwright-mcp/`
+and screenshots to the working directory; both are gitignored.
 
 ## Building & packaging
 

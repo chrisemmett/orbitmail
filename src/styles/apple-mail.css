@@ -1662,6 +1662,15 @@ textarea {
   word-break: break-word;
 }
 
+/* Consecutive info rows are a stats list and stack tight on purpose. A *field*
+   following one is a different thing starting, and without this its label butts
+   against the row above and reads as part of it — which is how the AI pane's
+   "API key" label ran into the "Status" row. Adjacent-sibling so only that case
+   is affected. */
+.account-info-row + .account-field {
+  margin-top: 12px;
+}
+
 .account-field {
   display: flex;
   flex-direction: column;
