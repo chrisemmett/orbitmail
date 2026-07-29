@@ -115,7 +115,7 @@ Off by default. Nothing is sent anywhere until you add an
 Linux only, for now. Install the `.deb` or run the AppImage:
 
 ```bash
-sudo dpkg -i "Orbit Mail-"*.deb
+sudo dpkg -i orbit-mail-*.deb
 ```
 
 Building your own copy takes about 15 minutes and needs no coding. Both routes,
