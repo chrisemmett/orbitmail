@@ -20,15 +20,38 @@ interface RichTextEditorProps {
   initialHtml: string
   onChange: (html: string, text: string) => void
   placeholder?: string
+  /** Told when an image was too large to inline, so the caller can say so. */
+  onImageRejected?: (message: string) => void
 }
 
 const BTN = { size: 16, weight: 'bold' as const }
+
+/**
+ * Per-image ceiling for pasting into the body. Inline images ride inside the
+ * message itself, so they are counted against the recipient's message size limit
+ * (commonly 25MB total) and are held as a data: URI in the draft until sent —
+ * a phone photo pasted without thinking would bloat both.
+ */
+const MAX_INLINE_IMAGE_BYTES = 5 * 1024 * 1024
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
 
 // A contentEditable rich-text editor with an extended formatting toolbar. It is
 // uncontrolled — the DOM is the source of truth — so React never re-writes the
 // innerHTML while typing (which would reset the caret). Remount it (via `key`)
 // to load fresh content.
-export function RichTextEditor({ initialHtml, onChange, placeholder }: RichTextEditorProps) {
+export function RichTextEditor({
+  initialHtml,
+  onChange,
+  placeholder,
+  onImageRejected
+}: RichTextEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null)
   const savedRange = useRef<Range | null>(null)
   const colorInputRef = useRef<HTMLInputElement>(null)
@@ -55,6 +78,46 @@ export function RichTextEditor({ initialHtml, onChange, placeholder }: RichTextE
   }
 
   const focusEditor = () => editorRef.current?.focus()
+
+  /**
+   * Pasted and dropped images become inline `<img>` elements carrying the bytes
+   * as a data: URI. They stay that way while editing — which means autosave
+   * persists them with the draft for free — and are converted to `cid:` MIME
+   * parts when the message is sent. Sending them as data: URIs instead would be
+   * simpler and wrong: Gmail and Outlook strip data: images from received HTML,
+   * so the recipient sees nothing.
+   */
+  const insertImageFiles = async (files: File[]): Promise<void> => {
+    const images = files.filter((file) => file.type.startsWith('image/'))
+    if (images.length === 0) return
+
+    for (const file of images) {
+      if (file.size > MAX_INLINE_IMAGE_BYTES) {
+        onImageRejected?.(
+          `${file.name || 'That image'} is too large to place in the message — attach it instead.`
+        )
+        continue
+      }
+      const dataUrl = await new Promise<string | null>((resolve) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null)
+        reader.onerror = () => resolve(null)
+        reader.readAsDataURL(file)
+      })
+      if (!dataUrl) continue
+      // No restoreSelection here: that reinstates the range saved for a toolbar
+      // click, and on paste or drop the caret is already where it should be.
+      focusEditor()
+      // Width-capped so a photo straight off a phone does not arrive as a
+      // multi-thousand-pixel block the recipient has to scroll sideways past.
+      document.execCommand(
+        'insertHTML',
+        false,
+        `<img src="${dataUrl}" alt="${escapeHtml(file.name || 'image')}" style="max-width:100%;height:auto;">`
+      )
+    }
+    emit()
+  }
 
   const exec = (command: string, value?: string) => {
     focusEditor()
@@ -245,6 +308,32 @@ export function RichTextEditor({ initialHtml, onChange, placeholder }: RichTextE
         data-empty={empty}
         data-placeholder={placeholder ?? 'Write your message…'}
         onInput={emit}
+        onPaste={(event) => {
+          const files = Array.from(event.clipboardData?.files ?? [])
+          if (files.some((f) => f.type.startsWith('image/'))) {
+            // Only intercept an image paste. Pasting text must keep the
+            // browser's own handling, which carries formatting across.
+            event.preventDefault()
+            void insertImageFiles(files)
+          }
+        }}
+        onDragOver={(event) => {
+          if (Array.from(event.dataTransfer?.items ?? []).some((i) => i.kind === 'file')) {
+            // Claim the drop before the compose window's own attachment
+            // handler sees it — a file dropped *into the body* is meant to be
+            // in the body, not on the paperclip.
+            event.preventDefault()
+            event.stopPropagation()
+          }
+        }}
+        onDrop={(event) => {
+          const files = Array.from(event.dataTransfer?.files ?? [])
+          if (files.some((f) => f.type.startsWith('image/'))) {
+            event.preventDefault()
+            event.stopPropagation()
+            void insertImageFiles(files)
+          }
+        }}
         suppressContentEditableWarning
       />
     </div>
