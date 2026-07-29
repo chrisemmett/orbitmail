@@ -21,14 +21,14 @@ Orbit Mail is Linux-only for now.
 **Debian / Ubuntu / Mint:**
 
 ```bash
-sudo dpkg -i "Orbit Mail-"*.deb
+sudo dpkg -i orbit-mail-*.deb
 ```
 
 **AppImage** — make it executable and run it:
 
 ```bash
-chmod +x "Orbit Mail-"*.AppImage
-./"Orbit Mail-"*.AppImage
+chmod +x orbit-mail-*.AppImage
+./orbit-mail-*.AppImage
 ```
 
 Packaged builds install a `.desktop` launcher so the app groups and pins
@@ -70,7 +70,7 @@ npm run dev
 
 ```bash
 npm run dist
-sudo dpkg -i "release/Orbit Mail-"*.deb
+sudo dpkg -i release/orbit-mail-*.deb
 ```
 
 `npm run dist` builds both a `.deb` and an AppImage; `npm run dist:deb` and
@@ -128,7 +128,7 @@ starts, so editing the file and restarting is enough.
 git pull
 npm install
 npm run dist
-sudo dpkg -i "release/Orbit Mail-"*.deb
+sudo dpkg -i release/orbit-mail-*.deb
 ```
 
 **Uninstall** the Debian package with `sudo apt remove orbit-mail`, or just
