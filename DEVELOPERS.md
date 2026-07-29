@@ -580,6 +580,33 @@ Details that are load-bearing:
 **Not handled yet:** the `from_normalized` column, so block is linear in account
 size.
 
+### Signatures
+
+Per-account, rich HTML, stored in `accounts.signature` and edited in
+Settings → Accounts with the same `RichTextEditor` the composer uses — so a
+signature can carry a pasted logo, which is an inline image and travels the same
+way.
+
+- **Appending to `bodyHtml` is what puts it above the quoted text.** The quote
+  travels separately in `quotedHtml` and the composer renders it below, so
+  anything in the body is already above it. `appendSignature`
+  (`electron/services/signature.ts`) has no positioning logic and should not grow any.
+- **Reopening a draft does not re-append.** The signature was added when that
+  draft was first composed and is part of its saved body; without the `draftId`
+  guard you would collect one copy per time the draft was opened. Tested.
+- A whitespace-only signature is stored as none, or an emptied editor would
+  leave a stray `<br>` on every message forever.
+- **Sanitized in the renderer, on save.** `sanitizeEmailHtml` needs a DOM and the
+  main process has none, so `setAccountSignature` stores what it is given;
+  `RichTextEditor` cleans it again on mount, which every compose passes through.
+  The content is the user's own typing in our own editor — the risk being managed
+  is malformed markup reaching outgoing mail, not an attacker.
+
+**Not handled:** the signature is chosen when the composer opens. Changing the
+**From** account afterwards does not swap it — doing that means tracking which
+part of a contentEditable body is the signature and replacing it, and the pane
+says so rather than leaving it to be discovered.
+
 ### Inline images in compose
 
 Pasting or dropping an image into the body embeds it. The editor holds it as a

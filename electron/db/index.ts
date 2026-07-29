@@ -40,7 +40,8 @@ function initTables(db: Database.Database): void {
       display_name TEXT NOT NULL,
       token_blob TEXT NOT NULL,
       created_at INTEGER NOT NULL,
-      sync_days INTEGER NOT NULL DEFAULT 90
+      sync_days INTEGER NOT NULL DEFAULT 90,
+      signature TEXT
     );
 
     CREATE TABLE IF NOT EXISTS folders (
@@ -320,6 +321,14 @@ function migrateSchema(db: Database.Database): void {
   // itself only shrinks on a VACUUM, which this app does not run.
   db.exec('DROP TABLE IF EXISTS messages_fts')
   db.prepare("DELETE FROM app_preferences WHERE key = 'fts_index_v2'").run()
+
+  // Per-account signature. Appended, never reordered — see the note above.
+  // `accountNames` was read at the top of this function, before any of the
+  // ALTERs below it, so it is still an accurate picture of the pre-migration
+  // columns.
+  if (!accountNames.has('signature')) {
+    db.exec('ALTER TABLE accounts ADD COLUMN signature TEXT')
+  }
 }
 
 // Remove duplicate (folder_id, uid) message rows so the UNIQUE index can be

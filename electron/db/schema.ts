@@ -8,7 +8,10 @@ export const accounts = sqliteTable('accounts', {
   displayName: text('display_name').notNull(),
   tokenBlob: text('token_blob').notNull(),
   createdAt: integer('created_at').notNull(),
-  syncDays: integer('sync_days').notNull().default(90)
+  syncDays: integer('sync_days').notNull().default(90),
+  // Sanitized HTML appended to the editable body of a new message. NULL or
+  // empty means this account has no signature.
+  signature: text('signature')
 })
 
 export const folders = sqliteTable(

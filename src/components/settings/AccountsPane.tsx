@@ -14,6 +14,8 @@ import {
   updateAccountSyncDays
 } from '../../stores/mailStore'
 import { ServerFields } from '../accounts/ServerFields'
+import { RichTextEditor } from '../compose/RichTextEditor'
+import { sanitizeEmailHtml } from '../../utils/sanitizeEmailHtml'
 
 const SYNC_WINDOW_OPTIONS = [
   { label: '30 days', value: 30 },
@@ -61,6 +63,111 @@ export function resolveSelectedAccountId(
   if (exists(aimedAt)) return aimedAt
   if (exists(current)) return current
   return accounts[0]?.id ?? null
+}
+
+// The account's signature, edited with the same editor the composer uses — so
+// what is typed here is what a message will carry, including a pasted logo.
+//
+// Sanitized on save: the main process has no DOM and cannot clean HTML, and this
+// text is appended to the body of every message the account sends.
+function SignatureSettings({
+  account,
+  info,
+  onSaved
+}: {
+  account: Account
+  info: AccountInfo | null
+  onSaved: () => void
+}) {
+  const setToast = useMailStore((s) => s.setToast)
+  const [html, setHtml] = useState('')
+  const [dirty, setDirty] = useState(false)
+  const [saving, setSaving] = useState(false)
+
+  // The editor is uncontrolled, so it is remounted (via key) when the account
+  // changes — otherwise switching accounts would leave the previous one's
+  // signature in the box.
+  const editorKey = `${account.id}:${info?.signature ?? ''}`
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      await window.orbitMail.accounts.updateSignature(
+        account.id,
+        sanitizeEmailHtml(html) ?? ''
+      )
+      setDirty(false)
+      setToast('Signature saved')
+      onSaved()
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : 'Could not save the signature')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleClear = async () => {
+    setSaving(true)
+    try {
+      await window.orbitMail.accounts.updateSignature(account.id, '')
+      setHtml('')
+      setDirty(false)
+      setToast('Signature removed')
+      onSaved()
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : 'Could not remove the signature')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!info) return null
+
+  return (
+    <section className="settings-section">
+      <h3>Signature</h3>
+      <p className="account-hint">
+        Added to the end of what you write on new messages, replies and forwards — above the
+        quoted text. Paste an image to include a logo.
+      </p>
+      <div className="settings-signature-editor">
+        <RichTextEditor
+          key={editorKey}
+          initialHtml={info.signature}
+          placeholder="Your name, role, phone…"
+          onImageRejected={setToast}
+          onChange={(next) => {
+            setHtml(next)
+            setDirty(true)
+          }}
+        />
+      </div>
+      <div className="settings-section-actions">
+        {info.signature && (
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={saving}
+            onClick={() => void handleClear()}
+          >
+            Remove
+          </button>
+        )}
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={saving || !dirty}
+          onClick={() => void handleSave()}
+        >
+          {saving ? 'Saving…' : 'Save signature'}
+        </button>
+      </div>
+      <p className="account-hint">
+        A signature is added when the composer opens. Changing the From account after that does
+        not swap it.
+      </p>
+    </section>
+  )
 }
 
 // Server settings for a manual (IMAP/POP3) account. Renders nothing for OAuth
@@ -430,6 +537,8 @@ function AccountDetail({ account }: { account: Account }) {
           </button>
         </div>
       </section>
+
+      <SignatureSettings account={account} info={info} onSaved={loadInfo} />
 
       <ConnectionSettings account={account} />
 

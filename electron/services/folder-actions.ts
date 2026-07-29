@@ -7,6 +7,7 @@ import {
   clearFolderMessages,
   countMessages,
   getAccountById,
+  getAccountSignature,
   getAccountStorageUsage,
   getFolderById,
   listAccounts,
@@ -66,6 +67,7 @@ export function getAccountInfo(accountId: string): AccountInfo {
     messageCount,
     unreadCount: accountUnreadCount(account, folders),
     syncDays: account.syncDays,
+    signature: getAccountSignature(accountId),
     localStorageBytes: storage.contentBytes + storage.attachmentBytes,
     attachmentCount: storage.attachmentCount,
     downloadedAttachmentCount: storage.downloadedAttachmentCount
