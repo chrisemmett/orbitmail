@@ -116,6 +116,11 @@ const api: OrbitMailAPI = {
       ipcRenderer.on('app:needsAccount', handler)
       return () => ipcRenderer.removeListener('app:needsAccount', handler)
     },
+    onToast: (callback) => {
+      const handler = (_: unknown, message: string) => callback(message)
+      ipcRenderer.on('app:toast', handler)
+      return () => ipcRenderer.removeListener('app:toast', handler)
+    },
     onUnexpectedError: (callback) => {
       const handler = (_: unknown, message: string) => callback(message)
       ipcRenderer.on('app:unexpectedError', handler)
@@ -148,6 +153,12 @@ const api: OrbitMailAPI = {
   oauth: {
     getStatus: () => ipcRenderer.invoke('oauth:getStatus'),
     saveCredentials: (values) => ipcRenderer.invoke('oauth:saveCredentials', values)
+  },
+  drafts: {
+    save: (payload, draftId) => ipcRenderer.invoke('drafts:save', payload, draftId),
+    list: (accountId: string) => ipcRenderer.invoke('drafts:list', accountId),
+    open: (draftId: string) => ipcRenderer.invoke('drafts:open', draftId),
+    discard: (draftId: string) => ipcRenderer.invoke('drafts:discard', draftId)
   },
   contacts: {
     suggest: (accountId: string, query: string, limit?: number) =>

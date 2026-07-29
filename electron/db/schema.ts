@@ -189,3 +189,42 @@ export const contacts = sqliteTable(
     index('contacts_account_idx').on(t.accountId)
   ]
 )
+
+// Locally-saved compose drafts.
+//
+// Deliberately NOT rows in `messages`. A draft has no server uid, and the
+// expunge reconciliation in imap-sync deletes any local row whose uid is absent
+// from the server's list — so a draft parked in the Drafts folder would be
+// deleted by the next sync of that folder. Keeping them in their own table also
+// keeps them clear of `UNIQUE(folder_id, uid)`.
+//
+// Scoped to an account rather than a folder: the Drafts *folder* is resolved at
+// query time, so a draft survives the folder being renamed, re-typed, or not
+// existing yet.
+export const drafts = sqliteTable(
+  'drafts',
+  {
+    id: text('id').primaryKey(),
+    accountId: text('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    to: text('to_addr').notNull().default(''),
+    cc: text('cc').notNull().default(''),
+    bcc: text('bcc').notNull().default(''),
+    subject: text('subject').notNull().default(''),
+    bodyHtml: text('body_html').notNull().default(''),
+    bodyText: text('body_text').notNull().default(''),
+    // The collapsed quote of the message being replied to or forwarded, kept
+    // separate from the editable body exactly as ComposePayload does.
+    quotedHtml: text('quoted_html'),
+    quotedText: text('quoted_text'),
+    inReplyTo: text('in_reply_to'),
+    references: text('references'),
+    mode: text('mode'),
+    originalMessageId: text('original_message_id'),
+    /** JSON array of absolute paths. Re-approved on restore, if they still exist. */
+    attachmentPaths: text('attachment_paths'),
+    updatedAt: integer('updated_at').notNull()
+  },
+  (t) => [index('drafts_account_idx').on(t.accountId)]
+)

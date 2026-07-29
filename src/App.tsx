@@ -18,7 +18,8 @@ import {
   deleteSelectedMessages,
   deleteThread,
   deleteSelectedThreads,
-  openSettings
+  openSettings,
+  composeAccountId
 } from './stores/mailStore'
 import { SecureStorageBanner } from './components/SecureStorageBanner'
 import { exposeFlushHook } from './stores/persistence'
@@ -146,6 +147,10 @@ function MainApp() {
 
     // Main hit something nobody caught. Mail on disk is fine, but the process
     // is in an unknown state, so say so rather than degrading silently.
+    const unsubToast = window.orbitMail.app.onToast((message) => {
+      useMailStore.getState().setToast(message)
+    })
+
     const unsubError = window.orbitMail.app.onUnexpectedError((message) => {
       useMailStore.getState().setToast(message)
     })
@@ -155,6 +160,7 @@ function MainApp() {
       unsubStatus()
       unsubMessages()
       unsubError()
+      unsubToast()
       window.removeEventListener('online', updateOnline)
       window.removeEventListener('offline', updateOnline)
     }
@@ -183,7 +189,7 @@ function MainApp() {
       if (store.showSettings || store.showAddAccount || store.showTasks) return
 
       if (e.key === 'c' && !e.metaKey && !e.ctrlKey) {
-        const accountId = store.accounts[0]?.id
+        const accountId = composeAccountId()
         if (accountId) window.orbitMail.compose.open({ accountId })
       }
       // What a per-message shortcut acts on: the open conversation's latest

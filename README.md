@@ -47,6 +47,11 @@ messages and pull out what you still need to do.
   one cannot be fetched, the composer tells you which rather than sending an
   incomplete forward quietly. **Forward as Attachment** (Message menu, or
   right-click) sends the whole original untouched instead.
+- **Drafts save themselves as you type.** Close the window, quit, or lose power
+  and what you wrote is still there — find it in **Drafts** in the sidebar and
+  click to carry on. Sending removes it. An empty composer is not saved, so
+  changing your mind leaves nothing behind. Drafts stay on this computer; they
+  do not appear in webmail or on your phone.
 - Attach by clicking **Attach** or dragging files onto the window.
 - **Ctrl+Enter** sends.
 - **To, Cc and Bcc autocomplete** from the people that account has actually
