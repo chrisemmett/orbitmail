@@ -143,8 +143,9 @@ The gear, or `Ctrl` + `,`. What you can change today:
 - **Default mail app** — open `mailto:` links in Orbit Mail. This registers with
   your desktop, so it needs an installed copy rather than a development build,
   and the switch reflects what actually took effect.
-- **Privacy** — load remote images everywhere instead of being asked per sender,
-  and see which senders you have already allowed.
+- **Privacy** — the senders you have blocked or muted, with a button to undo
+  either, and whether remote images load everywhere or only for senders you have
+  allowed.
 - **Accounts** — rename an account, choose how much mail to keep on this
   computer, see what it is using, sync it, or remove it. Removing tells you how
   many messages and how much disk space go with it; your mail on the server is
@@ -204,6 +205,11 @@ Everything Orbit Mail knows lives on your machine:
   accounts — composing from your work address only suggests people that account
   knows. There is currently no way to edit or delete a single collected address;
   removing the account clears all of them.
+- **Blocking a sender hides their mail, it does not delete it.** Blocked mail
+  disappears from your lists, searches and unread counts, and stays on your mail
+  server; unblocking in Settings → Privacy brings it straight back. Muting is
+  gentler still — the mail arrives and is listed as normal, it just never
+  interrupts you with a notification.
 - **Removing an account removes its data** — cached mail, attachments, saved
   tasks, collected addresses and stored credentials.
 

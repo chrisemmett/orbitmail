@@ -1249,6 +1249,113 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Blocked senders: hidden everywhere, and the counts agree')
+  // -------------------------------------------------------------------------
+  {
+    // Blocking filters at read time, in every site. The bug that would actually
+    // ship is not "block does not work" but "block works in the list and not in
+    // the count", leaving an unread badge for mail nobody can see.
+    const { getRawSqlite } = await import('../electron/db')
+    const prefs = await import('../electron/services/preferences-service')
+    const raw = getRawSqlite()
+
+    const folder = db.upsertFolder(account.id, 'BlockBox', 'BlockBox', 'custom')
+    const ins = raw.prepare(
+      `INSERT INTO messages (id, folder_id, account_id, uid, message_id, thread_id, from_addr, to_addr, subject, snippet, date, is_read)
+       VALUES (@id, @f, @a, @uid, @mid, @tid, @from, @to, @subj, 'snip', @date, @read)`
+    )
+    const me = `Me <${EMAIL}>`
+    ins.run({ id: 'blk-keep', f: folder.id, a: account.id, uid: 7001, mid: '<keep@x>', tid: 'thr-keep',
+      from: 'Wanted <wanted@example.com>', to: me, subj: 'Keep me', date: 5000, read: 0 })
+    ins.run({ id: 'blk-drop', f: folder.id, a: account.id, uid: 7002, mid: '<drop@x>', tid: 'thr-drop',
+      from: 'Spammer <spam@example.com>', to: me, subj: 'Hide me', date: 6000, read: 0 })
+    // Someone whose address merely *contains* a blocked one. A naive
+    // LIKE '%spam@example.com%' would hide this too, which is a baffling way to
+    // lose mail from a real correspondent.
+    ins.run({ id: 'blk-near', f: folder.id, a: account.id, uid: 7003, mid: '<near@x>', tid: 'thr-near',
+      from: 'Not Spam <notspam@example.com>', to: me, subj: 'Near miss', date: 7000, read: 0 })
+
+    const listedBefore = db.listMessages(folder.id, 50, 0).length
+    ok('all three are listed before blocking', listedBefore === 3, String(listedBefore))
+
+    prefs.blockSender('spam@example.com')
+
+    const listed = db.listMessages(folder.id, 50, 0)
+    ok('the blocked sender is gone from the flat list',
+      !listed.some((m) => m.id === 'blk-drop'), listed.map((m) => m.id).join(', '))
+    ok('the wanted sender stays', listed.some((m) => m.id === 'blk-keep'))
+    ok('an address that merely contains the blocked one is NOT hidden',
+      listed.some((m) => m.id === 'blk-near'), listed.map((m) => m.id).join(', '))
+
+    // The assertion that catches the real bug.
+    ok('countMessages agrees with the list',
+      db.countMessages(folder.id) === listed.length,
+      `count=${db.countMessages(folder.id)} listed=${listed.length}`)
+
+    const threads = db.listThreads(folder.id, 50, 0)
+    ok('the conversation list hides it too',
+      !threads.some((t) => t.threadId === 'thr-drop'), threads.map((t) => t.threadId).join(', '))
+    ok('countThreads agrees with listThreads',
+      db.countThreads(folder.id) === threads.length,
+      `count=${db.countThreads(folder.id)} listed=${threads.length}`)
+
+    ok('the unread count does not count mail nobody can see',
+      db.recalculateFolderUnread(folder.id) === 2,
+      String(db.recalculateFolderUnread(folder.id)))
+
+    ok('search does not find it either — blocked must not mean merely unlisted',
+      db.searchMessages('Hide me', account.id, 'subject').length === 0)
+    ok('but search still finds everyone else',
+      db.searchMessages('Near miss', account.id, 'subject').length === 1)
+
+    // Unblocking restores everything with no refetch. This is the property that
+    // sync-time filtering could never have.
+    prefs.unblockSender('spam@example.com')
+    ok('unblocking brings the mail straight back',
+      db.listMessages(folder.id, 50, 0).length === 3 && db.countMessages(folder.id) === 3)
+    ok('and nothing was deleted from the database',
+      (raw.prepare('SELECT COUNT(*) AS n FROM messages WHERE folder_id = ?').get(folder.id) as { n: number })
+        .n === 3)
+
+    // A Sent row's from_addr is always the user, so a blocklist entry matching
+    // their own address must not empty the Sent list.
+    const sent = db.upsertFolder(account.id, 'BlockSent', 'BlockSent', 'sent')
+    ins.run({ id: 'blk-sent', f: sent.id, a: account.id, uid: 7101, mid: '<sent@x>', tid: 'thr-sent2',
+      from: me, to: 'someone@example.com', subj: 'My reply', date: 8000, read: 1 })
+    prefs.blockSender(EMAIL)
+    ok('a Sent folder is exempt, so blocking your own address cannot empty it',
+      db.listMessages(sent.id, 50, 0).length === 1,
+      String(db.listMessages(sent.id, 50, 0).length))
+    prefs.unblockSender(EMAIL)
+
+    // Muting is about interruption, not visibility.
+    prefs.muteSender('wanted@example.com')
+    ok('a muted sender is still listed — mute is not block',
+      db.listMessages(folder.id, 50, 0).some((m) => m.id === 'blk-keep'))
+    ok('and still counted as unread',
+      db.recalculateFolderUnread(folder.id) === 3,
+      String(db.recalculateFolderUnread(folder.id)))
+    prefs.unmuteSender('wanted@example.com')
+
+    // Removal, and the normalization that makes it usable from a display form.
+    prefs.blockSender('"Spammer" <Spam@Example.com>')
+    ok('blocking normalizes the address', prefs.getBlockedSenders().includes('spam@example.com'),
+      prefs.getBlockedSenders().join(', '))
+    prefs.unblockSender('SPAM@example.com')
+    ok('and unblocking matches case-insensitively',
+      !prefs.getBlockedSenders().includes('spam@example.com'),
+      prefs.getBlockedSenders().join(', '))
+
+    const writesBefore = prefs.appStateWriteCount()
+    prefs.unblockSender('never-was-blocked@example.com')
+    ok('removing a sender who was not on the list writes nothing',
+      prefs.appStateWriteCount() === writesBefore,
+      `${prefs.appStateWriteCount() - writesBefore} extra write(s)`)
+
+    raw.prepare('DELETE FROM messages WHERE folder_id IN (?, ?)').run(folder.id, sent.id)
+  }
+
+  // -------------------------------------------------------------------------
   section('Account settings: the password never leaves the main process')
   // -------------------------------------------------------------------------
   {

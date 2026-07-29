@@ -117,7 +117,10 @@ import {
   getWindowPreferences,
   muteSender,
   blockSender,
-  allowSenderImages
+  allowSenderImages,
+  unmuteSender,
+  unblockSender,
+  revokeSenderImages
 } from './services/preferences-service'
 import {
   analyzeMessage,
@@ -387,22 +390,22 @@ function showNewMailNotification(count: number): void {
   if (getAppState().desktopNotifications === false) return
   if (!Notification.isSupported()) return
   if (Date.now() - lastNotificationAt < 5000) return
-  lastNotificationAt = Date.now()
 
+  // Muted and blocked senders are already excluded from this, so a null result
+  // with mail in the inbox means everything recent is from someone the user
+  // asked not to be interrupted about. Say nothing rather than raising a
+  // contentless "you have a new message" — that is the interruption they muted.
   const latest = getLatestInboxMessage()
+  if (!latest) return
+  lastNotificationAt = Date.now()
 
   // Account on the (bold) title line; sender and subject in the body, each
   // truncated so the notification stays within a sensible width.
-  let title = 'Orbit Mail'
-  let body = count === 1 ? 'You have a new message' : `You have ${count} new messages`
-
-  if (latest) {
-    title = truncate(latest.accountLabel, 64)
-    const sender = truncate(senderName(latest.from) || 'Unknown sender', 40)
-    const subject = truncate(latest.subject || '(no subject)', 80)
-    body = `${sender}\n${subject}`
-    if (count > 1) body += `\n+${count - 1} more message${count - 1 === 1 ? '' : 's'}`
-  }
+  const title = truncate(latest.accountLabel, 64)
+  const sender = truncate(senderName(latest.from) || 'Unknown sender', 40)
+  const subject = truncate(latest.subject || '(no subject)', 80)
+  let body = `${sender}\n${subject}`
+  if (count > 1) body += `\n+${count - 1} more message${count - 1 === 1 ? '' : 's'}`
 
   const notification = new Notification({
     title,
@@ -1177,15 +1180,47 @@ function registerIpc(): void {
 
   ipcMain.handle('preferences:muteSender', (_, email: string) => {
     muteSender(email)
+    // Mute changes which mail can raise a notification, not which mail is
+    // shown, so nothing needs refreshing.
+    return getAppState().mutedSenders ?? []
   })
 
   ipcMain.handle('preferences:allowSenderImages', (_, email: string) => {
     allowSenderImages(email)
+    return getAppState().imageAllowedSenders ?? []
   })
 
   ipcMain.handle('preferences:blockSender', (_, email: string) => {
+    // Blocking one of the user's own addresses would be self-inflicted and
+    // strange: every Sent row is from them, so it would empty their Sent list
+    // and hide their own replies inside conversations. Sent folders are exempt
+    // from the filter as a second lock, but refusing here is the honest place
+    // to say why.
+    const own = listAccounts().map((account) => account.email.trim().toLowerCase())
+    const target = email.replace(/.*<([^>]+)>.*/, '$1').trim().toLowerCase()
+    if (own.includes(target)) {
+      throw new Error('That is one of your own addresses — blocking it would hide your own mail.')
+    }
     blockSender(email)
+    notifyMessagesUpdated()
+    return getAppState().blockedSenders ?? []
   })
+
+  // Removal. Each returns the resulting list so the renderer can replace its
+  // copy without a second read.
+  ipcMain.handle('preferences:unmuteSender', (_, email: string) => unmuteSender(email))
+
+  ipcMain.handle('preferences:unblockSender', (_, email: string) => {
+    const next = unblockSender(email)
+    // Their mail comes straight back — it was only ever hidden, never deleted —
+    // but the list on screen was rendered without it.
+    notifyMessagesUpdated()
+    return next
+  })
+
+  ipcMain.handle('preferences:revokeSenderImages', (_, email: string) =>
+    revokeSenderImages(email)
+  )
 
   ipcMain.handle('app:getSecureStorageStatus', () => ({
     available: safeStorage.isEncryptionAvailable()

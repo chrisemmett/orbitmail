@@ -497,9 +497,19 @@ export interface OrbitMailAPI {
     saveUi: (ui: Partial<UiPreferences>) => Promise<UiPreferences>
     save: (state: Partial<PersistedAppState>) => Promise<PersistedAppState>
     setHandleMailtoLinks: (enabled: boolean) => Promise<boolean>
-    muteSender: (email: string) => Promise<void>
-    allowSenderImages: (email: string) => Promise<void>
-    blockSender: (email: string) => Promise<void>
+    /**
+     * The sender lists. Each add/remove returns the resulting list so the
+     * renderer can replace its copy without a second read.
+     *
+     * `blockSender` rejects one of the user's own addresses: every Sent row is
+     * from them, so blocking it would hide their own mail.
+     */
+    muteSender: (email: string) => Promise<string[]>
+    unmuteSender: (email: string) => Promise<string[]>
+    unblockSender: (email: string) => Promise<string[]>
+    revokeSenderImages: (email: string) => Promise<string[]>
+    allowSenderImages: (email: string) => Promise<string[]>
+    blockSender: (email: string) => Promise<string[]>
   }
   oauth: {
     /** Never returns credential values — only whether each provider is usable. */

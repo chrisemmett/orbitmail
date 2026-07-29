@@ -2732,6 +2732,12 @@ textarea {
   white-space: nowrap;
 }
 
+.settings-sender-action {
+  flex: 0 0 auto;
+  padding: 3px 10px;
+  font-size: 11px;
+}
+
 /* .modal-actions stretches its children by default; the footer here wants a
    natural-width Close, the same opt-out .tasks-modal makes. */
 .modal-settings .modal-actions {

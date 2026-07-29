@@ -36,6 +36,8 @@ export async function loadPersistedPreferences(): Promise<void> {
   applyUiPreferences(state.ui ?? ({} as UiPreferences))
   const mail = useMailStore.getState()
   mail.setImageAllowedSenders(state.imageAllowedSenders ?? [])
+  mail.setBlockedSenders(state.blockedSenders ?? [])
+  mail.setMutedSenders(state.mutedSenders ?? [])
   // Each global default is written out rather than relying on the main process
   // having supplied it: a blob saved before these keys existed has them absent,
   // and the absent case must mean "what the app did before there was a switch".

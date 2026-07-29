@@ -29,6 +29,7 @@ import { buildLikePattern, messageSearchableBody } from './search-index'
 import { normalizeSubject } from './thread-util'
 import { collectDisplayNames, extractName } from '../../shared/addresses'
 import { harvestContacts } from './contacts'
+import { getBlockedSenders, isSenderMuted } from './preferences-service'
 
 export type { TokenData, ManualAccountCredentials, AccountCredentials }
 
@@ -447,13 +448,20 @@ export function getLatestInboxMessage(): LatestInboxMessage | null {
   const inboxIds = getInboxFolderIds()
   if (inboxIds.length === 0) return null
 
-  const row = db
+  // This is what a new-mail notification names, so it skips senders the user
+  // has muted as well as blocked — mute means "do not interrupt me about this
+  // person", and the notification is the interruption. Taking a few rows and
+  // filtering in JS keeps the muted check next to isSenderMuted rather than
+  // rebuilding its address matching in SQL.
+  const rows = db
     .select({ from: messages.from, subject: messages.subject, accountId: messages.accountId })
     .from(messages)
-    .where(inArray(messages.folderId, inboxIds))
+    .where(and(inArray(messages.folderId, inboxIds), blockedDrizzleCondition(blockedFor('unified'))))
     .orderBy(desc(messages.date))
-    .limit(1)
-    .get()
+    .limit(20)
+    .all()
+
+  const row = rows.find((candidate) => !isSenderMuted(candidate.from))
   if (!row) return null
 
   const account = db.select().from(accounts).where(eq(accounts.id, row.accountId)).get()
@@ -539,7 +547,10 @@ export function listMessages(
     scope = eq(messages.folderId, folderId)
   }
 
-  const where = unreadOnly ? and(scope, eq(messages.isRead, false)) : scope
+  const where = and(
+    unreadOnly ? and(scope, eq(messages.isRead, false)) : scope,
+    blockedDrizzleCondition(blockedFor(folderId))
+  )
   const rows = db
     .select(SUMMARY_COLS)
     .from(messages)
@@ -559,6 +570,82 @@ export function listMessages(
 // id) scoped per account, so a message without a thread_id is its own thread and
 // subject-fallback keys never merge across accounts.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Blocked senders.
+//
+// Filtering happens **at query time**, in every read site, not at sync time.
+// Two sync-time designs were tried and rejected: re-filing a blocked sender's
+// mail into Junk collides with `UNIQUE(folder_id, uid)` (uid is folder-scoped,
+// so an Inbox uid moved under the Junk folder id can hit a real Junk message),
+// and skipping it at ingest is worse — IMAP only fetches UIDs above
+// `highestSyncedUid`, so skipped mail is gone for good and Block becomes silent,
+// irreversible data loss that behaves one way for already-cached mail and
+// another for new. Filtering on read applies to both with the same code, and
+// unblocking restores everything instantly with no refetch.
+//
+// The cost: `from_addr` stores the display form (`"Name" <addr>`), not a
+// normalized address, so this is a LIKE per blocked entry and **cannot use an
+// index**. A `from_normalized` column plus a backfill is the sub-linear
+// follow-up; see TODO.md.
+//
+// Every read site must apply this or the unread badge disagrees with the list,
+// which is worse than not blocking at all.
+// ---------------------------------------------------------------------------
+
+// A guard on SQL size, not a product decision. Someone with more blocked
+// senders than this keeps the first 200 filtered.
+const MAX_BLOCKED_PREDICATES = 200
+
+function escapeLikeLiteral(value: string): string {
+  return value.replace(/[\\_%]/g, '\\$&')
+}
+
+/**
+ * The blocked addresses that apply to a folder.
+ *
+ * **Sent folders are exempt.** A Sent row's `from_addr` is always the user, so
+ * if one of their own addresses ever reached the blocklist the predicate would
+ * empty their entire Sent list. `preferences:blockSender` refuses own addresses
+ * too; this is the second lock on the same door.
+ */
+function blockedFor(folderId: string | 'unified'): string[] {
+  if (folderId !== 'unified' && isSentFolder(folderId)) return []
+  return getBlockedSenders().slice(0, MAX_BLOCKED_PREDICATES)
+}
+
+/**
+ * Match the address inside the angle brackets, or a bare address on its own —
+ * never a bare substring. `LIKE '%bob@x.com%'` would also hide mail from
+ * `notbob@x.com`, which is a silent, baffling way to lose mail.
+ *
+ * A display name is attacker-controlled, so a sender *can* get their own mail
+ * hidden by putting a blocked address in their display name. They cannot use it
+ * to escape a block, which is the direction that matters.
+ */
+function blockedDrizzleCondition(addresses: string[]) {
+  if (addresses.length === 0) return undefined
+  return and(
+    ...addresses.map(
+      (address) =>
+        sql`NOT (lower(${messages.from}) LIKE ${`%<${escapeLikeLiteral(address)}>%`} ESCAPE '\\'
+             OR lower(trim(${messages.from})) = ${address})`
+    )
+  )
+}
+
+/** The same predicate for the raw-SQL read paths. */
+function blockedSqlFragment(
+  addresses: string[],
+  column: string
+): { clause: string; params: string[] } {
+  if (addresses.length === 0) return { clause: '', params: [] }
+  const clause = addresses
+    .map(() => ` AND NOT (lower(${column}) LIKE ? ESCAPE '\\' OR lower(trim(${column})) = ?)`)
+    .join('')
+  const params = addresses.flatMap((address) => [`%<${escapeLikeLiteral(address)}>%`, address])
+  return { clause, params }
+}
 
 // A Sent folder's rows are about the recipient — the sender is always us.
 function isSentFolder(folderId: string | 'unified'): boolean {
@@ -752,6 +839,14 @@ export function listThreads(
   // Unread-only restricts the conversation set to threads with an unread copy in
   // the viewed folder(s) — matching how hasUnread is computed below.
   const unreadClause = unreadOnly ? ' AND is_read = 0' : ''
+  // Applied twice, deliberately. On the folder scan so a conversation made only
+  // of blocked mail never appears; on the message rows so a blocked person's
+  // reply inside an otherwise legitimate thread does not contribute to its
+  // count, participants or latest message. Blocking hides that person's
+  // messages, not every conversation they touched.
+  const blocked = blockedFor(folderId)
+  const blockScan = blockedSqlFragment(blocked, 'from_addr')
+  const blockRows = blockedSqlFragment(blocked, 'from_addr')
 
   // Page of thread keys with a message in this folder, ordered by the
   // conversation's most recent message (account-wide — a Sent reply counts).
@@ -763,14 +858,18 @@ export function listThreads(
          FROM messages
          WHERE (account_id, COALESCE(thread_id, id)) IN (
            SELECT DISTINCT account_id, COALESCE(thread_id, id)
-           FROM messages WHERE folder_id IN (${ph})${unreadClause}
+           FROM messages WHERE folder_id IN (${ph})${unreadClause}${blockScan.clause}
          )
        )
        GROUP BY aid, tkey
        ORDER BY last_date DESC
        LIMIT ? OFFSET ?`
     )
-    .all(...scopeIds, limit, offset) as Array<{ aid: string; tkey: string; last_date: number }>
+    .all(...scopeIds, ...blockScan.params, limit, offset) as Array<{
+    aid: string
+    tkey: string
+    last_date: number
+  }>
   if (heads.length === 0) return []
 
   // Every message in those conversations (across folders), lightweight columns.
@@ -782,10 +881,10 @@ export function listThreads(
       `SELECT id, account_id AS aid, COALESCE(thread_id, id) AS tkey, COALESCE(message_id, id) AS mkey,
               folder_id, from_addr, to_addr, subject, snippet, date, is_read, is_starred, flag_color, has_attachments
        FROM messages
-       WHERE (account_id, COALESCE(thread_id, id)) IN (VALUES ${pairs})
+       WHERE (account_id, COALESCE(thread_id, id)) IN (VALUES ${pairs})${blockRows.clause}
        ORDER BY date ASC`
     )
-    .all(...pairArgs) as ThreadMsgRow[]
+    .all(...pairArgs, ...blockRows.params) as ThreadMsgRow[]
 
   interface Group {
     all: ThreadMsgRow[]
@@ -858,14 +957,17 @@ export function countThreads(folderId: string | 'unified', unreadOnly = false): 
   const sqlite = getRawSqlite()
   const ph = scopeIds.map(() => '?').join(', ')
   const unreadClause = unreadOnly ? ' AND is_read = 0' : ''
+  // Same predicate as listThreads' folder scan, or the count disagrees with the
+  // number of conversations actually on screen.
+  const block = blockedSqlFragment(blockedFor(folderId), 'from_addr')
   const row = sqlite
     .prepare(
       `SELECT COUNT(*) AS n FROM (
-         SELECT 1 FROM messages WHERE folder_id IN (${ph})${unreadClause}
+         SELECT 1 FROM messages WHERE folder_id IN (${ph})${unreadClause}${block.clause}
          GROUP BY account_id, COALESCE(thread_id, id)
        )`
     )
-    .get(...scopeIds) as { n: number }
+    .get(...scopeIds, ...block.params) as { n: number }
   return row.n
 }
 
@@ -1608,10 +1710,19 @@ export function updateFolderUnread(folderId: string, count: number): void {
 
 export function recalculateFolderUnread(folderId: string): number {
   const db = getDb()
+  // Blocked mail is not shown, so it must not be counted either — an unread
+  // badge for messages the user cannot see is the most confusing possible
+  // outcome, and it feeds the tray icon and the window title too.
   const row = db
     .select({ value: count() })
     .from(messages)
-    .where(and(eq(messages.folderId, folderId), eq(messages.isRead, false)))
+    .where(
+      and(
+        eq(messages.folderId, folderId),
+        eq(messages.isRead, false),
+        blockedDrizzleCondition(blockedFor(folderId))
+      )
+    )
     .get()
   const unread = row?.value ?? 0
   updateFolderUnread(folderId, unread)
@@ -1691,10 +1802,17 @@ export function countMessages(folderId: string | 'unified', unreadOnly = false):
     scope = eq(messages.folderId, folderId)
   }
 
+  // Must carry the same predicate as listMessages, or the header count and the
+  // rows on screen disagree and infinite scroll mis-computes its offsets.
   const row = db
     .select({ value: count() })
     .from(messages)
-    .where(unreadOnly ? and(scope, eq(messages.isRead, false)) : scope)
+    .where(
+      and(
+        unreadOnly ? and(scope, eq(messages.isRead, false)) : scope,
+        blockedDrizzleCondition(blockedFor(folderId))
+      )
+    )
     .get()
   return row?.value ?? 0
 }
@@ -1956,13 +2074,17 @@ export function searchMessages(
     )
     args.push(likePattern, likePattern)
   }
-  args.push(safeLimit)
+  // Search spans folders, so it uses the whole blocklist rather than a
+  // folder-scoped one. Without this, blocked mail stays perfectly findable and
+  // "blocked" would mean only "not in the list I was looking at".
+  const block = blockedSqlFragment(getBlockedSenders().slice(0, MAX_BLOCKED_PREDICATES), 'm.from_addr')
+  args.push(...block.params, safeLimit)
 
   const rows = sqlite
     .prepare(
       `${SEARCH_SELECT}
        FROM messages m
-       WHERE m.account_id = ? AND (${clauses.join(' OR ')})
+       WHERE m.account_id = ? AND (${clauses.join(' OR ')})${block.clause}
        ORDER BY m.date DESC
        LIMIT ?`
     )
