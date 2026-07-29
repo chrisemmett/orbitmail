@@ -94,6 +94,10 @@ interface MailState {
   favoriteFolderIds: string[]
   // Senders whose remote images load without the block prompt (persisted).
   imageAllowedSenders: string[]
+  // Senders whose mail is hidden, and senders whose mail arrives without a
+  // notification. Both persisted; both managed in Settings → Privacy.
+  blockedSenders: string[]
+  mutedSenders: string[]
   // Global preferences the user can change in Settings (persisted in the
   // app_state blob). These live in the store rather than in the dialog because
   // they are read outside it — alwaysLoadRemoteImages by the reader on every
@@ -171,6 +175,8 @@ interface MailState {
   expandAccount: (accountId: string) => void
   toggleFavoriteFolder: (folderId: string) => void
   setImageAllowedSenders: (senders: string[]) => void
+  setBlockedSenders: (senders: string[]) => void
+  setMutedSenders: (senders: string[]) => void
   addImageAllowedSender: (email: string) => void
   setThreadedView: (enabled: boolean) => void
   setUnreadFilterByAccount: (map: Record<string, boolean>) => void
@@ -231,6 +237,8 @@ export const useMailStore = create<MailState>((set) => ({
   collapsedAccountIds: {},
   favoriteFolderIds: [],
   imageAllowedSenders: [],
+  blockedSenders: [],
+  mutedSenders: [],
   threadedView: true,
   unreadFilterByAccount: {},
   expandedThreadKeys: [],
@@ -344,6 +352,8 @@ export const useMailStore = create<MailState>((set) => ({
   setThreadedView: (enabled) => set({ threadedView: enabled }),
 
   setImageAllowedSenders: (senders) => set({ imageAllowedSenders: senders }),
+  setBlockedSenders: (senders) => set({ blockedSenders: senders }),
+  setMutedSenders: (senders) => set({ mutedSenders: senders }),
   addImageAllowedSender: (email) =>
     set((state) => {
       const normalized = email.trim().toLowerCase()
@@ -2212,7 +2222,50 @@ export async function allowSenderImages(email: string): Promise<void> {
   const normalized = email.trim().toLowerCase()
   if (!normalized) return
   useMailStore.getState().addImageAllowedSender(normalized)
-  await window.orbitMail.preferences.allowSenderImages(normalized)
+  const next = await window.orbitMail.preferences.allowSenderImages(normalized)
+  useMailStore.getState().setImageAllowedSenders(next)
+}
+
+/**
+ * Add to or remove from one of the sender lists.
+ *
+ * Main returns the resulting list, so the store replaces its copy rather than
+ * guessing at it — which matters because main normalizes the address on the way
+ * in and may refuse the change outright (blocking one of your own addresses).
+ */
+export async function updateSenderList(
+  action: 'mute' | 'unmute' | 'block' | 'unblock' | 'revokeImages',
+  email: string
+): Promise<void> {
+  const store = useMailStore.getState()
+  const prefs = window.orbitMail.preferences
+  try {
+    switch (action) {
+      case 'mute':
+        store.setMutedSenders(await prefs.muteSender(email))
+        store.setToast(`Muted ${email} — their mail arrives without notifying you`)
+        break
+      case 'unmute':
+        store.setMutedSenders(await prefs.unmuteSender(email))
+        break
+      case 'block':
+        store.setBlockedSenders(await prefs.blockSender(email))
+        // Hiding mail silently would be indistinguishable from losing it, so
+        // say what happened and where to undo it.
+        store.setToast(`Blocked ${email} — their mail is hidden. Undo in Settings → Privacy`)
+        await refreshMessages()
+        break
+      case 'unblock':
+        store.setBlockedSenders(await prefs.unblockSender(email))
+        await refreshMessages()
+        break
+      case 'revokeImages':
+        store.setImageAllowedSenders(await prefs.revokeSenderImages(email))
+        break
+    }
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : 'Could not update that sender')
+  }
 }
 
 export async function runSearch(

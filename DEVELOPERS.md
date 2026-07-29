@@ -529,10 +529,56 @@ changing:
 `ServerFields` lives in `src/components/accounts/ServerFields.tsx`, shared
 unchanged between the Add Account wizard and this pane.
 
-**Not handled yet:** the muted and blocked sender lists are deliberately absent
-from the Privacy pane because neither does anything to your mail yet (listing
-them would imply otherwise); and the image allowlist can still only be added to,
-not removed from.
+### Blocking and muting a sender
+
+Both used to persist a string and do nothing at all — the app said it had blocked
+someone and then delivered their mail as normal.
+
+**Mute** means "do not interrupt me": the mail arrives, is listed, and counts as
+unread, but `getLatestInboxMessage` skips muted senders and
+`showNewMailNotification` returns when that leaves nothing. It deliberately does
+*not* mark anything read — that destroys information and cannot be undone.
+
+**Block** means "do not put this in front of me", and filters at **query time**.
+Two sync-time designs were tried and rejected, and the reasoning is in the header
+comment of the block section in `db-service.ts` — briefly: re-filing into Junk
+collides with `UNIQUE(folder_id, uid)`, and skipping at ingest is unrecoverable
+because IMAP only fetches UIDs above `highestSyncedUid`, turning Block into
+silent, irreversible data loss.
+
+The predicate must be applied in **every** read site or the unread badge
+disagrees with the list, which is worse than not blocking:
+
+`listMessages` · `countMessages` · `listThreads` (twice — the folder scan *and*
+the message rows, so a blocked reply does not contribute to an otherwise
+legitimate thread) · `countThreads` · `searchMessages` · `getLatestInboxMessage`
+· `recalculateFolderUnread`
+
+Details that are load-bearing:
+
+- **It matches `<addr>` or a bare address, never a bare substring.**
+  `LIKE '%bob@x.com%'` would also hide `notbob@x.com` — a baffling way to lose
+  mail from a real correspondent. A display name is attacker-controlled, so a
+  sender can get their *own* mail hidden by putting a blocked address in their
+  display name; they cannot use it to escape a block, which is the direction
+  that matters.
+- **Sent folders are exempt**, and `preferences:blockSender` refuses one of the
+  user's own addresses. Either alone would do; both are cheap. A Sent row's
+  `from_addr` is always the user, so without this, blocking your own address
+  empties your entire Sent list.
+- **Nothing is deleted.** Unblocking restores everything instantly with no
+  refetch — the property sync-time filtering could never have.
+- `from_addr` holds the display form, so this is a LIKE per blocked entry and
+  **not indexable**, capped at 200 entries. A `from_normalized` column plus a
+  backfill is the sub-linear follow-up (TODO.md). Its trap is recorded there:
+  un-backfilled rows are NULL, and a naive `NOT IN` over NULL excludes every one
+  of them.
+- Blocking and unblocking call `notifyMessagesUpdated()` so the list on screen
+  re-reads, and the renderer's `updateSenderList` raises a toast — hiding mail
+  silently is indistinguishable from losing it.
+
+**Not handled yet:** the `from_normalized` column, so block is linear in account
+size.
 
 ### Forwarding
 
@@ -936,6 +982,7 @@ reimplementing them, so it exercises the shipping code paths:
 | Account identity | Re-adding an address with the *same* provider updates the row in place (re-authentication, password changes) and stores the new credentials; re-adding it with a *different* provider is refused, naming both providers, and leaves the existing account and its OAuth refresh token untouched. Other addresses are unaffected. |
 | Account removal | Deleting an account removes its AI Tasks (per-folder, and unified-inbox tasks tied to its messages) as well as its mail — `sweep_tasks` has no foreign key, so the cascade misses them — while another account's tasks survive. |
 | Settings / preferences | A blob written before the settings keys existed reads back with close-to-tray and notifications **on** and remote images **blocked**, and the settings that were already in it survive untouched; a patch of an unrelated key does not drop those defaults; a global setting can actually be turned *off* (the `??`-vs-`||` trap) without disturbing the others, and an emptied sender list stays empty. Renderer side: defaults survive an old blob, an explicit `false` is not mistaken for an absent key, a toggle applies immediately and sends only the changed key, a rejected write rolls back and says so, and a mailto registration the OS refused does not show as on. |
+| Blocked senders | A blocked sender disappears from the flat list, the conversation list, search and the unread count — **and `countMessages`/`countThreads` agree with what is listed**, which is the bug that would otherwise ship. An address that merely *contains* a blocked one (`notspam@` vs `spam@`) is not hidden. Unblocking restores everything with no refetch and nothing was deleted from the database. A Sent folder is exempt, so blocking your own address cannot empty it. A muted sender is still listed and still counted — mute is not block. Blocking normalizes the address, unblocking matches case-insensitively, and removing a sender who was never listed writes nothing. |
 | Account credentials | `toManualSettings` has **no `password` key at all** (asserted on key absence, since `password: undefined` still serialises the name) and no key beyond the seven it declares, reports `hasPassword`, and carries the server settings through intact. An update omitting the password keeps the stored one — proved by the account still authenticating afterwards — applies the rest of the edit, and leaves the sync window alone. An edit that cannot connect is rejected *and nothing is written*. Testing a wrong password fails; testing the stored settings succeeds. |
 | Accounts pane selection | `resolveSelectedAccountId` — shows the first account by default, the one Settings was opened *for* when that account still exists, keeps an existing selection otherwise, and falls back rather than pointing at an account that has just been removed (which would render an empty pane). |
 | Remote-image gating | `isRemoteContentBlocked` — blocked by default, never "blocked" without remote content, unblocked by the global setting, by this sender's allowlist entry (but not another sender's), or by loading once this session. Whether a tracking pixel fires is not left to a manual click-through. |

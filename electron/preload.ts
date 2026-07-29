@@ -139,7 +139,11 @@ const api: OrbitMailAPI = {
     muteSender: (email: string) => ipcRenderer.invoke('preferences:muteSender', email),
     allowSenderImages: (email: string) =>
       ipcRenderer.invoke('preferences:allowSenderImages', email),
-    blockSender: (email: string) => ipcRenderer.invoke('preferences:blockSender', email)
+    blockSender: (email: string) => ipcRenderer.invoke('preferences:blockSender', email),
+    unmuteSender: (email: string) => ipcRenderer.invoke('preferences:unmuteSender', email),
+    unblockSender: (email: string) => ipcRenderer.invoke('preferences:unblockSender', email),
+    revokeSenderImages: (email: string) =>
+      ipcRenderer.invoke('preferences:revokeSenderImages', email)
   },
   oauth: {
     getStatus: () => ipcRenderer.invoke('oauth:getStatus'),

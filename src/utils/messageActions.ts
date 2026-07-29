@@ -7,7 +7,8 @@ import {
   moveMessageToFolder,
   copyMessageToFolder,
   archiveMessage,
-  setMessageFlagColor
+  setMessageFlagColor,
+  updateSenderList
 } from '../stores/mailStore'
 
 export type MessageComposeMode = NonNullable<ComposePayload['mode']>
@@ -60,12 +61,17 @@ export async function setFlag(messageId: string, flagColor: FlagColor | null): P
   await setMessageFlagColor(messageId, flagColor)
 }
 
+// Both go through the store rather than straight to IPC: it keeps the renderer's
+// copy of the list in step, refreshes the message list when blocking hides mail,
+// and — the part that matters — raises a toast. These used to persist a string
+// and say nothing, which was survivable while neither did anything, and would be
+// indistinguishable from losing mail now that blocking hides it.
 export async function muteSender(message: MessageSummary): Promise<void> {
-  await window.orbitMail.preferences.muteSender(extractSenderEmail(message.from))
+  await updateSenderList('mute', extractSenderEmail(message.from))
 }
 
 export async function blockSender(message: MessageSummary): Promise<void> {
-  await window.orbitMail.preferences.blockSender(extractSenderEmail(message.from))
+  await updateSenderList('block', extractSenderEmail(message.from))
 }
 
 export function foldersForAccount(folders: Folder[], accountId: string): Folder[] {

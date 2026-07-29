@@ -254,3 +254,8 @@ export function isSenderMuted(from: string): boolean {
   const normalized = normalizeEmail(from)
   return !!normalized && (currentState().mutedSenders ?? []).includes(normalized)
 }
+
+/** The blocked addresses themselves, for building a query predicate. */
+export function getBlockedSenders(): string[] {
+  return currentState().blockedSenders ?? []
+}
