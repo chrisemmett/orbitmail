@@ -9,7 +9,9 @@ import {
   analyzeMessage,
   draftReply,
   flagMessageAsTask,
-  retryReaderLoad
+  retryReaderLoad,
+  openDraft,
+  discardDraft
 } from '../../stores/mailStore'
 import { EmptyState } from '../EmptyState'
 import { MessageContextMenu } from '../messages/MessageContextMenu'
@@ -23,6 +25,8 @@ import {
   ArrowBendUpLeft,
   ArrowBendDoubleUpLeft,
   ArrowBendUpRight,
+  PencilSimple,
+  Trash,
   Printer,
   ListChecks,
   TrayArrowDown
@@ -451,6 +455,32 @@ export function MessageView() {
         <div className="reader-header-top">
           <div className="reader-subject">{selectedMessage.subject}</div>
           <div className="reader-header-actions">
+            {selectedMessage.draftId ? (
+              // A draft is unsent, so replying to or forwarding it is
+              // meaningless. The two things worth doing are finishing it and
+              // throwing it away.
+              <>
+                <button
+                  type="button"
+                  className="reader-ai-btn primary"
+                  title="Carry on writing this draft"
+                  onClick={() => void openDraft(selectedMessage.draftId!)}
+                >
+                  <PencilSimple size={16} weight="duotone" />
+                  Continue editing
+                </button>
+                <button
+                  type="button"
+                  className="reader-ai-btn"
+                  title="Delete this draft"
+                  onClick={() => void discardDraft(selectedMessage.draftId!)}
+                >
+                  <Trash size={16} weight="duotone" />
+                  Discard draft
+                </button>
+              </>
+            ) : (
+              <>
             <button
               type="button"
               className="reader-ai-btn primary"
@@ -482,6 +512,8 @@ export function MessageView() {
             <AnalyzeButton message={selectedMessage} />
             <FlagTaskButton messageId={selectedMessage.id} />
             <PrintButton message={selectedMessage} aiAnalysis={aiAnalysis} />
+            </>
+            )}
 
             <button
               type="button"

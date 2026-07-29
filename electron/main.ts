@@ -64,6 +64,7 @@ import {
   listDrafts,
   deleteDraft,
   getDraftPayload,
+  getDraftAsMessage,
   countDrafts
 } from './services/draft-service'
 import { authenticateGoogle } from './services/oauth-google'
@@ -578,27 +579,69 @@ async function createComposeWindow(payload?: Partial<ComposePayload>): Promise<v
     if (closingAfterFlush || !composeWindow) return
     event.preventDefault()
     closingAfterFlush = true
-    const finish = () => composeWindow?.close()
-    composeWindow.webContents
-      .executeJavaScript('window.__orbitMailFlushDraft?.()', true)
-      .then((draftId: string | null | undefined) => {
-        // Say where it went. A draft is saved against the composer's From
-        // account, which is not necessarily the folder the user was reading —
-        // without this they go looking in the wrong account's Drafts folder and
-        // conclude the draft was lost.
-        if (!draftId) return
-        const draft = getDraftPayload(draftId)
-        const account = listAccounts().find((a) => a.id === draft?.payload.accountId)
-        mainWindow?.webContents.send(
-          'app:toast',
-          account
-            ? `Draft saved in ${account.email} → Drafts`
-            : 'Draft saved'
-        )
+    const win = composeWindow
+    const finish = () => {
+      closingAfterFlush = true
+      win.close()
+    }
+
+    void (async () => {
+      // Save first, then ask. If the dialog or anything after it fails, the
+      // message still exists — the opposite order risks losing it to a crash
+      // between the question and the answer.
+      // Raced against a timeout: a wedged renderer must never leave a window
+      // that cannot be closed. Losing the last ~800ms of typing in that case is
+      // the lesser failure.
+      const draftId: string | null = await Promise.race([
+        win.webContents
+          .executeJavaScript('window.__orbitMailFlushDraft?.()', true)
+          .catch(() => null),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000))
+      ])
+
+      if (!draftId) {
+        finish()
+        return
+      }
+
+      // Keeping it silently was the original design and testing showed it is
+      // wrong: an unsent message quietly filed somewhere is indistinguishable
+      // from one lost, and drafts accumulate from composers opened and thought
+      // better of.
+      const { response } = await dialog.showMessageBox(win, {
+        type: 'question',
+        buttons: ['Save draft', 'Discard', 'Cancel'],
+        defaultId: 0,
+        cancelId: 2,
+        message: 'Save this message as a draft?',
+        detail: 'Saved drafts appear in the Drafts folder for this account.'
       })
-      .catch(() => {})
-      .finally(finish)
-    setTimeout(finish, 2000)
+
+      if (response === 2) {
+        // Back to editing. The draft stays saved — a later close asks again.
+        closingAfterFlush = false
+        return
+      }
+
+      if (response === 1) {
+        deleteDraft(draftId)
+        notifyMessagesUpdated()
+        finish()
+        return
+      }
+
+      // Say *where* it went: a draft belongs to the composer's From account,
+      // which is not necessarily the folder being read, and looking in the
+      // wrong Drafts folder reads as the draft having been lost.
+      const account = listAccounts().find(
+        (a) => a.id === getDraftPayload(draftId)?.payload.accountId
+      )
+      mainWindow?.webContents.send(
+        'app:toast',
+        account ? `Draft saved in ${account.email} → Drafts` : 'Draft saved'
+      )
+      finish()
+    })()
   })
 
   composeWindow.on('closed', () => {
@@ -852,7 +895,21 @@ function registerIpc(): void {
     getThread(accountId, threadId)
   )
 
-  ipcMain.handle('messages:get', (_, messageId: string) => getMessage(messageId))
+  ipcMain.handle('messages:get', (_, messageId: string) => {
+    // A draft row selected in the list. Drafts are not in `messages`, so one is
+    // projected into the same shape and the reader needs no separate path.
+    // Clicking a draft used to open the composer outright, which meant a draft
+    // could never be selected — and so never deleted, or even read without
+    // committing to editing it.
+    if (messageId.startsWith('draft:')) {
+      const draftId = messageId.slice('draft:'.length)
+      const accountId = getDraftPayload(draftId)?.payload.accountId
+      const folderId =
+        listFolders().find((f) => f.type === 'drafts' && f.accountId === accountId)?.id ?? ''
+      return getDraftAsMessage(draftId, folderId)
+    }
+    return getMessage(messageId)
+  })
 
   ipcMain.handle('messages:markRead', async (_, messageId: string, isRead: boolean) => {
     const msg = getMessage(messageId)
