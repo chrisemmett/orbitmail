@@ -241,6 +241,34 @@ export function updateAccountSyncDays(accountId: string, syncDays: number): Acco
   }
 }
 
+/**
+ * The account's signature, as stored. Empty string when it has none.
+ *
+ * **This is not sanitized here.** `sanitizeEmailHtml` needs a DOM, which the
+ * main process does not have, so the settings pane cleans it before saving and
+ * `RichTextEditor` cleans whatever it is given again on mount — the signature
+ * lands in the compose body, so it passes through that second gate on every
+ * message. The content originates from the user's own typing in our own editor;
+ * the risk being managed is malformed markup reaching outgoing mail, not an
+ * attacker.
+ */
+export function getAccountSignature(accountId: string): string {
+  const row = getDb()
+    .select({ signature: accounts.signature })
+    .from(accounts)
+    .where(eq(accounts.id, accountId))
+    .get()
+  return row?.signature ?? ''
+}
+
+export function setAccountSignature(accountId: string, signature: string): void {
+  getDb()
+    .update(accounts)
+    .set({ signature: signature.trim() || null })
+    .where(eq(accounts.id, accountId))
+    .run()
+}
+
 export function updateAccountDisplayName(accountId: string, displayName: string): Account {
   const db = getDb()
   db.update(accounts).set({ displayName }).where(eq(accounts.id, accountId)).run()

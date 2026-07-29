@@ -2662,6 +2662,14 @@ textarea {
   line-height: 1.45;
 }
 
+/* The signature editor is a full RichTextEditor; keep it shorter than the
+   composer's so the rest of the account pane stays reachable in a fixed-height
+   dialog. */
+.settings-signature-editor .rte-editor {
+  min-height: 96px;
+  max-height: 200px;
+}
+
 /* A hint carrying a failure rather than an explanation. */
 .account-hint.is-error {
   color: #ff3b30;

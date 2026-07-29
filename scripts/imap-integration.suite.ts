@@ -1249,6 +1249,105 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Signatures: stored per account, and above the quoted text')
+  // -------------------------------------------------------------------------
+  {
+    const { getRawSqlite } = await import('../electron/db')
+    const { getAccountInfo } = await import('../electron/services/folder-actions')
+    const { buildReplyPayload } = await import('../electron/services/smtp-send')
+    const raw = getRawSqlite()
+
+    ok('an account starts with no signature', db.getAccountSignature(account.id) === '',
+      JSON.stringify(db.getAccountSignature(account.id)))
+
+    db.setAccountSignature(account.id, '<p>Rob Cowell<br>Folkestone Rotary</p>')
+    ok('a signature round-trips', db.getAccountSignature(account.id).includes('Folkestone Rotary'))
+    ok('and reaches the account info the settings pane reads',
+      getAccountInfo(account.id).signature.includes('Folkestone Rotary'))
+
+    // Whitespace-only is not a signature — otherwise an emptied editor leaves a
+    // stray <br> appended to every message forever.
+    db.setAccountSignature(account.id, '   ')
+    ok('a whitespace-only signature is stored as none',
+      db.getAccountSignature(account.id) === '',
+      JSON.stringify(db.getAccountSignature(account.id)))
+    db.setAccountSignature(account.id, '<p>Rob Cowell</p>')
+
+    // The placement rule. The quote travels separately in quotedHtml, so a
+    // signature appended to bodyHtml is above it by construction — this asserts
+    // the two stay in different fields rather than being concatenated early.
+    const sigFolder = db.upsertFolder(account.id, 'SigBox', 'SigBox', 'custom')
+    const original = db.upsertMessage({
+      folderId: sigFolder.id, accountId: account.id, uid: 8801,
+      messageId: '<sig-orig@example.com>',
+      from: 'Roger <roger@example.com>', to: `Me <${EMAIL}>`,
+      subject: 'Rotary agenda', snippet: '', date: 5000,
+      isRead: true, isStarred: false, hasAttachments: false,
+      bodyText: 'Are we still on for Tuesday?'
+    })
+    const reply = buildReplyPayload(original.id, account.id, 'reply')
+    ok('a reply keeps the quote out of the editable body',
+      (reply.bodyHtml ?? '') === '' && !!reply.quotedHtml,
+      `body=${JSON.stringify(reply.bodyHtml)} quoted=${!!reply.quotedHtml}`)
+
+    // Removing the account takes the signature with it — it is a column on the
+    // account row, so this is the FK cascade doing its job.
+    const other = db.saveManualAccount('imap', {
+      authType: 'password', email: 'sig-second@example.com', displayName: 'Sig',
+      username: LOGIN, password: PASSWORD,
+      incoming: { host: HOST, port: IMAP_PORT, security: 'none' },
+      outgoing: { host: HOST, port: SMTP_PORT, security: 'none' }
+    })
+    db.setAccountSignature(other.id, '<p>Someone else</p>')
+    ok('signatures are per account',
+      db.getAccountSignature(other.id) !== db.getAccountSignature(account.id),
+      `${db.getAccountSignature(other.id)} vs ${db.getAccountSignature(account.id)}`)
+    db.removeAccount(other.id)
+    ok('removing an account removes its signature',
+      (raw.prepare('SELECT COUNT(*) AS n FROM accounts WHERE id = ?').get(other.id) as { n: number }).n === 0)
+
+    // Where it lands, and the case that would otherwise stack copies.
+    const { appendSignature } = await import('../electron/services/signature')
+    const sig = '<p>Rob Cowell</p>'
+
+    const fresh = appendSignature({ accountId: account.id, bodyHtml: '' }, sig)
+    ok('a new message gets the signature', fresh.bodyHtml?.includes('Rob Cowell') === true,
+      fresh.bodyHtml)
+
+    const drafted = appendSignature({ accountId: account.id, bodyHtml: '<p>Thanks!</p>' }, sig)
+    ok('it goes after what was already written, not before',
+      (drafted.bodyHtml ?? '').indexOf('Thanks!') < (drafted.bodyHtml ?? '').indexOf('Rob Cowell'),
+      drafted.bodyHtml)
+
+    const quoted = appendSignature(
+      { accountId: account.id, bodyHtml: '', quotedHtml: '<blockquote>old</blockquote>' },
+      sig
+    )
+    ok('the quote is untouched, so the signature sits above it',
+      quoted.quotedHtml === '<blockquote>old</blockquote>' &&
+        !quoted.bodyHtml?.includes('blockquote'),
+      quoted.bodyHtml)
+
+    // The one that bites: a draft already carries the signature in its saved
+    // body, so reopening it must not add another.
+    const reopened = appendSignature(
+      { accountId: account.id, bodyHtml: `<p>Half written</p><br><br>${sig}`, draftId: 'd1' },
+      sig
+    )
+    ok('reopening a draft does not stack a second signature',
+      (reopened.bodyHtml?.match(/Rob Cowell/g) ?? []).length === 1,
+      reopened.bodyHtml)
+
+    ok('an account with no signature changes nothing',
+      appendSignature({ accountId: account.id, bodyHtml: '<p>x</p>' }, '').bodyHtml === '<p>x</p>')
+    ok('and neither does a whitespace-only one',
+      appendSignature({ accountId: account.id, bodyHtml: '<p>x</p>' }, '  \n ').bodyHtml === '<p>x</p>')
+
+    db.setAccountSignature(account.id, '')
+    raw.prepare('DELETE FROM messages WHERE folder_id = ?').run(sigFolder.id)
+  }
+
+  // -------------------------------------------------------------------------
   section('Inline images: data: URIs become cid: parts on the way out')
   // -------------------------------------------------------------------------
   {

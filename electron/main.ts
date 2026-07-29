@@ -47,6 +47,8 @@ import {
   getFolderById,
   searchMessages,
   updateAccountDisplayName,
+  getAccountSignature,
+  setAccountSignature,
   getAccountById,
   getManualCredentials,
   getLatestInboxMessage,
@@ -56,6 +58,7 @@ import {
   backfillSearchTextBatch
 } from './services/db-service'
 import { suggestContacts, backfillContactsBatch } from './services/contacts'
+import { appendSignature } from './services/signature'
 import {
   saveDraft,
   listDrafts,
@@ -312,7 +315,10 @@ function enrichComposePayload(payload?: Partial<ComposePayload>): Partial<Compos
 async function prepareComposePayload(
   payload?: Partial<ComposePayload>
 ): Promise<Partial<ComposePayload>> {
-  const finalPayload = enrichComposePayload(payload)
+  const finalPayload = appendSignature(
+    enrichComposePayload(payload),
+    payload?.accountId ? getAccountSignature(payload.accountId) : ''
+  )
 
   if (
     payload?.originalMessageId &&
@@ -782,6 +788,10 @@ function registerIpc(): void {
   ipcMain.handle('accounts:updateSyncDays', (_, accountId: string, syncDays: number) =>
     setAccountSyncDays(accountId, syncDays)
   )
+
+  ipcMain.handle('accounts:updateSignature', (_, accountId: string, signature: string) => {
+    setAccountSignature(accountId, signature)
+  })
 
   ipcMain.handle('accounts:getManualSettings', (_, accountId: string) => {
     const account = getAccountById(accountId)

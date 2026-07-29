@@ -52,6 +52,8 @@ export interface AccountInfo {
   localStorageBytes: number
   attachmentCount: number
   downloadedAttachmentCount: number
+  /** Sanitized HTML appended to new messages. Empty when there is none. */
+  signature: string
 }
 
 export interface Folder {
@@ -409,6 +411,11 @@ export interface OrbitMailAPI {
     getInfo: (accountId: string) => Promise<AccountInfo>
     updateDisplayName: (accountId: string, displayName: string) => Promise<Account>
     updateSyncDays: (accountId: string, syncDays: number) => Promise<Account>
+    /**
+     * Store the account's signature. The renderer sanitizes before sending —
+     * the main process has no DOM to do it with.
+     */
+    updateSignature: (accountId: string, signature: string) => Promise<void>
     /**
      * A manual account's server settings. Never includes the password — see
      * ManualAccountSettings. Null for OAuth accounts, which have none.
