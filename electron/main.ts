@@ -56,6 +56,13 @@ import {
   backfillSearchTextBatch
 } from './services/db-service'
 import { suggestContacts, backfillContactsBatch } from './services/contacts'
+import {
+  saveDraft,
+  listDrafts,
+  deleteDraft,
+  getDraftPayload,
+  countDrafts
+} from './services/draft-service'
 import { authenticateGoogle } from './services/oauth-google'
 import { authenticateMicrosoft } from './services/oauth-microsoft'
 import {
@@ -555,11 +562,31 @@ async function createComposeWindow(payload?: Partial<ComposePayload>): Promise<v
     composeWindow?.webContents.send('compose:open', finalPayload)
   })
 
+  // Closing keeps whatever was being written, so the window must not go before
+  // the last autosave has landed — the debounce may have up to ~800ms of typing
+  // still unwritten, which is exactly the content someone would be most annoyed
+  // to lose. Same shape as the quit flush: ask the renderer, wait for its
+  // promise, close for real, and never let a wedged renderer trap the window.
+  let closingAfterFlush = false
+  composeWindow.on('close', (event) => {
+    if (closingAfterFlush || !composeWindow) return
+    event.preventDefault()
+    closingAfterFlush = true
+    const finish = () => composeWindow?.close()
+    composeWindow.webContents
+      .executeJavaScript('window.__orbitMailFlushDraft?.()', true)
+      .catch(() => {})
+      .finally(finish)
+    setTimeout(finish, 2000)
+  })
+
   composeWindow.on('closed', () => {
     composeWindow = null
     // Approval is per compose session: a file chosen for one message should not
     // still be attachable from the next one.
     clearApprovedAttachments()
+    // The Drafts folder's contents and count just changed.
+    notifyMessagesUpdated()
   })
 
   composeWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -1021,6 +1048,10 @@ function registerIpc(): void {
     const account = accounts.find((a) => a.id === payload.accountId)
     if (!account) throw new Error('Account not found')
     await sendMail(payload, account.provider)
+    // The draft has been sent, so it is no longer a draft. Deliberately after
+    // sendMail resolves: dropping it first would lose the message if the send
+    // then failed, which is precisely what drafts exist to prevent.
+    if (payload.draftId) deleteDraft(payload.draftId)
     // Only sync the Sent folder for this account so the message shows up, rather
     // than firing a full multi-account resync for every send.
     try {
@@ -1237,6 +1268,42 @@ function registerIpc(): void {
       return getOAuthConfigStatus()
     }
   )
+
+  ipcMain.handle(
+    'drafts:save',
+    (_, payload: Partial<ComposePayload>, draftId?: string) => {
+      const id = saveDraft(payload, draftId)
+      // The Drafts folder lists these, so its row count changes with them.
+      notifyMessagesUpdated()
+      return id
+    }
+  )
+
+  ipcMain.handle('drafts:list', (_, accountId: string) => listDrafts(accountId))
+
+  ipcMain.handle('drafts:discard', (_, draftId: string) => {
+    deleteDraft(draftId)
+    notifyMessagesUpdated()
+  })
+
+  ipcMain.handle('drafts:open', async (_, draftId: string) => {
+    const draft = getDraftPayload(draftId)
+    if (!draft) throw new Error('That draft no longer exists')
+    // The attachment allowlist is per-session, and this draft may predate a
+    // restart — main read these paths from its own database and checked they
+    // still exist, so main approves them. Paths that arrived from the renderer
+    // are still never approved here.
+    for (const path of draft.payload.attachmentPaths ?? []) approveAttachmentPath(path)
+    await createComposeWindow({
+      ...draft.payload,
+      notice:
+        draft.missingAttachments.length > 0
+          ? `${draft.missingAttachments.join(', ')} ${
+              draft.missingAttachments.length === 1 ? 'is' : 'are'
+            } no longer on disk and could not be re-attached.`
+          : undefined
+    })
+  })
 
   ipcMain.handle(
     'contacts:suggest',

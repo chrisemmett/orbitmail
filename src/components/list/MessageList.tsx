@@ -287,9 +287,14 @@ export function MessageList() {
   // folder, so a mixed list (search, unified) labels each row correctly.
   const rowDisplayName = useCallback(
     (message: MessageSummary) => {
-      if (folderTypeById.get(message.folderId) === 'sent') {
+      const folderType = folderTypeById.get(message.folderId)
+      // Drafts read like Sent: the sender is us, and a draft may not have one
+      // at all yet. Name the recipient, or say there isn't one — an unaddressed
+      // draft showing a blank row is indistinguishable from a broken one.
+      if (folderType === 'sent' || message.draftId) {
         const recipients = collectDisplayNames([message.to])
         if (recipients.length > 0) return participantsLabel(recipients)
+        if (message.draftId) return '(no recipient)'
       }
       return extractName(message.from)
     },

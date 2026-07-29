@@ -149,6 +149,12 @@ const api: OrbitMailAPI = {
     getStatus: () => ipcRenderer.invoke('oauth:getStatus'),
     saveCredentials: (values) => ipcRenderer.invoke('oauth:saveCredentials', values)
   },
+  drafts: {
+    save: (payload, draftId) => ipcRenderer.invoke('drafts:save', payload, draftId),
+    list: (accountId: string) => ipcRenderer.invoke('drafts:list', accountId),
+    open: (draftId: string) => ipcRenderer.invoke('drafts:open', draftId),
+    discard: (draftId: string) => ipcRenderer.invoke('drafts:discard', draftId)
+  },
   contacts: {
     suggest: (accountId: string, query: string, limit?: number) =>
       ipcRenderer.invoke('contacts:suggest', accountId, query, limit)

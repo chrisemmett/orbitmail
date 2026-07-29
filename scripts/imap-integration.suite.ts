@@ -1249,6 +1249,127 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Drafts: saved locally, listed in the Drafts folder, gone once sent')
+  // -------------------------------------------------------------------------
+  {
+    // Drafts are deliberately NOT rows in `messages`: they have no server uid,
+    // and the expunge reconciliation deletes any local row whose uid is absent
+    // from the server's list — a draft parked in the Drafts folder would be
+    // deleted by the next sync of that folder.
+    const drafts = await import('../electron/services/draft-service')
+    const { getRawSqlite } = await import('../electron/db')
+    const raw = getRawSqlite()
+
+    const draftsFolder = db.upsertFolder(account.id, 'DraftBox', 'DraftBox', 'drafts')
+
+    // An empty composer must not leave a blank row behind every time it is
+    // opened and abandoned.
+    ok('an empty draft is not saved',
+      drafts.saveDraft({ accountId: account.id, subject: '', bodyText: '' }) === null)
+    ok('and a quoted reply with nothing typed still counts as empty',
+      drafts.saveDraft({
+        accountId: account.id,
+        quotedText: 'On Tuesday, someone wrote:\n> hello'
+      }) === null)
+
+    const id = drafts.saveDraft({
+      accountId: account.id,
+      to: 'alice@example.com',
+      subject: 'Half written',
+      bodyText: 'The first half of a',
+      inReplyTo: '<orig@example.com>',
+      mode: 'reply'
+    })
+    ok('a draft with content is saved', !!id, String(id))
+
+    // The same draft edited again updates one row rather than accumulating one
+    // per keystroke burst. The composer sends its whole state every time, which
+    // is what saveDraft's replace-not-merge semantic assumes — a partial payload
+    // here would silently drop the threading headers asserted below.
+    const sameId = drafts.saveDraft(
+      { accountId: account.id, to: 'alice@example.com', subject: 'Half written',
+        bodyText: 'The first half of a sentence',
+        inReplyTo: '<orig@example.com>', mode: 'reply' },
+      id!
+    )
+    ok('editing updates the same draft', sameId === id)
+    ok('and there is still only one', drafts.countDrafts(account.id) === 1,
+      String(drafts.countDrafts(account.id)))
+
+    const listed = drafts.listDrafts(account.id)
+    ok('the draft lists with its recipient and subject',
+      listed[0].to === 'alice@example.com' && listed[0].subject === 'Half written',
+      JSON.stringify(listed[0]))
+
+    // It appears in the Drafts folder, and the count agrees with the list.
+    const inFolder = db.listMessages(draftsFolder.id, 50, 0)
+    ok('the Drafts folder lists it', inFolder.some((m) => m.draftId === id),
+      inFolder.map((m) => m.draftId ?? m.id).join(', '))
+    ok('countMessages agrees', db.countMessages(draftsFolder.id) === inFolder.length,
+      `count=${db.countMessages(draftsFolder.id)} listed=${inFolder.length}`)
+    ok('the threaded view shows it too',
+      db.listThreads(draftsFolder.id, 50, 0).some((t) => t.draftId === id))
+    const otherFolder = db.upsertFolder(account.id, 'DraftNeighbour', 'DraftNeighbour', 'custom')
+    ok('but it does not leak into another folder',
+      !db.listMessages(otherFolder.id, 50, 0).some((m) => m.draftId))
+    ok('nor into that folder’s count',
+      db.countMessages(otherFolder.id) === db.listMessages(otherFolder.id, 50, 0).length)
+
+    // Reopening restores what was typed, including the threading headers, so a
+    // resumed reply still lands in its conversation.
+    const reopened = drafts.getDraftPayload(id!)
+    ok('reopening restores the body', reopened?.payload.bodyText === 'The first half of a sentence',
+      reopened?.payload.bodyText)
+    ok('and the threading headers, so a resumed reply still threads',
+      reopened?.payload.inReplyTo === '<orig@example.com>' && reopened?.payload.mode === 'reply',
+      JSON.stringify({ inReplyTo: reopened?.payload.inReplyTo, mode: reopened?.payload.mode }))
+    ok('and it carries its own id back, so saving again updates it',
+      reopened?.payload.draftId === id)
+
+    // Attachments: a path that has since disappeared is reported rather than
+    // silently dropped — sending without a file you attached is the failure this
+    // whole feature exists to avoid.
+    const tmp = mkdtempSync(join(tmpdir(), 'orbit-draft-'))
+    const kept = join(tmp, 'kept.txt')
+    const removed = join(tmp, 'gone.txt')
+    writeFileSync(kept, 'still here')
+    writeFileSync(removed, 'not for long')
+    const withAttachments = drafts.saveDraft({
+      accountId: account.id, subject: 'With files', attachmentPaths: [kept, removed]
+    })
+    rmSync(removed)
+    const restored = drafts.getDraftPayload(withAttachments!)
+    ok('an attachment still on disk is restored',
+      restored?.payload.attachmentPaths?.includes(kept) === true,
+      JSON.stringify(restored?.payload.attachmentPaths))
+    ok('one that has vanished is named, not silently dropped',
+      restored?.missingAttachments.includes(removed) === true,
+      JSON.stringify(restored?.missingAttachments))
+    drafts.deleteDraft(withAttachments!)
+    rmSync(tmp, { recursive: true, force: true })
+
+    // Emptying a composer removes its draft rather than leaving a blank row.
+    const emptied = drafts.saveDraft({ accountId: account.id, subject: '', bodyText: '' }, id!)
+    ok('clearing a draft deletes it', emptied === null && drafts.countDrafts(account.id) === 0,
+      String(drafts.countDrafts(account.id)))
+
+    // Removing the account takes its drafts with it (FK cascade).
+    const other = db.saveManualAccount('imap', {
+      authType: 'password', email: 'drafts-second@example.com', displayName: 'Second',
+      username: LOGIN, password: PASSWORD,
+      incoming: { host: HOST, port: IMAP_PORT, security: 'none' },
+      outgoing: { host: HOST, port: SMTP_PORT, security: 'none' }
+    })
+    drafts.saveDraft({ accountId: other.id, subject: 'Belongs to the other account' })
+    ok('drafts are per account', drafts.countDrafts(other.id) === 1)
+    db.removeAccount(other.id)
+    ok('removing an account deletes its drafts',
+      (raw.prepare('SELECT COUNT(*) AS n FROM drafts WHERE account_id = ?').get(other.id) as { n: number }).n === 0)
+
+    raw.prepare('DELETE FROM drafts WHERE account_id = ?').run(account.id)
+  }
+
+  // -------------------------------------------------------------------------
   section('Blocked senders: hidden everywhere, and the counts agree')
   // -------------------------------------------------------------------------
   {

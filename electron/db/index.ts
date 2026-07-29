@@ -130,6 +130,29 @@ function initTables(db: Database.Database): void {
     );
 
     CREATE INDEX IF NOT EXISTS contacts_account_idx ON contacts(account_id);
+
+    CREATE TABLE IF NOT EXISTS drafts (
+      id TEXT PRIMARY KEY,
+      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      to_addr TEXT NOT NULL DEFAULT '',
+      cc TEXT NOT NULL DEFAULT '',
+      bcc TEXT NOT NULL DEFAULT '',
+      subject TEXT NOT NULL DEFAULT '',
+      body_html TEXT NOT NULL DEFAULT '',
+      body_text TEXT NOT NULL DEFAULT '',
+      quoted_html TEXT,
+      quoted_text TEXT,
+      in_reply_to TEXT,
+      -- Quoted: REFERENCES is a SQL keyword, and an unquoted column of that
+      -- name is a syntax error. The messages table does the same.
+      "references" TEXT,
+      mode TEXT,
+      original_message_id TEXT,
+      attachment_paths TEXT,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS drafts_account_idx ON drafts(account_id);
   `)
 
   migrateSchema(db)

@@ -83,6 +83,13 @@ export interface MessageSummary {
   hasAttachments: boolean
   // Conversation grouping key derived from RFC 5322 threading headers.
   threadId: string | null
+  /**
+   * Set when this row is a locally-saved draft rather than a synced message.
+   * Drafts appear in the Drafts folder alongside any the server holds; clicking
+   * one reopens the composer instead of the reader, and deleting one removes
+   * the draft rather than moving mail to Trash.
+   */
+  draftId?: string
 }
 
 export interface Attachment {
@@ -115,6 +122,8 @@ export interface ThreadSummary {
   // Sent folder, where the sender is always the account owner — the recipients
   // of the copies that live in that folder.
   participants: string[]
+  /** Set when this row is a locally-saved draft. See MessageSummary.draftId. */
+  draftId?: string
 }
 
 export interface MessageDetail extends MessageSummary {
@@ -151,6 +160,28 @@ export interface ComposePayload {
    * could not be downloaded. Not part of the message being sent.
    */
   notice?: string
+  /**
+   * The locally-saved draft this composer is editing, if any. Round-trips so
+   * autosave updates one row rather than creating a new draft per keystroke
+   * burst, and so sending can delete the right one.
+   */
+  draftId?: string
+}
+
+/**
+ * A saved draft as the Drafts folder lists it. Drafts are local only — they are
+ * never uploaded to the account's IMAP Drafts folder — so they live in their own
+ * table rather than in `messages`, where the expunge reconciliation would delete
+ * them for having no server uid.
+ */
+export interface DraftSummary {
+  id: string
+  accountId: string
+  to: string
+  subject: string
+  snippet: string
+  updatedAt: number
+  hasAttachments: boolean
 }
 
 // A pending attachment in the composer: absolute path plus display metadata.
@@ -515,6 +546,18 @@ export interface OrbitMailAPI {
     /** Never returns credential values — only whether each provider is usable. */
     getStatus: () => Promise<OAuthConfigStatus>
     saveCredentials: (values: Partial<Record<OAuthCredentialKey, string>>) => Promise<OAuthConfigStatus>
+  }
+  drafts: {
+    /**
+     * Create or update a draft, returning its id — or null when the composer is
+     * empty, in which case an existing draft is deleted rather than left blank.
+     */
+    save: (payload: Partial<ComposePayload>, draftId?: string) => Promise<string | null>
+    /** Drafts for an account, newest first. */
+    list: (accountId: string) => Promise<DraftSummary[]>
+    /** Reopen a draft in the composer. */
+    open: (draftId: string) => Promise<void>
+    discard: (draftId: string) => Promise<void>
   }
   contacts: {
     /**

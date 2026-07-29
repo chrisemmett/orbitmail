@@ -580,6 +580,55 @@ Details that are load-bearing:
 **Not handled yet:** the `from_normalized` column, so block is linear in account
 size.
 
+### Drafts
+
+Compose autosaves to a local `drafts` table as you type (800ms debounce), and
+closing the window keeps what was written.
+
+**Drafts are deliberately not rows in `messages`.** A draft has no server uid,
+and the expunge reconciliation in `imap-sync` deletes any local row whose uid is
+absent from the server's list — a draft parked in the Drafts folder would be
+deleted by the next sync of that folder. They are scoped to an *account*, not a
+folder, so the Drafts folder is resolved at query time and a draft survives that
+folder being renamed, re-typed, or not existing yet.
+
+**They are local only.** Nothing is uploaded to the account's IMAP Drafts folder,
+so this behaves identically for IMAP, POP3, Gmail and O365 and cannot fail
+because a mailbox is unreachable — at the cost of a draft started here not
+appearing on another device. TODO.md records what upload would cost.
+
+Things that are load-bearing:
+
+- **`saveDraft` replaces the row, it does not merge.** The composer sends its
+  whole state every save, so an omitted field means the user cleared it —
+  merging would make an emptied Cc impossible to save. A caller passing a
+  partial payload therefore drops the rest, threading headers included.
+- **The draft id is a ref in the composer, not state.** The first save assigns
+  one and every save after must reuse it, or each keystroke burst creates a new
+  draft. Nothing renders from it, so it must not trigger a render.
+- **Closing waits for the flush.** The debounce can hold up to ~800ms of typing,
+  which is exactly what someone would most mind losing, so the compose window's
+  `close` is deferred while `__orbitMailFlushDraft` runs — the same shape as the
+  quit flush for UI preferences, including the 2s backstop so a wedged renderer
+  cannot trap the window.
+- **The draft is deleted after `sendMail` resolves, never before.** Dropping it
+  first would lose the message if the send then failed.
+- **A send in flight suppresses autosave** (`sendingRef`), so a late timer cannot
+  resurrect a draft that was just sent.
+- **Empty drafts are not saved, and emptying one deletes it** — otherwise
+  opening and abandoning the composer leaves a blank row every time. The quoted
+  block does not count as content: a reply that has been opened and not written
+  is exactly the empty case.
+- Restored attachment paths are re-approved by main (it read them from its own
+  database and checked they exist); ones that have since vanished are **named**
+  through `ComposePayload.notice` rather than silently dropped.
+- In the list, a draft row is identified by `draftId` on `MessageSummary` /
+  `ThreadSummary`. Clicking one reopens the composer instead of the reader, and
+  deleting one discards it rather than trying to trash a message the server has
+  never heard of. `listThreads` builds its draft rows **before** the
+  `heads.length === 0` early return, or a Drafts folder holding only local
+  drafts renders empty in threaded view while the flat list shows them.
+
 ### Forwarding
 
 `buildReplyPayload` (`smtp-send.ts`) produces only the *body* of a forward — the
@@ -982,6 +1031,7 @@ reimplementing them, so it exercises the shipping code paths:
 | Account identity | Re-adding an address with the *same* provider updates the row in place (re-authentication, password changes) and stores the new credentials; re-adding it with a *different* provider is refused, naming both providers, and leaves the existing account and its OAuth refresh token untouched. Other addresses are unaffected. |
 | Account removal | Deleting an account removes its AI Tasks (per-folder, and unified-inbox tasks tied to its messages) as well as its mail — `sweep_tasks` has no foreign key, so the cascade misses them — while another account's tasks survive. |
 | Settings / preferences | A blob written before the settings keys existed reads back with close-to-tray and notifications **on** and remote images **blocked**, and the settings that were already in it survive untouched; a patch of an unrelated key does not drop those defaults; a global setting can actually be turned *off* (the `??`-vs-`||` trap) without disturbing the others, and an emptied sender list stays empty. Renderer side: defaults survive an old blob, an explicit `false` is not mistaken for an absent key, a toggle applies immediately and sends only the changed key, a rejected write rolls back and says so, and a mailto registration the OS refused does not show as on. |
+| Drafts | An empty composer is not saved (nor a quoted reply with nothing typed); a draft with content saves, edits update the *same* row rather than accumulating one per keystroke burst, and clearing it deletes the row. It appears in the Drafts folder in both flat and threaded views with `countMessages` agreeing, and does not leak into another folder or its count. Reopening restores the body **and the threading headers**, so a resumed reply still lands in its conversation, and carries its own id back. An attachment still on disk is restored; one that has vanished is named rather than silently dropped. Drafts are per account and cascade away with it. |
 | Blocked senders | A blocked sender disappears from the flat list, the conversation list, search and the unread count — **and `countMessages`/`countThreads` agree with what is listed**, which is the bug that would otherwise ship. An address that merely *contains* a blocked one (`notspam@` vs `spam@`) is not hidden. Unblocking restores everything with no refetch and nothing was deleted from the database. A Sent folder is exempt, so blocking your own address cannot empty it. A muted sender is still listed and still counted — mute is not block. Blocking normalizes the address, unblocking matches case-insensitively, and removing a sender who was never listed writes nothing. |
 | Account credentials | `toManualSettings` has **no `password` key at all** (asserted on key absence, since `password: undefined` still serialises the name) and no key beyond the seven it declares, reports `hasPassword`, and carries the server settings through intact. An update omitting the password keeps the stored one — proved by the account still authenticating afterwards — applies the rest of the edit, and leaves the sync window alone. An edit that cannot connect is rejected *and nothing is written*. Testing a wrong password fails; testing the stored settings succeeds. |
 | Accounts pane selection | `resolveSelectedAccountId` — shows the first account by default, the one Settings was opened *for* when that account still exists, keeps an existing selection otherwise, and falls back rather than pointing at an account that has just been removed (which would render an empty pane). |

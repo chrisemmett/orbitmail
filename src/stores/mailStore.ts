@@ -824,6 +824,20 @@ async function currentFolders(): Promise<Folder[]> {
 
 export async function selectThread(accountId: string, threadId: string): Promise<void> {
   const store = useMailStore.getState()
+
+  // Drafts appear in the threaded view as one-message rows. Same as the flat
+  // list: clicking resumes writing rather than opening a reader.
+  const draft = store.threads.find((t) => t.threadId === threadId)?.draftId
+  if (draft) {
+    try {
+      await window.orbitMail.drafts.open(draft)
+    } catch (err) {
+      store.setToast(err instanceof Error ? err.message : 'Could not open that draft')
+      await refreshMessages()
+    }
+    return
+  }
+
   // A plain click collapses any multi-selection down to this one row.
   store.setSelectedThreadKeys([expandKey(accountId, threadId)])
   store.setThreadAnchorKey(expandKey(accountId, threadId))
@@ -1647,8 +1661,30 @@ function rangeIds(list: MessageSummary[], fromId: string, toId: string): string[
 // list; only the body waits on messages.get. The unread dot flips optimistically
 // and the read is confirmed to the server in the background (rolled back on
 // failure) rather than blocking on a full list refresh.
+/** The saved draft behind a list row, if that row is one. */
+function draftIdForRow(store: MailState, rowId: string): string | undefined {
+  return (
+    store.messages.find((m) => m.id === rowId)?.draftId ??
+    store.threads.find((t) => `draft:${t.draftId}` === rowId || t.threadId === rowId)?.draftId
+  )
+}
+
 export async function selectMessage(messageId: string): Promise<void> {
   const store = useMailStore.getState()
+
+  // A draft row is not a message: there is nothing to read, so clicking it
+  // resumes writing it instead of opening an empty reader.
+  const draftId = draftIdForRow(store, messageId)
+  if (draftId) {
+    try {
+      await window.orbitMail.drafts.open(draftId)
+    } catch (err) {
+      store.setToast(err instanceof Error ? err.message : 'Could not open that draft')
+      await refreshMessages()
+    }
+    return
+  }
+
   // Selecting a single message (e.g. a search result) supersedes any open thread.
   store.setSelectedThreadId(null)
   store.setSelectedThread(null)
@@ -1931,8 +1967,26 @@ export async function deleteSelectedMessages(): Promise<void> {
       ? [store.selectedMessageId]
       : []
 
-  if (ids.length <= 1) {
-    if (ids.length === 1) await moveMessageToTrash(ids[0])
+  // Draft rows are discarded, not trashed — there is no server-side message to
+  // move, and "move to Trash" on something that only exists locally would fail.
+  const draftIds = ids.map((id) => draftIdForRow(store, id)).filter((id): id is string => !!id)
+  if (draftIds.length > 0) {
+    for (const draftId of draftIds) {
+      try {
+        await window.orbitMail.drafts.discard(draftId)
+      } catch (err) {
+        store.setToast(err instanceof Error ? err.message : 'Could not discard that draft')
+      }
+    }
+    store.setSelectedMessageId(null)
+    store.setSelectedMessageIds([])
+    await refreshMessages()
+    if (draftIds.length === ids.length) return
+  }
+
+  const remaining = ids.filter((id) => !draftIdForRow(store, id))
+  if (remaining.length <= 1) {
+    if (remaining.length === 1) await moveMessageToTrash(remaining[0])
     return
   }
 
@@ -1945,7 +1999,9 @@ export async function deleteSelectedMessages(): Promise<void> {
   )
   const items: { id: string; targetFolderId: string | null }[] = []
   const destinations: string[] = []
-  for (const id of ids) {
+  // `remaining`, not `ids`: any draft rows in the selection were discarded
+  // above, and asking the server to trash them would fail on every one.
+  for (const id of remaining) {
     const msg = summaries.get(id)
     if (!msg) {
       items.push({ id, targetFolderId: null })

@@ -15,7 +15,8 @@ import type {
   SearchField,
   SweepScope,
   SweepTask,
-  CompletedTask
+  CompletedTask,
+  DraftSummary
 } from '../../shared/types'
 import {
   encryptCredentials,
@@ -30,6 +31,7 @@ import { normalizeSubject } from './thread-util'
 import { collectDisplayNames, extractName } from '../../shared/addresses'
 import { harvestContacts } from './contacts'
 import { getBlockedSenders, isSenderMuted } from './preferences-service'
+import { listDrafts, countDrafts } from './draft-service'
 
 export type { TokenData, ManualAccountCredentials, AccountCredentials }
 
@@ -560,7 +562,16 @@ export function listMessages(
     .offset(offset)
     .all()
 
-  return rows.map(rowToSummary)
+  const synced = rows.map(rowToSummary)
+
+  // Local drafts sit at the top of the Drafts folder. Only on the first page —
+  // they are prepended rather than sorted in, so paging past them would repeat
+  // them on every page.
+  const draftAccount = draftsFolderAccount(folderId)
+  if (draftAccount && offset === 0 && !unreadOnly) {
+    return [...listDrafts(draftAccount).map((d) => draftAsSummary(d, folderId)), ...synced]
+  }
+  return synced
 }
 
 // ---------------------------------------------------------------------------
@@ -645,6 +656,47 @@ function blockedSqlFragment(
     .join('')
   const params = addresses.flatMap((address) => [`%<${escapeLikeLiteral(address)}>%`, address])
   return { clause, params }
+}
+
+// ---------------------------------------------------------------------------
+// Local drafts in the Drafts folder.
+//
+// Drafts live in their own table (see schema.ts for why), so the Drafts folder
+// has to merge them in on read. They are prepended: a draft is always newer than
+// anything synced, and it is what the user came to the folder for.
+// ---------------------------------------------------------------------------
+
+function draftsFolderAccount(folderId: string | 'unified'): string | null {
+  if (folderId === 'unified') return null
+  const row = getDb()
+    .select({ type: folders.type, accountId: folders.accountId })
+    .from(folders)
+    .where(eq(folders.id, folderId))
+    .get()
+  return row?.type === 'drafts' ? row.accountId : null
+}
+
+function draftAsSummary(draft: DraftSummary, folderId: string): MessageSummary {
+  return {
+    id: `draft:${draft.id}`,
+    folderId,
+    accountId: draft.accountId,
+    // Not a server message: uid 0 and no Message-ID. Nothing keys off these for
+    // a draft row, and `draftId` is what tells every consumer what this is.
+    uid: 0,
+    messageId: null,
+    from: '',
+    to: draft.to,
+    subject: draft.subject || '(no subject)',
+    snippet: draft.snippet,
+    date: draft.updatedAt,
+    isRead: true,
+    isStarred: false,
+    flagColor: null,
+    hasAttachments: draft.hasAttachments,
+    threadId: null,
+    draftId: draft.id
+  }
 }
 
 // A Sent folder's rows are about the recipient — the sender is always us.
@@ -848,6 +900,30 @@ export function listThreads(
   const blockScan = blockedSqlFragment(blocked, 'from_addr')
   const blockRows = blockedSqlFragment(blocked, 'from_addr')
 
+  // Built before the empty-heads return below: a Drafts folder holding only
+  // local drafts has no thread heads at all, and returning early there would
+  // show an empty folder while the flat list showed the drafts.
+  const draftAccount = draftsFolderAccount(folderId)
+  const draftRows: ThreadSummary[] =
+    draftAccount && offset === 0 && !unreadOnly
+      ? listDrafts(draftAccount).map((draft) => ({
+          threadId: `draft:${draft.id}`,
+          accountId: draft.accountId,
+          latestMessageId: `draft:${draft.id}`,
+          from: '',
+          subject: draft.subject || '(no subject)',
+          snippet: draft.snippet,
+          date: draft.updatedAt,
+          isStarred: false,
+          flagColor: null,
+          hasAttachments: draft.hasAttachments,
+          messageCount: 1,
+          hasUnread: false,
+          participants: collectDisplayNames([draft.to]),
+          draftId: draft.id
+        }))
+      : []
+
   // Page of thread keys with a message in this folder, ordered by the
   // conversation's most recent message (account-wide — a Sent reply counts).
   const heads = sqlite
@@ -870,7 +946,7 @@ export function listThreads(
     tkey: string
     last_date: number
   }>
-  if (heads.length === 0) return []
+  if (heads.length === 0) return draftRows
 
   // Every message in those conversations (across folders), lightweight columns.
   const pairs = heads.map(() => '(?, ?)').join(', ')
@@ -906,7 +982,7 @@ export function listThreads(
     }
   }
 
-  return heads.map((h) => {
+  const summaries: ThreadSummary[] = heads.map((h) => {
     const g = groups.get(`${h.aid} ${h.tkey}`)
     const unique = g?.unique ?? []
     const all = g?.all ?? []
@@ -949,6 +1025,11 @@ export function listThreads(
           : [extractName(latest?.from_addr ?? '')]
     }
   })
+
+  // A draft has no conversation, so each is its own one-message row at the top
+  // — the same place and order the flat list puts them, so switching view does
+  // not lose track of them.
+  return draftRows.length > 0 ? [...draftRows, ...summaries] : summaries
 }
 
 export function countThreads(folderId: string | 'unified', unreadOnly = false): number {
@@ -1814,7 +1895,8 @@ export function countMessages(folderId: string | 'unified', unreadOnly = false):
       )
     )
     .get()
-  return row?.value ?? 0
+  const draftAccount = unreadOnly ? null : draftsFolderAccount(folderId)
+  return (row?.value ?? 0) + (draftAccount ? countDrafts(draftAccount) : 0)
 }
 
 export function deleteMessage(messageId: string): void {
