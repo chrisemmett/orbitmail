@@ -41,7 +41,8 @@ messages and pull out what you still need to do.
 - A separate compose window with a proper formatting toolbar — headings, bold and
   italic, colour, lists, links, quotes.
 - Replies keep the original as a collapsible quote, so your own words stay at the
-  top.
+  top. Expand it to **edit or trim** it down to the part you are answering, or
+  **Remove** it entirely.
 - **Reply**, **Reply All** and **Forward** sit on the message itself, above the
   email you are reading. Forwarding brings the original's attachments with it; if
   one cannot be fetched, the composer tells you which rather than sending an

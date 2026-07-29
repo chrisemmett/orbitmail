@@ -277,6 +277,15 @@ async function main() {
   })
 
   await build({
+    entryPoints: [join(root, 'src/utils/composeBody.ts')],
+    bundle: true,
+    format: 'cjs',
+    platform: 'node',
+    outfile: join(outDir, 'composeBody.cjs'),
+    logLevel: 'silent'
+  })
+
+  await build({
     entryPoints: [join(root, 'src/components/settings/AccountsPane.tsx')],
     bundle: true,
     format: 'cjs',
@@ -830,6 +839,48 @@ async function main() {
       resolveSelectedAccountId(three, 'gone', 'a2') === 'a2')
     ok('with no accounts at all it resolves to nothing',
       resolveSelectedAccountId([], 'a1', 'a2') === null)
+
+    // What actually goes out when the quoted original has been trimmed or
+    // dropped. The body and the quote are separate the whole time they are
+    // being edited and only combined here, which is why removing the quote
+    // needs no other change.
+    const { joinBodyWithQuote } = require(join(outDir, 'composeBody.cjs'))
+    const quote = { html: '<blockquote>On Tue, Roger wrote:</blockquote>', text: '> hello' }
+
+    const withQuote = joinBodyWithQuote('<p>Yes</p>', 'Yes', quote)
+    ok('the quote is appended after what was written',
+      withQuote.bodyHtml === '<p>Yes</p><br><br><blockquote>On Tue, Roger wrote:</blockquote>',
+      withQuote.bodyHtml)
+    ok('and the plain-text part is joined too',
+      withQuote.bodyText === 'Yes\n\n> hello', JSON.stringify(withQuote.bodyText))
+
+    const removed = joinBodyWithQuote('<p>Yes</p>', 'Yes', null)
+    ok('removing the quote sends the message without it',
+      removed.bodyHtml === '<p>Yes</p>' && removed.bodyText === 'Yes',
+      removed.bodyHtml)
+
+    const trimmed = joinBodyWithQuote('<p>Yes</p>', 'Yes', {
+      html: '<blockquote>just the relevant line</blockquote>',
+      text: '> just the relevant line'
+    })
+    ok('a trimmed quote sends exactly what is left of it',
+      trimmed.bodyHtml.includes('just the relevant line') &&
+        !trimmed.bodyHtml.includes('On Tue'),
+      trimmed.bodyHtml)
+
+    // Deleting every line out of the quote should send as though it were
+    // removed, not leave a pair of <br>s and a blank gap.
+    const emptied = joinBodyWithQuote('<p>Yes</p>', 'Yes', { html: '<br>', text: '  ' })
+    ok('a quote emptied line by line is treated as removed',
+      emptied.bodyHtml === '<p>Yes</p>', emptied.bodyHtml)
+
+    // But a quote holding only an image has no text and is still real content.
+    const imageOnly = joinBodyWithQuote('<p>Yes</p>', 'Yes', {
+      html: '<blockquote><img src="cid:x"></blockquote>',
+      text: ''
+    })
+    ok('a quote that is only an image is still sent',
+      imageOnly.bodyHtml.includes('<img'), imageOnly.bodyHtml)
   }
 
   // -------------------------------------------------------------------------

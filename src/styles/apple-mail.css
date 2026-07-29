@@ -1451,6 +1451,34 @@ textarea {
   background: var(--border);
 }
 
+.compose-quote-remove {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 3px 6px;
+  cursor: pointer;
+  border-radius: 5px;
+}
+
+.compose-quote-remove:hover {
+  background: var(--bg-hover);
+  color: #ff3b30;
+}
+
+/* The expanded quote is editable, so it needs to read as a field rather than as
+   inert text — and needs a focus ring, since there is nothing else to say it can
+   be typed in. */
+.compose-quote-body.is-editable {
+  outline: none;
+  border-left: 2px solid var(--border);
+  padding-left: 10px;
+}
+
+.compose-quote-body.is-editable:focus {
+  border-left-color: var(--accent);
+}
+
 .compose-quote-body {
   font-size: 13px;
   line-height: 1.5;
