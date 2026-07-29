@@ -58,6 +58,7 @@ The docs and what each is for:
 | `INSTALL.md` | someone installing it, or building their own copy | install/build steps, OAuth app registration, updating and removing |
 | `DEVELOPERS.md` | **authoritative deep reference** | architecture, schema, sync model, security controls, scripts, test coverage, packaging |
 | `TODO.md` | backlog and decisions | anything fixed, deferred, or decided against — record decisions, not just tasks. **Outstanding work stays at the top**, completed work under `# Done` with its reasoning intact |
+| `CHANGELOG.md` | someone deciding whether to update — **plain language, user-facing** | a release goes out. It condenses TODO.md's Done entries into what a user would notice; the *why* stays in TODO.md. `npm run test:imap` checks the README version badge against `package.json`, so those two cannot drift |
 | `CLAUDE.md` | this file, for agents | conventions and traps that are non-obvious from the code |
 
 Specific triggers — if the change does any of these, the docs move too:
