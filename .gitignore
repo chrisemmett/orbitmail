@@ -11,6 +11,11 @@ dist
 # integration test build output
 .integration-build
 
+# Browser-automation artifacts. The Playwright MCP server writes page snapshots
+# and console logs here, and screenshots to the working directory, when driving
+# `npm run ui:preview`. All disposable.
+.playwright-mcp/
+
 # Android native port — build output only.
 # The port's source lives on the android branch, which carries its own
 # android/.gitignore (and one per module). These rules exist so the artifacts
