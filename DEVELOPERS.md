@@ -580,6 +580,36 @@ Details that are load-bearing:
 **Not handled yet:** the `from_normalized` column, so block is linear in account
 size.
 
+### The quoted original in compose
+
+A reply or forward carries the quoted message in `quotedHtml`/`quotedText`,
+**separate from the body the whole time it is being edited**, and the two are
+combined only on send by `joinBodyWithQuote` (`src/utils/composeBody.ts`). That
+separation is what makes the signature land above the quote, and what makes
+trimming or removing the quote need no other change: whatever the join is given
+is what goes out.
+
+Expanded, the quote is `contentEditable` so it can be cut down to the part being
+replied to, and the divider carries a **Remove** control to drop it entirely.
+
+- **Uncontrolled, like the body editor.** Its content is written to the DOM once
+  when it expands; letting React own the `innerHTML` would reset the caret on
+  every keystroke.
+- **Send reads the DOM, not React state.** `onInput` has fired for the last
+  keystroke but its re-render may not have flushed by the time Send is clicked,
+  so reading state can be one edit behind. `currentQuote()` prefers the live
+  element and falls back to state when the quote is collapsed and unmounted.
+- **The plain-text half is regenerated from `innerText`** rather than kept as the
+  original `quotedText`: once the HTML has been trimmed, the stored text version
+  describes a quote that is no longer being sent, and the two MIME parts would
+  disagree.
+- **A quote emptied line by line is treated as removed** — otherwise it sends as
+  a pair of `<br>`s and a blank gap. A quote holding only an image is still real
+  content and is kept.
+- The HTML was sanitized once when the payload arrived, so making it editable is
+  not re-cleaning attacker content on every keystroke — it is the same string,
+  now editable.
+
 ### Signatures
 
 Per-account, rich HTML, stored in `accounts.signature` and edited in

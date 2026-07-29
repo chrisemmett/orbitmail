@@ -16,6 +16,7 @@ import { loadInitialData } from '../../stores/mailStore'
 import { RichTextEditor } from './RichTextEditor'
 import { RecipientInput } from './RecipientInput'
 import { formatBytes } from '../../utils/format'
+import { joinBodyWithQuote } from '../../utils/composeBody'
 
 const emptyPayload = (accountId: string): ComposePayload => ({
   accountId,
@@ -68,6 +69,9 @@ export function ComposeWindow() {
   // was armed rather than what is on screen now.
   const payloadRef = useRef<ComposePayload | null>(null)
   const quotedRef = useRef<{ html: string; text: string } | null>(null)
+  // The editable quote's DOM node. It is uncontrolled like the body editor, so
+  // its current content is read out of the DOM rather than mirrored in state.
+  const quoteElementRef = useRef<HTMLDivElement | null>(null)
   const attachmentsRef = useRef<AttachmentDraft[]>([])
   payloadRef.current = payload
   quotedRef.current = quoted
@@ -76,6 +80,20 @@ export function ComposeWindow() {
   useEffect(() => {
     void loadInitialData()
   }, [])
+
+  /**
+   * The quote as it stands right now.
+   *
+   * Prefers the live DOM over React state: `onInput` has fired for the last
+   * keystroke but its re-render may not have flushed by the time Send is
+   * clicked, so reading state here can be one edit behind. When the quote is
+   * collapsed the element is unmounted and state holds the last edit.
+   */
+  const currentQuote = (): { html: string; text: string } | null => {
+    const el = quoteElementRef.current
+    if (el) return { html: el.innerHTML, text: el.innerText }
+    return quotedRef.current
+  }
 
   // Everything needed to save, read at the moment of saving — the body lives in
   // refs, so a snapshot taken earlier would persist a stale one.
@@ -90,8 +108,8 @@ export function ComposeWindow() {
       subject: p.subject,
       bodyHtml: bodyHtmlRef.current,
       bodyText: bodyTextRef.current,
-      quotedHtml: quotedRef.current?.html,
-      quotedText: quotedRef.current?.text,
+      quotedHtml: currentQuote()?.html,
+      quotedText: currentQuote()?.text,
       inReplyTo: p.inReplyTo,
       references: p.references,
       mode: p.mode,
@@ -139,6 +157,15 @@ export function ComposeWindow() {
     }
     return () => window.removeEventListener('beforeunload', flush)
   })
+
+  // Fill the editable quote when it is expanded. Written straight to the DOM,
+  // once: letting React own the innerHTML would reset the caret on every
+  // keystroke, which is the same reason the body editor is uncontrolled.
+  useEffect(() => {
+    if (!quotedExpanded) return
+    const el = quoteElementRef.current
+    if (el) el.innerHTML = quotedRef.current?.html ?? ''
+  }, [quotedExpanded])
 
   useEffect(() => {
     const unsub = window.orbitMail.compose.onOpen((initial) => {
@@ -210,6 +237,27 @@ export function ComposeWindow() {
     addDrafts(await window.orbitMail.compose.pickAttachments())
   }
 
+  /**
+   * Read the edited quote back out of the DOM.
+   *
+   * The plain-text half is regenerated from `innerText` rather than kept as the
+   * original `quotedText`: once the HTML has been trimmed, the stored text
+   * version describes a quote that is no longer being sent, and the recipient's
+   * plain-text part would disagree with the HTML one.
+   */
+  const readQuoteFromDom = () => {
+    const el = quoteElementRef.current
+    if (!el) return
+    setQuoted({ html: el.innerHTML, text: el.innerText })
+    scheduleDraftSave()
+  }
+
+  const handleRemoveQuote = () => {
+    setQuoted(null)
+    setQuotedExpanded(false)
+    scheduleDraftSave()
+  }
+
   const handleRemoveAttachment = (path: string) => {
     setAttachments((current) => current.filter((a) => a.path !== path))
     scheduleDraftSave()
@@ -240,12 +288,11 @@ export function ComposeWindow() {
     if (sending) return
     sendingRef.current = true
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
-    const bodyHtml = quoted
-      ? `${bodyHtmlRef.current}<br><br>${quoted.html}`
-      : bodyHtmlRef.current
-    const bodyText = quoted
-      ? `${bodyTextRef.current}\n\n${quoted.text}`
-      : bodyTextRef.current
+    const { bodyHtml, bodyText } = joinBodyWithQuote(
+      bodyHtmlRef.current,
+      bodyTextRef.current,
+      currentQuote()
+    )
     setSending(true)
     try {
       await window.orbitMail.compose.send({
@@ -398,11 +445,33 @@ export function ComposeWindow() {
                 {quotedExpanded ? 'Hide quoted text' : 'Show quoted text'}
               </button>
               <span className="compose-quote-line" />
+              <button
+                type="button"
+                className="compose-quote-remove"
+                onClick={handleRemoveQuote}
+                title="Remove the quoted message from this reply"
+              >
+                Remove
+              </button>
             </div>
             {quotedExpanded && (
+              // Editable, so the quote can be trimmed to the part being replied
+              // to rather than always going out whole. Uncontrolled and set once
+              // via ref — writing innerHTML from React on every keystroke would
+              // reset the caret, the same reason RichTextEditor is uncontrolled.
+              //
+              // The HTML was sanitized when the payload arrived, so this is not
+              // re-cleaning attacker content on every keystroke; it is the same
+              // string, now editable.
               <div
-                className="compose-quote-body"
-                dangerouslySetInnerHTML={{ __html: quoted.html }}
+                ref={quoteElementRef}
+                className="compose-quote-body is-editable"
+                contentEditable
+                role="textbox"
+                aria-multiline="true"
+                aria-label="Quoted message"
+                suppressContentEditableWarning
+                onInput={readQuoteFromDom}
               />
             )}
           </div>
