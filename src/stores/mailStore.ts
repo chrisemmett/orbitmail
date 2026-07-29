@@ -1661,6 +1661,21 @@ function rangeIds(list: MessageSummary[], fromId: string, toId: string): string[
 // list; only the body waits on messages.get. The unread dot flips optimistically
 // and the read is confirmed to the server in the background (rolled back on
 // failure) rather than blocking on a full list refresh.
+/**
+ * Which account a new message should come from: the one whose folder is open,
+ * falling back to the first account for the unified inbox.
+ *
+ * This used to be `accounts[0]` at every call site, so composing while reading
+ * one account sent — and saved a draft — from a different one. Harmless-looking
+ * until drafts existed, at which point the draft appears under an account the
+ * user was not even looking at.
+ */
+export function composeAccountId(): string | undefined {
+  const store = useMailStore.getState()
+  const fromFolder = store.folders.find((f) => f.id === store.selectedFolderId)?.accountId
+  return fromFolder ?? store.accounts[0]?.id
+}
+
 /** The saved draft behind a list row, if that row is one. */
 function draftIdForRow(store: MailState, rowId: string): string | undefined {
   return (

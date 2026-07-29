@@ -116,6 +116,11 @@ const api: OrbitMailAPI = {
       ipcRenderer.on('app:needsAccount', handler)
       return () => ipcRenderer.removeListener('app:needsAccount', handler)
     },
+    onToast: (callback) => {
+      const handler = (_: unknown, message: string) => callback(message)
+      ipcRenderer.on('app:toast', handler)
+      return () => ipcRenderer.removeListener('app:toast', handler)
+    },
     onUnexpectedError: (callback) => {
       const handler = (_: unknown, message: string) => callback(message)
       ipcRenderer.on('app:unexpectedError', handler)

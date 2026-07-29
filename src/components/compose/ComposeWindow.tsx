@@ -132,6 +132,10 @@ export function ComposeWindow() {
     window.__orbitMailFlushDraft = async () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
       await saveDraftNow()
+      // Returned so main can tell the user *where* the draft went. Closing keeps
+      // it silently otherwise, which means hunting for it in the wrong account's
+      // Drafts folder.
+      return draftIdRef.current
     }
     return () => window.removeEventListener('beforeunload', flush)
   })
@@ -465,6 +469,6 @@ declare global {
      * compose window close, rather than closing on a request that may not have
      * landed. Mirrors __orbitMailFlush for UI preferences.
      */
-    __orbitMailFlushDraft?: () => Promise<void>
+    __orbitMailFlushDraft?: () => Promise<string | null>
   }
 }

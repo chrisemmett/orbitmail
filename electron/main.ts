@@ -575,6 +575,21 @@ async function createComposeWindow(payload?: Partial<ComposePayload>): Promise<v
     const finish = () => composeWindow?.close()
     composeWindow.webContents
       .executeJavaScript('window.__orbitMailFlushDraft?.()', true)
+      .then((draftId: string | null | undefined) => {
+        // Say where it went. A draft is saved against the composer's From
+        // account, which is not necessarily the folder the user was reading —
+        // without this they go looking in the wrong account's Drafts folder and
+        // conclude the draft was lost.
+        if (!draftId) return
+        const draft = getDraftPayload(draftId)
+        const account = listAccounts().find((a) => a.id === draft?.payload.accountId)
+        mainWindow?.webContents.send(
+          'app:toast',
+          account
+            ? `Draft saved in ${account.email} → Drafts`
+            : 'Draft saved'
+        )
+      })
       .catch(() => {})
       .finally(finish)
     setTimeout(finish, 2000)

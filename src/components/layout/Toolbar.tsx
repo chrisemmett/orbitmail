@@ -10,7 +10,8 @@ import {
   toggleMessageStar,
   runSearch,
   clearSearch,
-  openSettings
+  openSettings,
+  composeAccountId
 } from '../../stores/mailStore'
 import { useThemeStore } from '../../stores/themeStore'
 import { AppBrand } from '../brand/AppBrand'
@@ -142,7 +143,8 @@ export function Toolbar() {
   }, [])
 
   const handleCompose = () => {
-    const accountId = accounts[0]?.id
+    // The account whose folder is open, not simply the first one.
+    const accountId = composeAccountId()
     if (!accountId) {
       useMailStore.getState().setShowAddAccount(true)
       return

@@ -503,6 +503,12 @@ export interface OrbitMailAPI {
      * Something threw where nothing caught it. The process state is unknown
      * afterwards, so the user is told once and left to choose when to restart.
      */
+    /**
+     * A passing message from main for the main window's toast — used when the
+     * thing worth reporting happened somewhere the user is not looking, e.g. a
+     * draft kept as the compose window closed.
+     */
+    onToast: (callback: (message: string) => void) => () => void
     onUnexpectedError: (callback: (message: string) => void) => () => void
     /** Whether OS-level encryption (safeStorage) is available for stored secrets. */
     getSecureStorageStatus: () => Promise<{ available: boolean }>

@@ -622,6 +622,12 @@ Things that are load-bearing:
 - Restored attachment paths are re-approved by main (it read them from its own
   database and checked they exist); ones that have since vanished are **named**
   through `ComposePayload.notice` rather than silently dropped.
+- **A draft belongs to the composer's From account**, which is not necessarily
+  the folder being read. `composeAccountId()` now defaults From to the account
+  whose folder is open rather than `accounts[0]` — every compose entry point used
+  the latter, so composing while reading one account saved the draft under
+  another, and it appeared in a Drafts folder the user was not looking at. On
+  close, main names the account in a toast (`app:toast`) for the same reason.
 - In the list, a draft row is identified by `draftId` on `MessageSummary` /
   `ThreadSummary`. Clicking one reopens the composer instead of the reader, and
   deleting one discards it rather than trying to trash a message the server has
