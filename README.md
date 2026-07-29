@@ -52,6 +52,10 @@ messages and pull out what you still need to do.
   click to carry on. Sending removes it. An empty composer is not saved, so
   changing your mind leaves nothing behind. Drafts stay on this computer; they
   do not appear in webmail or on your phone.
+- **Paste or drop an image straight into the message** and it appears where your
+  cursor is. Images are sent inside the message so they show up in the
+  recipient's client rather than arriving as a download. Anything over 5MB is
+  refused — attach it instead.
 - Attach by clicking **Attach** or dragging files onto the window.
 - **Ctrl+Enter** sends.
 - **To, Cc and Bcc autocomplete** from the people that account has actually

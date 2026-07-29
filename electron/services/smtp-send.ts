@@ -3,6 +3,7 @@ import nodemailer from 'nodemailer'
 import MailComposer from 'nodemailer/lib/mail-composer'
 import type Mail from 'nodemailer/lib/mailer'
 import { readFileSync } from 'fs'
+import { randomUUID } from 'crypto'
 import type { Provider, ComposePayload } from '../../shared/types'
 import {
   getAccountTokens,
@@ -118,6 +119,9 @@ export async function sendMail(
   }
 
   const mailer = mailerIdentity()
+  // Images pasted into the body ride as their own MIME parts, not as data: URIs
+  // (which most clients strip on receipt).
+  const inline = extractInlineImages(payload.bodyHtml)
   const mailOptions: Mail.Options = {
     from: fromAddress,
     to: payload.to,
@@ -125,7 +129,7 @@ export async function sendMail(
     bcc: payload.bcc,
     subject: payload.subject,
     text: payload.bodyText,
-    html: payload.bodyHtml,
+    html: inline.html,
     inReplyTo: payload.inReplyTo,
     references: payload.references,
     headers: {
@@ -134,12 +138,23 @@ export async function sendMail(
     }
   }
 
-  if (payload.attachmentPaths?.length) {
-    mailOptions.attachments = payload.attachmentPaths.map((path) => ({
-      filename: path.split('/').pop() ?? 'attachment',
-      content: readFileSync(path)
-    }))
+  const attachments: NonNullable<Mail.Options['attachments']> = payload.attachmentPaths?.length
+    ? payload.attachmentPaths.map((path) => ({
+        filename: path.split('/').pop() ?? 'attachment',
+        content: readFileSync(path)
+      }))
+    : []
+  // `cid` is what makes nodemailer build multipart/related and mark the part
+  // inline, so it renders in the body rather than listing as a download.
+  for (const image of inline.images) {
+    attachments.push({
+      filename: image.filename,
+      content: image.content,
+      contentType: image.contentType,
+      cid: image.cid
+    })
   }
+  if (attachments.length > 0) mailOptions.attachments = attachments
 
   // Build the MIME message up front rather than letting sendMail do it, so the
   // copy filed in Sent is byte-identical to what went out — same Message-ID,
@@ -361,4 +376,62 @@ export function buildReplyPayload(
     default:
       return { accountId }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Inline images.
+//
+// The composer holds a pasted image as a data: URI, which is what lets a draft
+// persist one without any file on disk. Sending it that way would be simpler and
+// wrong: Gmail and Outlook strip data: images out of received HTML, so the
+// recipient sees a blank space. Instead each one becomes its own MIME part with
+// a Content-ID, and the `src` is rewritten to reference it — the arrangement
+// every mail client renders.
+// ---------------------------------------------------------------------------
+
+const DATA_URI_IMAGE = /src\s*=\s*(["'])(data:(image\/[a-z0-9.+-]+);base64,([^"']+))\1/gi
+
+const IMAGE_EXTENSIONS: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+  'image/bmp': 'bmp',
+  'image/svg+xml': 'svg'
+}
+
+export interface InlineImage {
+  cid: string
+  filename: string
+  contentType: string
+  content: Buffer
+}
+
+/**
+ * Replace every `src="data:image/...;base64,..."` with a `cid:` reference,
+ * returning the parts to attach alongside.
+ *
+ * Content-IDs are derived from the image's own index and a random token rather
+ * than its content: two identical images pasted twice are still two parts, which
+ * costs a few bytes and avoids a whole class of "why did that image change"
+ * bugs from over-clever deduplication.
+ */
+export function extractInlineImages(html: string): { html: string; images: InlineImage[] } {
+  const images: InlineImage[] = []
+  const rewritten = html.replace(
+    DATA_URI_IMAGE,
+    (_match, quote: string, _uri: string, mime: string, base64: string) => {
+      const index = images.length
+      const cid = `inline-${index}-${randomUUID()}@orbit-mail`
+      const extension = IMAGE_EXTENSIONS[mime.toLowerCase()] ?? 'bin'
+      images.push({
+        cid,
+        filename: `image-${index + 1}.${extension}`,
+        contentType: mime,
+        content: Buffer.from(base64, 'base64')
+      })
+      return `src=${quote}cid:${cid}${quote}`
+    }
+  )
+  return { html: rewritten, images }
 }

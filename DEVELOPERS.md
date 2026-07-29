@@ -580,6 +580,40 @@ Details that are load-bearing:
 **Not handled yet:** the `from_normalized` column, so block is linear in account
 size.
 
+### Inline images in compose
+
+Pasting or dropping an image into the body embeds it. The editor holds it as a
+**data: URI** — which is what lets a draft persist one with no file on disk, and
+survives sanitizing because DOMPurify permits `data:` on `img src` by default
+(`DATA_URI_TAGS`) — and `extractInlineImages` in `smtp-send.ts` converts each one
+to its own MIME part with a Content-ID at send time, rewriting the `src` to
+`cid:`.
+
+**Sending them as data: URIs would be simpler and wrong.** Gmail and Outlook
+strip data: images out of received HTML, so the recipient sees a blank space.
+`cid` is also what makes nodemailer build `multipart/related` and mark the part
+inline, so it renders in the body instead of listing as a download.
+
+Details worth keeping:
+
+- Identical images pasted twice become **two parts**. Deduplicating by content
+  would be clever and is how "why did that image change" bugs start.
+- Remote (`https:`) images in the body are left alone — rewriting one would
+  change what the recipient fetches, and it is the author's choice to leave it
+  remote.
+- 5MB per image, refused with a message rather than silently. Inline images
+  count against the recipient's message-size limit and sit in the draft row
+  until sent.
+- The editor claims the drop before the compose window's attachment handler
+  sees it: a file dropped *into the body* is meant to be in the body.
+- Only an **image** paste is intercepted; pasting text keeps the browser's own
+  handling, which carries formatting across.
+
+**Not handled:** inline images in *received* mail still do not render. Nothing
+resolves a `cid:` reference to the stored attachment — the attachments table has
+no `content_id` column to match on — so this predates the feature above and
+applies equally to the copy of your own message in Sent. See TODO.md.
+
 ### Drafts
 
 Compose autosaves to a local `drafts` table as you type (800ms debounce), and

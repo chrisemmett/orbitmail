@@ -1249,6 +1249,65 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Inline images: data: URIs become cid: parts on the way out')
+  // -------------------------------------------------------------------------
+  {
+    // The composer holds a pasted image as a data: URI, which is what lets a
+    // draft keep one with no file on disk. Sending it that way would be simpler
+    // and wrong — Gmail and Outlook strip data: images from received HTML, so
+    // the recipient sees a blank space.
+    const { extractInlineImages } = await import('../electron/services/smtp-send')
+
+    const onePixel =
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+    const body = `<p>See this:</p><img src="data:image/png;base64,${onePixel}" alt="shot">`
+
+    const out = extractInlineImages(body)
+    ok('the data: URI is gone from the HTML', !out.html.includes('data:image'), out.html.slice(0, 80))
+    ok('and replaced by a cid: reference', /src="cid:[^"]+"/.test(out.html), out.html.slice(0, 120))
+    ok('the surrounding markup is untouched', out.html.includes('<p>See this:</p>'))
+    ok('one part is produced', out.images.length === 1, String(out.images.length))
+    ok('the part carries the decoded bytes, not the base64 text',
+      out.images[0].content.length === Buffer.from(onePixel, 'base64').length &&
+        out.images[0].content[0] === 0x89,
+      `${out.images[0].content.length} bytes`)
+    ok('with the right content type and a sensible filename',
+      out.images[0].contentType === 'image/png' && out.images[0].filename.endsWith('.png'),
+      `${out.images[0].contentType} / ${out.images[0].filename}`)
+    ok('and the cid in the HTML is the one on the part',
+      out.html.includes(`cid:${out.images[0].cid}`))
+
+    // Two identical images are two parts. Deduplicating by content would be
+    // clever and is exactly how "why did that image change" bugs start.
+    const twice = extractInlineImages(
+      `<img src="data:image/png;base64,${onePixel}"><img src="data:image/png;base64,${onePixel}">`
+    )
+    ok('two identical images stay two distinct parts',
+      twice.images.length === 2 && twice.images[0].cid !== twice.images[1].cid,
+      twice.images.map((i) => i.cid).join(' | '))
+
+    // Single quotes are what execCommand or a paste from elsewhere may produce.
+    const singleQuoted = extractInlineImages(`<img src='data:image/gif;base64,R0lGOD'>`)
+    ok('single-quoted attributes are handled too',
+      singleQuoted.images.length === 1 && singleQuoted.html.includes("src='cid:"),
+      singleQuoted.html)
+    ok('and the extension follows the mime type',
+      singleQuoted.images[0].filename.endsWith('.gif'), singleQuoted.images[0].filename)
+
+    // A message with no inline images must come through completely unchanged —
+    // this runs on every single send.
+    const plain = '<p>Nothing inline here</p><img src="https://example.com/tracker.gif">'
+    const untouched = extractInlineImages(plain)
+    ok('a message with no inline images is passed through untouched',
+      untouched.html === plain && untouched.images.length === 0)
+
+    // A remote image must not be swept up: it is the sender's choice to leave it
+    // remote, and rewriting it would change what the recipient fetches.
+    ok('a remote image is left as a remote image',
+      untouched.html.includes('https://example.com/tracker.gif'))
+  }
+
+  // -------------------------------------------------------------------------
   section('Drafts: saved locally, listed in the Drafts folder, gone once sent')
   // -------------------------------------------------------------------------
   {

@@ -377,6 +377,7 @@ export function ComposeWindow() {
           key={editorSeq}
           initialHtml={payload.bodyHtml}
           placeholder="Write your message…"
+          onImageRejected={setToast}
           onChange={(html, text) => {
             bodyHtmlRef.current = html
             bodyTextRef.current = text
