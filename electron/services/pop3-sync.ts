@@ -6,11 +6,15 @@ import {
   upsertMessage,
   recalculateFolderUnread,
   getFolderUidSet,
+  getFolderServerUidSet,
   hasMessageUid,
   getFolderMaxUid,
   updateFolderSyncState,
   getAccountSyncDays,
-  pruneMessagesOutsideSyncWindow
+  pruneMessagesOutsideSyncWindow,
+  getPop3SkippedDates,
+  recordPop3Skipped,
+  prunePop3Skipped
 } from './db-service'
 import { pop3ClientOptions } from './account-credentials'
 import { recordAttachmentsMetadata, toAttachmentMeta } from './attachment-fetch'
@@ -114,6 +118,9 @@ export async function syncPop3Account(
   const folder = upsertFolder(accountId, 'INBOX', 'INBOX', 'inbox')
   const syncDays = getAccountSyncDays(accountId)
   const knownServerUids = getFolderServerUidSet(folder.id)
+  // Messages already established to be too old. Their dates, not a flag, so a
+  // widened sync window brings them back into range on its own.
+  const skippedDates = getPop3SkippedDates(accountId)
   let newCount = 0
 
   try {
@@ -125,6 +132,12 @@ export async function syncPop3Account(
       const msgNum = Number(msgNumStr)
       const uid = hashUid(serverUid, msgNum)
       if (knownServerUids.has(serverUid)) continue
+
+      // Already known to be outside the window, so not even a TOP. This is the
+      // difference between a poll that reads every old message's headers every
+      // 20s and one that reads none of them.
+      const remembered = skippedDates.get(serverUid)
+      if (remembered != null && !isWithinSyncWindow(remembered, syncDays)) continue
 
       // Ask for the headers first. The window check used to run *after* a full
       // RETR, and a message outside the window is never stored — so every
@@ -141,7 +154,10 @@ export async function syncPop3Account(
       }
       if (headers) {
         const headerDate = parseHeaderDate(headers)
-        if (headerDate != null && !isWithinSyncWindow(headerDate, syncDays)) continue
+        if (headerDate != null && !isWithinSyncWindow(headerDate, syncDays)) {
+          recordPop3Skipped(accountId, serverUid, headerDate)
+          continue
+        }
       }
 
       const raw = await pop3.RETR(msgNum)
@@ -150,8 +166,12 @@ export async function syncPop3Account(
       const parsed = await simpleParser(raw)
       const date = parsed.date?.getTime() ?? Date.now()
       // Backstop for a server without TOP, or a message whose header date is
-      // missing or unparseable.
-      if (!isWithinSyncWindow(date, syncDays)) continue
+      // missing or unparseable. Remembered too: on a server with no TOP this is
+      // what stops the whole message being downloaded again next poll.
+      if (!isWithinSyncWindow(date, syncDays)) {
+        recordPop3Skipped(accountId, serverUid, date)
+        continue
+      }
 
       const from = formatAddress(parsed.from?.value[0])
       const to = formatAddressList(parsed.to?.value)
@@ -202,6 +222,13 @@ export async function syncPop3Account(
     }
 
     recalculateFolderUnread(folder.id)
+
+    // Forget UIDLs the maildrop no longer lists, or the table grows for the life
+    // of the account. Against the **full** listing, not the batch: pruning
+    // against the batch would forget everything older than the last
+    // SYNC_BATCH_SIZE messages every poll, and re-read it all on the next one —
+    // which is the very cost this is here to remove.
+    prunePop3Skipped(accountId, new Set(entries.map(([, serverUid]) => serverUid)))
 
     const highestSyncedUid = getFolderMaxUid(folder.id) ?? 0
     updateFolderSyncState(folder.id, {

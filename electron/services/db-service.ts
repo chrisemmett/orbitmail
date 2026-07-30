@@ -1653,6 +1653,60 @@ export function getFolderServerUidSet(folderId: string): Set<string> {
   return new Set(rows.map((r) => r.server_uid))
 }
 
+/**
+ * POP3 messages already known to fall outside the sync window, as UIDL → date.
+ *
+ * A message outside the window is never stored, so nothing in `messages` records
+ * that it was looked at — without this the poll re-read its headers every 20s,
+ * forever, for every old message in the maildrop.
+ *
+ * The stored value is the message's own date, not a "skipped" marker, so a wider
+ * sync window brings it back into range with nothing to invalidate.
+ */
+export function getPop3SkippedDates(accountId: string): Map<string, number> {
+  const rows = getRawSqlite()
+    .prepare('SELECT server_uid, message_date FROM pop3_skipped WHERE account_id = ?')
+    .all(accountId) as Array<{ server_uid: string; message_date: number }>
+  return new Map(rows.map((r) => [r.server_uid, r.message_date]))
+}
+
+/** Remember that this UIDL is dated outside the window. Idempotent per UIDL. */
+export function recordPop3Skipped(
+  accountId: string,
+  serverUid: string,
+  messageDate: number
+): void {
+  getRawSqlite()
+    .prepare(
+      `INSERT INTO pop3_skipped (account_id, server_uid, message_date) VALUES (?, ?, ?)
+       ON CONFLICT(account_id, server_uid) DO UPDATE SET message_date = excluded.message_date`
+    )
+    .run(accountId, serverUid, messageDate)
+}
+
+/**
+ * Drop remembered UIDLs the maildrop no longer lists.
+ *
+ * Without this the table only ever grows: mail deleted on the server (by another
+ * client, or by a POP3 client that does not leave copies) would be remembered
+ * forever. Called with the *full* UIDL listing, not the batch, or it would forget
+ * everything outside the batch on every poll and re-read it all next time.
+ */
+export function prunePop3Skipped(accountId: string, presentUids: Set<string>): number {
+  const raw = getRawSqlite()
+  const known = raw
+    .prepare('SELECT server_uid FROM pop3_skipped WHERE account_id = ?')
+    .all(accountId) as Array<{ server_uid: string }>
+  const gone = known.map((r) => r.server_uid).filter((uid) => !presentUids.has(uid))
+  if (gone.length === 0) return 0
+  const remove = raw.prepare('DELETE FROM pop3_skipped WHERE account_id = ? AND server_uid = ?')
+  const removeAll = raw.transaction((uids: string[]) => {
+    for (const uid of uids) remove.run(accountId, uid)
+  })
+  removeAll(gone)
+  return gone.length
+}
+
 /** The UIDL a POP3 message was stored under, for a server-side delete. */
 export function getMessageServerUid(messageId: string): string | null {
   const row = getRawSqlite()

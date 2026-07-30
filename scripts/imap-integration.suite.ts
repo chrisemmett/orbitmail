@@ -939,6 +939,155 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('POP3: an out-of-window message is read once, not on every poll')
+  // -------------------------------------------------------------------------
+  {
+    // A message outside the sync window is never stored, so nothing in `messages`
+    // records that it was examined: every poll re-read its headers, every 20s,
+    // forever. What must be true is that the *second* poll asks the server
+    // nothing about it — which only a server that counts its commands can show,
+    // so this speaks POP3 rather than using GreenMail.
+    const net = await import('net')
+    const { randomUUID } = await import('crypto')
+
+    const DAY = 24 * 60 * 60 * 1000
+    const oldDate = new Date(Date.now() - 400 * DAY).toUTCString()
+    const newDate = new Date(Date.now() - 1 * DAY).toUTCString()
+    const message = (subject: string, date: string) =>
+      `From: sender@example.com\r\nTo: ${EMAIL}\r\nSubject: ${subject}\r\n` +
+      `Date: ${date}\r\nMessage-ID: <${subject}@example.com>\r\n\r\nbody of ${subject}\r\n`
+
+    const maildrop = [
+      { uidl: 'uidl-ancient', source: message('ancient', oldDate) },
+      { uidl: 'uidl-recent', source: message('recent', newDate) }
+    ]
+    const counts = { TOP: new Map<string, number>(), RETR: new Map<string, number>() }
+    const bump = (map: Map<string, number>, uidl: string) =>
+      map.set(uidl, (map.get(uidl) ?? 0) + 1)
+
+    const pop3Server = net.createServer((socket) => {
+      socket.write('+OK orbit test server\r\n')
+      socket.on('data', (chunk) => {
+        for (const line of chunk.toString('utf8').split('\r\n').filter(Boolean)) {
+          const [verb, arg] = line.split(' ')
+          const index = Number(arg) - 1
+          switch (verb.toUpperCase()) {
+            case 'USER':
+            case 'PASS':
+              socket.write('+OK\r\n')
+              break
+            case 'STAT':
+              socket.write(`+OK ${maildrop.length} 1000\r\n`)
+              break
+            case 'UIDL':
+              socket.write('+OK\r\n')
+              maildrop.forEach((m, i) => socket.write(`${i + 1} ${m.uidl}\r\n`))
+              socket.write('.\r\n')
+              break
+            case 'TOP':
+              bump(counts.TOP, maildrop[index].uidl)
+              socket.write(`+OK\r\n${maildrop[index].source.split('\r\n\r\n')[0]}\r\n.\r\n`)
+              break
+            case 'RETR':
+              bump(counts.RETR, maildrop[index].uidl)
+              socket.write(`+OK\r\n${maildrop[index].source}\r\n.\r\n`)
+              break
+            case 'QUIT':
+              socket.write('+OK bye\r\n')
+              socket.end()
+              break
+            default:
+              socket.write('-ERR unsupported\r\n')
+          }
+        }
+      })
+      socket.on('error', () => {})
+    })
+    await new Promise<void>((resolve) => pop3Server.listen(0, '127.0.0.1', () => resolve()))
+    const pop3Port = (pop3Server.address() as { port: number }).port
+
+    const pop3Account = db.saveManualAccount('pop3', {
+      authType: 'password',
+      email: `pop3-${randomUUID()}@example.com`,
+      displayName: 'POP3 window',
+      username: LOGIN,
+      password: PASSWORD,
+      incoming: { host: '127.0.0.1', port: pop3Port, security: 'none' },
+      outgoing: { host: HOST, port: SMTP_PORT, security: 'none' }
+    })
+    db.updateAccountSyncDays(pop3Account.id, 30)
+
+    const pop3Sync = await import('../electron/services/pop3-sync')
+
+    // That a POP3 sync *completes* is its own assertion, and nothing checked it
+    // before: `getFolderServerUidSet` was used in this file without being
+    // imported, so both `syncPop3Account` and `estimatePop3NewMessageCount` threw
+    // ReferenceError on every call from 23 July until this test caught it. The
+    // build never noticed — esbuild transpiles without type-checking, and `tsc -b`
+    // is deliberately not a gate here (CLAUDE.md).
+    let syncError: Error | null = null
+    try {
+      await pop3Sync.syncPop3Account(pop3Account.id)
+    } catch (err) {
+      syncError = err as Error
+    }
+    ok('a POP3 sync runs to completion', syncError === null, syncError?.message ?? '')
+
+    let estimateError: Error | null = null
+    try {
+      await pop3Sync.estimatePop3NewMessageCount(pop3Account.id)
+    } catch (err) {
+      estimateError = err as Error
+    }
+    ok('and so does the new-message estimate', estimateError === null,
+      estimateError?.message ?? '')
+
+    const inbox = db.listFolders(pop3Account.id).find((f) => f.type === 'inbox')!
+    const stored = db.listMessages(inbox.id, 20, 0).map((m) => m.subject)
+    ok('the in-window message is stored', stored.includes('recent'), JSON.stringify(stored))
+    ok('the out-of-window one is not', !stored.includes('ancient'), JSON.stringify(stored))
+
+    const skipped = db.getPop3SkippedDates(pop3Account.id)
+    ok('and is remembered, with its own date rather than a flag',
+      skipped.has('uidl-ancient') && skipped.get('uidl-ancient')! < Date.now() - 300 * DAY,
+      `${skipped.size} remembered`)
+
+    const afterFirst = { top: counts.TOP.get('uidl-ancient') ?? 0 }
+    ok('the first poll did read its headers', afterFirst.top > 0, `TOP x${afterFirst.top}`)
+
+    await pop3Sync.syncPop3Account(pop3Account.id)
+    ok('the second poll asks the server nothing about it',
+      (counts.TOP.get('uidl-ancient') ?? 0) === afterFirst.top &&
+        (counts.RETR.get('uidl-ancient') ?? 0) === 0,
+      `TOP x${counts.TOP.get('uidl-ancient')} RETR x${counts.RETR.get('uidl-ancient') ?? 0}`)
+
+    // Widening the window has to bring it back with nothing to invalidate, which
+    // is why the *date* is stored and not a skipped flag.
+    db.updateAccountSyncDays(pop3Account.id, 3650)
+    await pop3Sync.syncPop3Account(pop3Account.id)
+    ok('widening the sync window fetches it after all',
+      db.listMessages(inbox.id, 20, 0).some((m) => m.subject === 'ancient'),
+      JSON.stringify(db.listMessages(inbox.id, 20, 0).map((m) => m.subject)))
+
+    // A maildrop that no longer lists a remembered UIDL must forget it, or the
+    // table grows for the life of the account.
+    db.recordPop3Skipped(pop3Account.id, 'uidl-deleted-elsewhere', Date.now() - 500 * DAY)
+    const pruned = db.prunePop3Skipped(
+      pop3Account.id,
+      new Set(maildrop.map((m) => m.uidl))
+    )
+    ok('a UIDL the server no longer lists is forgotten', pruned === 1, `pruned=${pruned}`)
+
+    const pop3Raw = (await import('../electron/db')).getRawSqlite()
+    db.removeAccount(pop3Account.id)
+    ok('removing the account takes its remembered UIDLs with it',
+      (pop3Raw.prepare('SELECT COUNT(*) AS n FROM pop3_skipped WHERE account_id = ?')
+        .get(pop3Account.id) as { n: number }).n === 0)
+
+    pop3Server.close()
+  }
+
+  // -------------------------------------------------------------------------
   section('mbox export: escaped, byte-exact, and streamed')
   // -------------------------------------------------------------------------
   {
