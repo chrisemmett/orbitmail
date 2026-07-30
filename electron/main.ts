@@ -149,6 +149,10 @@ import {
 
 let mainWindow: BrowserWindow | null = null
 let composeWindow: BrowserWindow | null = null
+// Set only by compose:send, immediately before it closes the window. A send has
+// already dealt with the message — it is in Sent and its draft row is gone — so
+// the close must not run the keep-or-discard flow that an ordinary close does.
+let composeSentAndClosing = false
 let lastNotificationAt = 0
 
 function notifyMessagesUpdated(): void {
@@ -576,6 +580,12 @@ async function createComposeWindow(payload?: Partial<ComposePayload>): Promise<v
   // promise, close for real, and never let a wedged renderer trap the window.
   let closingAfterFlush = false
   composeWindow.on('close', (event) => {
+    // A close that follows a successful send has nothing left to save: the
+    // draft id the renderer still holds names the row compose:send has already
+    // deleted, so flushing would ask "save this as a draft?" about a message
+    // that has been sent — and "Save draft" would then report a draft that no
+    // longer exists as filed.
+    if (composeSentAndClosing) return
     if (closingAfterFlush || !composeWindow) return
     event.preventDefault()
     closingAfterFlush = true
@@ -646,6 +656,8 @@ async function createComposeWindow(payload?: Partial<ComposePayload>): Promise<v
 
   composeWindow.on('closed', () => {
     composeWindow = null
+    // The next composer starts as an unsent message again.
+    composeSentAndClosing = false
     // Approval is per compose session: a file chosen for one message should not
     // still be attachable from the next one.
     clearApprovedAttachments()
@@ -1142,7 +1154,14 @@ function registerIpc(): void {
     } catch {
       // Sending succeeded; a Sent-folder sync hiccup shouldn't fail the send.
     }
-    composeWindow?.close()
+    // Tells the close handler this close is the tail of a send, not someone
+    // abandoning a message — see composeSentAndClosing. Set only alongside a
+    // close that will actually happen, so the flag cannot outlive this window
+    // and silence the prompt for the next message.
+    if (composeWindow) {
+      composeSentAndClosing = true
+      composeWindow.close()
+    }
   })
 
   ipcMain.handle('compose:pickAttachments', async () => {

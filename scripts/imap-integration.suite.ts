@@ -2153,6 +2153,32 @@ async function main(): Promise<void> {
     ok('preload declares invoke channels', invoked.length > 20, `${invoked.length} channels`)
     ok('every invoked channel has a main-process handler', orphans.length === 0,
       orphans.length ? `missing: ${orphans.join(', ')}` : `${handled.size} handlers`)
+
+    // Sending closed the composer, and closing it asked "save this message as a
+    // draft?" about the message that had just gone out — the renderer still
+    // held the id of the draft compose:send had already deleted, so the flush
+    // handed back a non-null id and the keep-or-discard dialog ran. Answering
+    // "Save draft" then reported a draft that no longer existed as filed. The
+    // close path is inside createComposeWindow and has no window in this
+    // suite, so the wiring is checked in the source: the send must mark the
+    // close as post-send, and the close must return on that mark.
+    const sendHandler = mainSource.match(
+      /ipcMain\.handle\(\s*'compose:send'[\s\S]*?\n {2}\}\)/
+    )?.[0] ?? ''
+    ok('compose:send marks its close as the tail of a send',
+      /composeSentAndClosing = true/.test(sendHandler) &&
+        sendHandler.indexOf('composeSentAndClosing = true') <
+          sendHandler.indexOf('composeWindow.close()'),
+      `compose:send source ${sendHandler.length} chars`)
+
+    const closeHandler = mainSource.match(
+      /composeWindow\.on\('close'[\s\S]*?\n {2}\}\)/
+    )?.[0] ?? ''
+    ok('a post-send close skips the save-as-draft prompt',
+      /if \(composeSentAndClosing\) return/.test(closeHandler),
+      `close handler source ${closeHandler.length} chars`)
+    ok('and the mark is cleared once the window is gone',
+      /composeWindow\.on\('closed'[\s\S]*?composeSentAndClosing = false/.test(mainSource))
   }
 
   // -------------------------------------------------------------------------

@@ -49,7 +49,8 @@ messages and pull out what you still need to do.
   incomplete forward quietly. **Forward as Attachment** (Message menu, or
   right-click) sends the whole original untouched instead.
 - **Drafts save themselves as you type**, so losing power or closing by accident
-  does not lose what you wrote. Closing the window asks whether to keep it.
+  does not lose what you wrote. Closing the window asks whether to keep it;
+  sending just closes it, because the message has gone.
   Drafts live in **Drafts** in the sidebar: click one to read it, double-click
   (or **Continue editing**) to carry on, **Discard** or press Delete to throw it
   away. Sending removes it. An empty composer is not saved, so changing your
@@ -238,9 +239,9 @@ Everything Orbit Mail knows lives on your machine:
 
 - **Gmail and Microsoft need your own OAuth app** — by design; see
   [INSTALL.md](INSTALL.md#register-an-oauth-app).
-- **No signatures or inline images** when composing.
-- **No draft autosave** — the Drafts folder syncs from the server, but a message
-  in progress isn't saved until you send it.
+- **Drafts stay on this computer** — they are saved as you type, but not uploaded
+  to the account's Drafts folder, so one started here will not appear in webmail
+  or on your phone.
 - **POP3 is inbox-only** — no moving or archiving on the server.
 - **First sync fetches the most recent 200 messages per folder.** Use **Load
   more** for older mail, or **Search whole mailbox** to pull in older matches.

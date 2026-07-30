@@ -775,6 +775,16 @@ Things that are load-bearing:
   failure between the question and the answer cannot lose the message; Discard
   deletes what was just saved, and Cancel returns to editing with the draft
   intact.
+- **A send closes the composer without asking** (`composeSentAndClosing`). A
+  send ends by closing the window, which ran the flow above and asked whether to
+  save the message that had *just gone out*. The renderer still held the id of
+  the draft `compose:send` had already deleted, so the flush handed back a
+  non-null id and the dialog ran; answering "Save draft" then reported a draft
+  that no longer existed as filed in a folder. `compose:send` marks the close as
+  the tail of a send and the `close` handler returns on that mark — there is
+  nothing to save, because sending already dealt with it. The mark is set only
+  alongside a close that will happen and cleared in `closed`, so it cannot
+  outlive the window and silence the prompt for the next message.
 - In the list, a draft row is identified by `draftId` on `MessageSummary` /
   `ThreadSummary`. Clicking one reopens the composer instead of the reader, and
   deleting one discards it rather than trying to trash a message the server has
