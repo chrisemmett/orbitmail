@@ -416,9 +416,36 @@ never skips: not knowing the date must not be treated as knowing it is old. `TOP
 is optional in RFC 1939, so a server without it falls through to the original
 post-`RETR` check — no worse than before.
 
-Still per-poll: an out-of-window message costs one small `TOP` each time, because
-nothing remembers that it was skipped. Cheap, but not free — recorded in
-`TODO.md`.
+**Skipped messages are now remembered**, in `pop3_skipped` (UIDL → the message's
+own date, keyed per account with a cascading FK). A remembered message dated
+outside the current window is skipped before the `TOP`, so the steady-state poll
+asks the server nothing about old mail.
+
+Three decisions in that table worth keeping:
+
+- **Keyed by UIDL, not message number.** POP3 message numbers are per-session and
+  shift whenever anything is deleted, so a high-water mark over them would drift
+  onto the wrong messages. UIDL is the only stable identity a maildrop offers.
+- **The date is stored, not a "skipped" flag.** Widening the sync window then
+  brings a remembered message back into range on its own, with nothing to
+  invalidate — where a flag would need clearing whenever `syncDays` changed, and
+  the version that forgot would silently never fetch old mail again.
+- **Pruned against the full UIDL listing**, not the batch (`prunePop3Skipped`).
+  Against the batch it would forget everything older than the last
+  `SYNC_BATCH_SIZE` messages on every poll and re-read it all on the next — the
+  exact cost this exists to remove. Without any pruning the table would grow for
+  the life of the account as mail is deleted server-side.
+
+The backstop path records too: on a server with no `TOP`, that is what stops the
+whole message being downloaded again next poll.
+
+**`syncPop3Account` and `estimatePop3NewMessageCount` both threw
+`ReferenceError` for a week** — `getFolderServerUidSet` was called in
+`pop3-sync.ts` without being imported (from `f19c3b2`, 23 July, through 0.5.0 and
+0.5.1). POP3 accounts synced nothing at all. Nothing caught it: esbuild
+transpiles without type-checking, `tsc -b` is deliberately not a gate here, and
+the suite had no POP3 sync test — only a client-timeout one. It has one now, and
+the first two assertions in it are simply that each function runs.
 
 ### POP3 identity
 

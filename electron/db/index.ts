@@ -120,6 +120,13 @@ function initTables(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS sweep_tasks_folder_idx ON sweep_tasks(folder_id);
 
+    CREATE TABLE IF NOT EXISTS pop3_skipped (
+      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      server_uid TEXT NOT NULL,
+      message_date INTEGER NOT NULL,
+      PRIMARY KEY (account_id, server_uid)
+    );
+
     CREATE TABLE IF NOT EXISTS contacts (
       account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
       address TEXT NOT NULL,
@@ -329,6 +336,18 @@ function migrateSchema(db: Database.Database): void {
   if (!accountNames.has('signature')) {
     db.exec('ALTER TABLE accounts ADD COLUMN signature TEXT')
   }
+
+  // Out-of-window POP3 messages, remembered by UIDL so each poll does not read
+  // their headers again. A CREATE for an existing database; `initTables` makes it
+  // for a fresh one.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS pop3_skipped (
+      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      server_uid TEXT NOT NULL,
+      message_date INTEGER NOT NULL,
+      PRIMARY KEY (account_id, server_uid)
+    )
+  `)
 }
 
 // Remove duplicate (folder_id, uid) message rows so the UNIQUE index can be

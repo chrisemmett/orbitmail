@@ -175,6 +175,28 @@ export const sweepTasks = sqliteTable(
 // are kept apart because they mean different things when ranking: sentCount is
 // people the user chose to write to, seenCount is people who turned up in their
 // mail, and a stranger who mailed once must never outrank a real correspondent.
+// POP3 messages that fall outside the sync window, remembered so they are not
+// re-examined on every poll. Keyed by UIDL, which is the only stable identity a
+// POP3 maildrop offers — message *numbers* are per-session and shift whenever
+// anything is deleted, so a high-water mark over them would be wrong.
+//
+// The message's own date is stored rather than a "skipped" flag: widening the
+// sync window then brings a remembered message back into range by itself, with
+// nothing to invalidate. A flag would need clearing whenever syncDays changed,
+// and the version that forgot to do that would silently never fetch old mail
+// again.
+export const pop3Skipped = sqliteTable(
+  'pop3_skipped',
+  {
+    accountId: text('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    serverUid: text('server_uid').notNull(),
+    messageDate: integer('message_date').notNull()
+  },
+  (t) => [primaryKey({ columns: [t.accountId, t.serverUid] })]
+)
+
 export const contacts = sqliteTable(
   'contacts',
   {

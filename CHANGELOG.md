@@ -9,6 +9,19 @@ number moves for anything substantial.
 
 ## Unreleased
 
+### Fixed
+
+- **POP3 accounts were not syncing at all.** A fault introduced on 23 July — and
+  present in both 0.5.0 and 0.5.1 — made every POP3 poll fail immediately, so no
+  new mail arrived for those accounts and the unread count never moved. IMAP,
+  Gmail and Office 365 accounts were unaffected. If you use a POP3 account, this
+  is the release to update to.
+- **POP3 polls no longer re-read old messages.** Mail older than the sync window
+  is not kept, but every poll — every twenty seconds — was still asking the server
+  for its headers. It is now remembered as too old and left alone, so a mailbox
+  with a lot of old mail costs far less network and battery. Widening **Keep mail
+  for** in Settings → Accounts still brings that mail back.
+
 ### Writing mail
 
 - **Changing the From account now swaps the signature.** Previously it was chosen
