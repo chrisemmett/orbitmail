@@ -9,7 +9,23 @@ number moves for anything substantial.
 
 ## Unreleased
 
+### AI (optional, and off unless you add your own key)
+
+- **Summarize a conversation, not just a message.** A new button on any
+  conversation turns the whole thread into what it is about, what was decided,
+  what is still outstanding and who owes it, and what nobody has answered.
+  Summaries are kept, so reopening a thread costs nothing; when new mail arrives
+  the summary is shown with a note saying how far behind it is, rather than
+  quietly re-running and spending on your key. Long threads say plainly how much
+  of the conversation the summary covers.
+
 ### Fixed
+
+- **Draft reply now reads the end of a long conversation.** On a thread longer
+  than a dozen messages it was given the *oldest* twelve — so on exactly the
+  conversations where help matters most, it drafted a reply without having seen
+  the message it was replying to. It also missed a conversation of one message
+  entirely, and on Gmail counted the same email once per label.
 
 - **POP3 accounts were not syncing at all.** A fault introduced on 23 July — and
   present in both 0.5.0 and 0.5.1 — made every POP3 poll fail immediately, so no

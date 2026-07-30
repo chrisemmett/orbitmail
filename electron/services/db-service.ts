@@ -1506,15 +1506,19 @@ export function getThreadFingerprint(accountId: string, threadKey: string): Thre
        FROM messages WHERE account_id = ? AND COALESCE(thread_id, id) = ?`
     )
     .get(accountId, threadKey) as { n: number }
+  // Identified by Message-ID, not row id, for the same reason the count is:
+  // Gmail stores one email once per label, so the newest *row* changes when a
+  // label is added even though the conversation has not. Keying on the row id
+  // made starring a message flip its summary to stale.
   const newest = raw
     .prepare(
-      `SELECT id FROM messages
+      `SELECT COALESCE(message_id, id) AS mid FROM messages
        WHERE account_id = ? AND COALESCE(thread_id, id) = ?
-       ORDER BY date DESC, id DESC LIMIT 1`
+       ORDER BY date DESC, mid DESC LIMIT 1`
     )
-    .get(accountId, threadKey) as { id: string } | undefined
+    .get(accountId, threadKey) as { mid: string } | undefined
 
-  return { messageCount: counted.n, latestMessageId: newest?.id ?? null }
+  return { messageCount: counted.n, latestMessageId: newest?.mid ?? null }
 }
 
 export interface ThreadAnalysisRow {
