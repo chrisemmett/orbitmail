@@ -5,6 +5,7 @@ import { jsonSchemaOutputFormat } from '@anthropic-ai/sdk/helpers/json-schema'
 import type {
   AiAnalysis,
   AiPriority,
+  AiThreadAnalysis,
   DraftTone,
   ReplyDraft,
   SweepResult,
@@ -31,7 +32,13 @@ import {
   pruneCompletedSweepTasks,
   getSweepMeta,
   setSweepMeta,
-  type SweepMessage
+  getThreadAnalysis,
+  setThreadAnalysis,
+  deleteThreadAnalysis,
+  getThreadFingerprint,
+  type SweepMessage,
+  type ThreadContextMessage,
+  type ThreadFingerprint
 } from './db-service'
 import { extractAddress, splitAddressList } from '../../shared/addresses'
 import { resolveAiEffort, resolveAiModel, type AiEffort } from '../../shared/ai-models'
@@ -485,12 +492,16 @@ Rules:
 ${UNTRUSTED_CONTENT_RULE}`
 }
 
+// Shared by the reply draft and the conversation summary: both send a thread as
+// text, and both must fence every body. `bodyChars` differs between them because
+// their budgets do — see THREAD_ANALYSIS_BODY_CHARS.
 function threadBlock(
   m: { from: string; subject: string; date: number; bodyText: string | null; bodyHtml: string | null },
-  isFromUser: boolean
+  isFromUser: boolean,
+  bodyChars = DRAFT_BODY_CHARS
 ): string {
   let body = m.bodyText ?? (m.bodyHtml ? stripHtml(m.bodyHtml) : '')
-  if (body.length > DRAFT_BODY_CHARS) body = body.slice(0, DRAFT_BODY_CHARS) + '… [truncated]'
+  if (body.length > bodyChars) body = body.slice(0, bodyChars) + '… [truncated]'
   return `${isFromUser ? 'FROM YOU' : 'FROM SOMEONE ELSE'} — ${new Date(m.date).toISOString()}
 ${fenceUntrusted(`From: ${m.from}
 Subject: ${m.subject}
@@ -594,6 +605,275 @@ ${blocks.join('\n\n---\n\n')}`
     }
 
     return { bodyText: parsed.reply.trim() }
+  } catch (err) {
+    return { error: friendlyError(err) }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Conversation summary — one call over a whole thread, answering "what is this
+// about, what was decided, what is still owed and by whom".
+// ---------------------------------------------------------------------------
+
+// Same budget as the reply draft: the input is the same shape (a conversation as
+// text), so it gets the same allowance. Deliberately not MAX_BODY_CHARS (8000),
+// which is a *single message's* budget and would quadruple the worst case here.
+const THREAD_ANALYSIS_MAX_MESSAGES = 12
+const THREAD_ANALYSIS_BODY_CHARS = 4000
+const THREAD_ANALYSIS_MAX_TOKENS = 8192
+// Rows to pull before windowing. Enough to know how much was left out, without
+// loading the bodies of a 200-message thread to summarize twelve of them.
+const THREAD_FETCH_LIMIT = THREAD_ANALYSIS_MAX_MESSAGES * 3
+
+const THREAD_ANALYSIS_SCHEMA = {
+  type: 'object',
+  properties: {
+    summary: {
+      type: 'string',
+      description:
+        'What this conversation is about and where it now stands, in two to four plain sentences.'
+    },
+    decisions: {
+      type: 'array',
+      items: { type: 'string' },
+      description:
+        'Decisions the participants actually reached. A proposal nobody answered is not a decision. Empty if none were reached.'
+    },
+    actionItems: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          action: {
+            type: 'string',
+            description: 'One specific outstanding thing that must be done, as a short imperative.'
+          },
+          owner: {
+            type: 'string',
+            description:
+              'Who owes it: "You" when it is the user, otherwise the participant\'s name or address exactly as the conversation gives it. "Unassigned" only when the conversation genuinely does not say.'
+          }
+        },
+        required: ['action', 'owner'],
+        additionalProperties: false
+      },
+      description: 'Outstanding commitments only — nothing the thread shows as already done.'
+    },
+    openQuestions: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Questions raised in the conversation that nobody has answered yet.'
+    }
+  },
+  required: ['summary', 'decisions', 'actionItems', 'openQuestions'],
+  additionalProperties: false
+} as const
+
+export const THREAD_ANALYSIS_SYSTEM_PROMPT = `You summarize an email conversation for one of its participants and tell them where it stands.
+
+Messages are given oldest to newest, each labelled FROM YOU (the user) or FROM SOMEONE ELSE.
+
+Rules:
+- decisions are only what was actually agreed or settled. A proposal nobody answered is an open question, not a decision.
+- actionItems are outstanding commitments only, each with the person who owes it. Use "You" for the user. Never guess an owner — say "Unassigned" when the conversation does not say.
+- openQuestions are questions raised in the conversation that are still unanswered.
+- Do not invent facts, dates, numbers, names or commitments that are not in the conversation.
+- If the conversation is marked as having earlier messages omitted, do not describe or speculate about what they contained.
+- Leave a list empty rather than padding it with filler.
+
+${UNTRUSTED_CONTENT_RULE}`
+
+/**
+ * Which messages of a conversation reach the model: the opening message plus the
+ * most recent `cap - 1`.
+ *
+ * A summary needs both ends. The opener says what the thread is *about* — often
+ * the only place the original question or request appears — and the tail says
+ * where it now *stands*. A plain "last N" answers the second and loses the first
+ * on exactly the long threads where a summary is worth having.
+ *
+ * Exported because it is the part of the prompt that must be provable without an
+ * API key.
+ */
+export function selectThreadWindow<T extends { date: number }>(
+  messages: readonly T[],
+  cap = THREAD_ANALYSIS_MAX_MESSAGES
+): { window: T[]; omitted: number } {
+  if (messages.length <= cap) return { window: [...messages], omitted: 0 }
+  const [oldest, ...rest] = messages
+  const tail = rest.slice(rest.length - (cap - 1))
+  return { window: [oldest, ...tail], omitted: messages.length - cap }
+}
+
+/**
+ * The user-turn prompt for a conversation summary.
+ *
+ * Exported for the same reason as `selectThreadWindow`: asserting on the
+ * assembled prompt proves the fencing *and* the caps *and* the windowing at
+ * once, where testing the helpers separately proves only the first.
+ */
+export function buildThreadAnalysisPrompt(
+  messages: readonly ThreadContextMessage[],
+  userName: string,
+  userEmails: readonly string[]
+): { prompt: string; analyzedCount: number } {
+  const { window, omitted } = selectThreadWindow(messages)
+  const blocks = window.map((m) =>
+    threadBlock(m, isMessageFromUser(m.from, userEmails), THREAD_ANALYSIS_BODY_CHARS)
+  )
+  // Said plainly, because a summary that quietly covers half a thread is worse
+  // than one that says which half.
+  const notice =
+    omitted > 0
+      ? `\n\n(${omitted} earlier message${omitted === 1 ? '' : 's'} in this conversation ${
+          omitted === 1 ? 'is' : 'are'
+        } not included.)`
+      : ''
+
+  return {
+    prompt: `Summarize this email conversation and tell me where it stands. The messages are oldest first. I am ${userName}.${notice}\n\n${blocks.join(
+      '\n\n---\n\n'
+    )}`,
+    analyzedCount: window.length
+  }
+}
+
+/**
+ * What is actually persisted: the model's answer and nothing else. Everything
+ * else on `AiThreadAnalysis` — when it was made, how much of the thread it saw,
+ * whether it is still current — is about the row or about now, and is recomputed
+ * on read rather than frozen into the JSON.
+ */
+type StoredThreadAnalysis = Pick<
+  AiThreadAnalysis,
+  'summary' | 'decisions' | 'actionItems' | 'openQuestions'
+>
+
+/** Shape the summary into the renderer's type, with staleness measured now. */
+function toThreadAnalysis(
+  stored: StoredThreadAnalysis,
+  row: { generatedAt: number; messageCount: number; analyzedCount: number; latestMessageId: string },
+  fingerprint: ThreadFingerprint,
+  cached: boolean
+): AiThreadAnalysis {
+  return {
+    ...stored,
+    generatedAt: row.generatedAt,
+    cached,
+    messageCount: row.messageCount,
+    analyzedCount: row.analyzedCount,
+    currentMessageCount: fingerprint.messageCount,
+    stale:
+      fingerprint.messageCount !== row.messageCount ||
+      fingerprint.latestMessageId !== row.latestMessageId
+  }
+}
+
+function parseStoredThreadAnalysis(json: string): StoredThreadAnalysis | null {
+  try {
+    const parsed = JSON.parse(json)
+    if (!parsed || typeof parsed.summary !== 'string') return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+/**
+ * A stored summary, with no API call. Null when there is none, or when the row
+ * is unreadable — in which case it is dropped rather than left to fail again.
+ */
+export function getCachedThreadAnalysis(
+  accountId: string,
+  threadKey: string
+): AiThreadAnalysis | null {
+  const row = getThreadAnalysis(accountId, threadKey)
+  if (!row) return null
+  const stored = parseStoredThreadAnalysis(row.json)
+  if (!stored) {
+    deleteThreadAnalysis(accountId, threadKey)
+    return null
+  }
+  return toThreadAnalysis(stored, row, getThreadFingerprint(accountId, threadKey), true)
+}
+
+export async function analyzeThread(
+  accountId: string,
+  threadKey: string,
+  options: { force?: boolean } = {}
+): Promise<AiThreadAnalysis | { error: string }> {
+  const before = getThreadFingerprint(accountId, threadKey)
+  if (before.messageCount === 0 || !before.latestMessageId) {
+    return { error: 'That conversation is no longer here.' }
+  }
+
+  if (!options.force) {
+    const cached = getCachedThreadAnalysis(accountId, threadKey)
+    // A stale summary is *not* served here: this path is only reached by an
+    // explicit click, and clicking on a summary marked stale means "update it".
+    if (cached && !cached.stale) return cached
+  }
+
+  const apiKey = getApiKey()
+  if (!apiKey) {
+    // Worded exactly as the other features word it — the renderer shows this as
+    // a toast and then asks `getStatus()` whether to open AI settings, so the
+    // string is what the user reads, not a signal.
+    return { error: 'No Anthropic API key configured. Open AI settings to add one.' }
+  }
+  const client = new Anthropic({ apiKey })
+
+  const messages = listThreadMessages(accountId, threadKey, THREAD_FETCH_LIMIT)
+  if (messages.length === 0) return { error: 'That conversation is no longer here.' }
+
+  const accounts = listAccounts()
+  const userEmails = accounts.map((a) => a.email)
+  const account = accounts.find((a) => a.id === accountId)
+  const userName = account?.displayName || account?.email || 'the user'
+  const { prompt, analyzedCount } = buildThreadAnalysisPrompt(messages, userName, userEmails)
+
+  const { model, effort } = modelConfig()
+
+  try {
+    const response = await client.messages.parse({
+      model,
+      max_tokens: THREAD_ANALYSIS_MAX_TOKENS,
+      output_config: {
+        effort,
+        format: jsonSchemaOutputFormat(THREAD_ANALYSIS_SCHEMA)
+      },
+      system: THREAD_ANALYSIS_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: prompt }]
+    })
+
+    if (response.stop_reason === 'refusal') {
+      return { error: 'The model declined to summarize this conversation.' }
+    }
+    const parsed = response.parsed_output
+    if (!parsed) {
+      return { error: 'The model returned no usable summary. Try again.' }
+    }
+
+    const stored = {
+      summary: parsed.summary,
+      decisions: parsed.decisions,
+      actionItems: parsed.actionItems,
+      openQuestions: parsed.openQuestions
+    }
+
+    // Re-read the fingerprint *after* the call. It takes seconds, and a sync can
+    // land a reply inside them — storing the pre-call fingerprint would mark a
+    // summary current that already was not.
+    const after = getThreadFingerprint(accountId, threadKey)
+    const row = {
+      generatedAt: Date.now(),
+      messageCount: after.messageCount,
+      analyzedCount,
+      latestMessageId: after.latestMessageId ?? before.latestMessageId
+    }
+    setThreadAnalysis(accountId, threadKey, { ...row, json: JSON.stringify(stored) })
+
+    return toThreadAnalysis(stored, row, after, false)
   } catch (err) {
     return { error: friendlyError(err) }
   }

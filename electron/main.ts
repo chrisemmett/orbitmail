@@ -135,6 +135,8 @@ import {
 } from './services/preferences-service'
 import {
   analyzeMessage,
+  analyzeThread,
+  getCachedThreadAnalysis,
   draftReply,
   sweepTasks,
   flagMessageAsTask,
@@ -1478,6 +1480,16 @@ function registerIpc(): void {
   )
 
   ipcMain.handle('ai:getCachedAnalysis', (_, messageId: string) => getCachedAnalysis(messageId))
+
+  ipcMain.handle(
+    'ai:analyzeThread',
+    (_, accountId: string, threadId: string, force?: boolean) =>
+      analyzeThread(accountId, threadId, { force })
+  )
+
+  ipcMain.handle('ai:getCachedThreadAnalysis', (_, accountId: string, threadId: string) =>
+    getCachedThreadAnalysis(accountId, threadId)
+  )
 
   ipcMain.handle('ai:exportTasks', async (_, markdown: string, defaultName: string) => {
     const result = await dialog.showSaveDialog(composeWindow ?? mainWindow ?? undefined, {

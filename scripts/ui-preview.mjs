@@ -92,8 +92,51 @@ const OVERRIDES = {
   'folders.list': folders,
   'messages.list': [],
   'messages.count': 0,
-  'messages.listThreads': [],
-  'messages.countThreads': 0,
+  // One conversation, so the thread reader — and the conversation summary that
+  // hangs off it — can actually be looked at. Every field of ThreadSummary and
+  // MessageDetail must be present: a missing one throws inside the component
+  // rather than degrading, and the stack reads exactly like an app bug.
+  'messages.listThreads': [
+    {
+      threadId: 'thread-1', accountId: 'acc-1', latestMessageId: 'm3',
+      from: 'Jan <jan@work.example>', subject: 'Q3 launch date',
+      snippet: 'Then the 14th it is — I will tell the printers.',
+      date: Date.now() - 3600000, isStarred: false, flagColor: null,
+      hasAttachments: false, messageCount: 3, hasUnread: false,
+      participants: ['Jan', 'You', 'Priya']
+    }
+  ],
+  'messages.countThreads': 1,
+  'messages.getThread': ['m1', 'm2', 'm3'].map((id, i) => ({
+    id, folderId: 'acc-1-inbox', accountId: 'acc-1', uid: 100 + i,
+    messageId: '<' + id + '@work.example>', threadId: 'thread-1',
+    from: i === 1 ? 'You <you@example.com>' : 'Jan <jan@work.example>',
+    to: 'you@example.com', cc: '', references: null,
+    subject: 'Q3 launch date',
+    snippet: '…', date: Date.now() - (3 - i) * 3600000,
+    isRead: true, isStarred: false, flagColor: null, hasAttachments: false,
+    bodyText: 'Message ' + (i + 1) + ' of the conversation.', bodyHtml: null,
+    attachments: []
+  })),
+  // A stored summary, so the panel renders without an API key. Shaped as
+  // AiThreadAnalysis: the counts drive the "new messages since" note, so this
+  // one is deliberately stale to show that state too.
+  'ai.getCachedThreadAnalysis': {
+    summary:
+      'Jan proposed moving the launch to the 14th so the printers have a week of slack. You agreed, and Priya asked whether the pricing page copy can be ready by then.',
+    decisions: ['Launch moves to the 14th', 'Printers get a week of slack'],
+    actionItems: [
+      { owner: 'You', action: 'Confirm the pricing page copy date with Priya' },
+      { owner: 'Jan', action: 'Tell the printers the new date' }
+    ],
+    openQuestions: ['Is the pricing page copy ready by the 14th?'],
+    generatedAt: Date.now() - 7200000,
+    cached: true,
+    messageCount: 2,
+    analyzedCount: 2,
+    currentMessageCount: 3,
+    stale: true
+  },
   'sync.getStatus': { syncing: false, lastSyncAt: Date.now() - 120000, error: null, syncCurrent: 0, syncTotal: 0 },
   'ai.getStatus': { configured: true },
   'ai.getTasks': {

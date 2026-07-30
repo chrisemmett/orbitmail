@@ -789,6 +789,18 @@ interface RegroupRow {
 // Recompute thread_id for every message in an account so that messages linked
 // (transitively) by Message-ID / In-Reply-To / References share one id.
 export function regroupThreadsForAccount(accountId: string): void {
+  try {
+    regroupThreadsForAccountInner(accountId)
+  } finally {
+    // Regrouping is the one thing that can make a thread key *stop existing*, so
+    // it is where cached summaries keyed on one are collected. In the callee
+    // rather than at the three call sites, so a fourth cannot forget it — and in
+    // a `finally` so the early return for an empty account still runs it.
+    pruneOrphanedThreadAnalysis(accountId)
+  }
+}
+
+function regroupThreadsForAccountInner(accountId: string): void {
   const sqlite = getRawSqlite()
   const rows = sqlite
     .prepare(
@@ -1461,6 +1473,155 @@ export function listThreadMessages(
     bodyText: r.body_text,
     bodyHtml: r.body_html
   }))
+}
+
+export interface ThreadFingerprint {
+  /** Distinct messages in the conversation, counted as listThreadMessages counts. */
+  messageCount: number
+  /** The newest message's id, or null for a conversation with no messages. */
+  latestMessageId: string | null
+}
+
+/**
+ * A cheap identity for what a conversation currently contains.
+ *
+ * Computed the same way when a summary is stored and when it is read back, so
+ * the two cannot drift apart by construction. Never derive the stored value from
+ * the messages actually sent to the model: those are capped and windowed, so a
+ * long thread would look like a short one and every read would report stale.
+ *
+ * Counts *distinct* messages — `COALESCE(message_id, id)`, matching
+ * `listThreadMessages` — or a Gmail conversation would appear to change size
+ * every time a label was added.
+ *
+ * The `id` tiebreak on the newest message is load-bearing: two messages can
+ * share a timestamp, and without it the fingerprint is nondeterministic, so a
+ * fresh summary reports itself stale at random.
+ */
+export function getThreadFingerprint(accountId: string, threadKey: string): ThreadFingerprint {
+  const raw = getRawSqlite()
+  const counted = raw
+    .prepare(
+      `SELECT COUNT(DISTINCT COALESCE(message_id, id)) AS n
+       FROM messages WHERE account_id = ? AND COALESCE(thread_id, id) = ?`
+    )
+    .get(accountId, threadKey) as { n: number }
+  const newest = raw
+    .prepare(
+      `SELECT id FROM messages
+       WHERE account_id = ? AND COALESCE(thread_id, id) = ?
+       ORDER BY date DESC, id DESC LIMIT 1`
+    )
+    .get(accountId, threadKey) as { id: string } | undefined
+
+  return { messageCount: counted.n, latestMessageId: newest?.id ?? null }
+}
+
+export interface ThreadAnalysisRow {
+  json: string
+  generatedAt: number
+  messageCount: number
+  analyzedCount: number
+  latestMessageId: string
+}
+
+export function getThreadAnalysis(
+  accountId: string,
+  threadKey: string
+): ThreadAnalysisRow | null {
+  const row = getRawSqlite()
+    .prepare(
+      `SELECT json, generated_at, message_count, analyzed_count, latest_message_id
+       FROM thread_analysis WHERE account_id = ? AND thread_id = ?`
+    )
+    .get(accountId, threadKey) as
+    | {
+        json: string
+        generated_at: number
+        message_count: number
+        analyzed_count: number
+        latest_message_id: string
+      }
+    | undefined
+  if (!row) return null
+  return {
+    json: row.json,
+    generatedAt: row.generated_at,
+    messageCount: row.message_count,
+    analyzedCount: row.analyzed_count,
+    latestMessageId: row.latest_message_id
+  }
+}
+
+/** Upsert: re-summarizing a conversation replaces its row rather than adding one. */
+export function setThreadAnalysis(
+  accountId: string,
+  threadKey: string,
+  row: ThreadAnalysisRow
+): void {
+  getRawSqlite()
+    .prepare(
+      `INSERT INTO thread_analysis
+         (account_id, thread_id, json, generated_at, message_count, analyzed_count, latest_message_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(account_id, thread_id) DO UPDATE SET
+         json = excluded.json,
+         generated_at = excluded.generated_at,
+         message_count = excluded.message_count,
+         analyzed_count = excluded.analyzed_count,
+         latest_message_id = excluded.latest_message_id`
+    )
+    .run(
+      accountId,
+      threadKey,
+      row.json,
+      row.generatedAt,
+      row.messageCount,
+      row.analyzedCount,
+      row.latestMessageId
+    )
+}
+
+export function deleteThreadAnalysis(accountId: string, threadKey: string): void {
+  getRawSqlite()
+    .prepare('DELETE FROM thread_analysis WHERE account_id = ? AND thread_id = ?')
+    .run(accountId, threadKey)
+}
+
+/**
+ * Drop cached summaries whose conversation no longer exists.
+ *
+ * A thread key is derived, so it can *stop existing*: `regroupThreadsForAccount`
+ * re-links conversations after every sync that ingests mail, and a late reply
+ * bridging two threads collapses them onto one key. The loser's row is then
+ * orphaned rather than stale — nothing will ever ask for it again, and it holds
+ * mail-derived text indefinitely. No foreign key can express this, because
+ * `thread_id` keys no table.
+ *
+ * Deliberately a prune and not an adoption: after a merge the surviving
+ * conversation is a *different, larger* one, and a summary written about a
+ * subset of it was never an answer about it. The staleness check catches the
+ * survivor anyway.
+ */
+export function pruneOrphanedThreadAnalysis(accountId: string): number {
+  const raw = getRawSqlite()
+  // Almost every account has never used the feature; one indexed probe keeps the
+  // common case off the full-account scan below.
+  const any = raw
+    .prepare('SELECT 1 FROM thread_analysis WHERE account_id = ? LIMIT 1')
+    .get(accountId)
+  if (!any) return 0
+
+  const result = raw
+    .prepare(
+      `DELETE FROM thread_analysis
+       WHERE account_id = ?
+         AND thread_id NOT IN (
+           SELECT DISTINCT COALESCE(thread_id, id) FROM messages WHERE account_id = ?
+         )`
+    )
+    .run(accountId, accountId)
+  return result.changes
 }
 
 export function getMessageAiAnalysis(

@@ -127,6 +127,17 @@ function initTables(db: Database.Database): void {
       PRIMARY KEY (account_id, server_uid)
     );
 
+    CREATE TABLE IF NOT EXISTS thread_analysis (
+      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      thread_id TEXT NOT NULL,
+      json TEXT NOT NULL,
+      generated_at INTEGER NOT NULL,
+      message_count INTEGER NOT NULL,
+      analyzed_count INTEGER NOT NULL,
+      latest_message_id TEXT NOT NULL,
+      PRIMARY KEY (account_id, thread_id)
+    );
+
     CREATE TABLE IF NOT EXISTS contacts (
       account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
       address TEXT NOT NULL,
@@ -346,6 +357,21 @@ function migrateSchema(db: Database.Database): void {
       server_uid TEXT NOT NULL,
       message_date INTEGER NOT NULL,
       PRIMARY KEY (account_id, server_uid)
+    )
+  `)
+
+  // Cached conversation summaries. Same shape as above: a CREATE for an existing
+  // database, with `initTables` covering a fresh one.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS thread_analysis (
+      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      thread_id TEXT NOT NULL,
+      json TEXT NOT NULL,
+      generated_at INTEGER NOT NULL,
+      message_count INTEGER NOT NULL,
+      analyzed_count INTEGER NOT NULL,
+      latest_message_id TEXT NOT NULL,
+      PRIMARY KEY (account_id, thread_id)
     )
   `)
 }
