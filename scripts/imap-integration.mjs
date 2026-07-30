@@ -13,14 +13,15 @@ import { spawn, spawnSync } from 'child_process'
 import { mkdirSync, rmSync } from 'fs'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
+import {
+  IMAGE, USER, dockerAvailable, startGreenMail, stopContainer, containerLogs, waitForImap
+} from './greenmail.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const BUILD_DIR = join(ROOT, '.integration-build')
 const CONTAINER = 'orbit-mail-greenmail-test'
-const IMAGE = 'greenmail/standalone:2.1.9'
 
 export const PORTS = { imap: 3143, imaps: 3993, smtp: 3025 }
-const USER = { email: 'rob@example.com', login: 'rob', password: 'secret' }
 
 const keep = process.argv.includes('--keep')
 const run = (cmd, args, opts = {}) => spawnSync(cmd, args, { encoding: 'utf8', ...opts })
@@ -28,50 +29,6 @@ const run = (cmd, args, opts = {}) => spawnSync(cmd, args, { encoding: 'utf8', .
 function fail(message) {
   console.error(`\n[test:imap] ${message}`)
   process.exit(1)
-}
-
-function dockerAvailable() {
-  return run('docker', ['info']).status === 0
-}
-
-function stopContainer() {
-  run('docker', ['rm', '-f', CONTAINER], { stdio: 'ignore' })
-}
-
-function startGreenMail() {
-  stopContainer()
-  const opts = [
-    '-Dgreenmail.setup.test.all',
-    '-Dgreenmail.hostname=0.0.0.0',
-    `-Dgreenmail.users=${USER.login}:${USER.password}@example.com`
-  ].join(' ')
-
-  const res = run('docker', [
-    'run', '-d', '--name', CONTAINER,
-    '-p', `${PORTS.imap}:3143`,
-    '-p', `${PORTS.imaps}:3993`,
-    '-p', `${PORTS.smtp}:3025`,
-    '-e', `GREENMAIL_OPTS=${opts}`,
-    IMAGE
-  ])
-  if (res.status !== 0) fail(`could not start GreenMail:\n${res.stderr}`)
-}
-
-async function waitForImap(timeoutMs = 60_000) {
-  const { createConnection } = await import('net')
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    const ok = await new Promise((resolve) => {
-      const socket = createConnection({ host: '127.0.0.1', port: PORTS.imap })
-      socket.setTimeout(1000)
-      socket.on('connect', () => { socket.destroy(); resolve(true) })
-      socket.on('error', () => resolve(false))
-      socket.on('timeout', () => { socket.destroy(); resolve(false) })
-    })
-    if (ok) return
-    await new Promise((r) => setTimeout(r, 500))
-  }
-  fail('GreenMail did not accept IMAP connections in time')
 }
 
 function buildSuite() {
@@ -127,7 +84,7 @@ let cleanedUp = false
 function cleanup() {
   if (cleanedUp) return
   cleanedUp = true
-  if (!keep) stopContainer()
+  if (!keep) stopContainer(CONTAINER)
   rmSync(BUILD_DIR, { recursive: true, force: true })
 }
 process.on('SIGINT', () => { cleanup(); process.exit(130) })
@@ -138,8 +95,11 @@ if (!dockerAvailable()) {
 }
 
 console.log(`[test:imap] starting ${IMAGE} as ${CONTAINER}`)
-startGreenMail()
-await waitForImap()
+const startError = startGreenMail({ container: CONTAINER, ports: PORTS })
+if (startError) fail(`could not start GreenMail:\n${startError}`)
+if (!(await waitForImap(PORTS.imap))) {
+  fail('GreenMail did not accept IMAP connections in time')
+}
 console.log(`[test:imap] GreenMail ready on imap:${PORTS.imap} smtp:${PORTS.smtp}\n`)
 
 let code = 1
@@ -149,8 +109,7 @@ try {
     // Dump the server's view before the container goes away — on CI this is the
     // only chance to see why a protocol-level check failed.
     console.log(`\n[test:imap] GreenMail log (last 40 lines):`)
-    const logs = run('docker', ['logs', '--tail', '40', CONTAINER])
-    process.stdout.write((logs.stdout ?? '') + (logs.stderr ?? ''))
+    process.stdout.write(containerLogs(CONTAINER))
   }
 } finally {
   cleanup()
