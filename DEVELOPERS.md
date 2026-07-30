@@ -310,7 +310,9 @@ the control, and the README says so.
   it on its own — the child's `closed` runs first — though the reference is
   nulled there anyway, so the `?? undefined` fallbacks elsewhere behave. The two
   places that already hand-checked `isDestroyed()` (the quit flush,
-  `reportUnexpectedError`) were working around the same missing guard.
+  `reportUnexpectedError`) were working around the same missing guard. Pinned by
+  `e2e-window.suite.ts` (`npm run test:e2e`), which reproduces it: before the
+  fix that suite exits non-zero with the throw named; after it, clean.
 
   Attribution depends on `StartupWMClass` matching the window's real `WM_CLASS`,
   which Chromium derives from the name `main.ts` passes to `app.setName()` on
@@ -1153,7 +1155,7 @@ their own. Approval is cleared when the compose window closes.
 | `npm run install:desktop` | Install a dev `.desktop` launcher |
 | `npm run test:imap` | Integration suite against a real IMAP/SMTP server (see below) |
 | `npm run test:store` | Renderer-store checks under plain node (see below) — no Docker, no Electron |
-| `npm run test:send-e2e` | Send path end to end through real windows (see below) — needs Docker *and* a display, so it is not in CI |
+| `npm run test:e2e` | End-to-end suites through real windows — send path, window lifecycle (see below). Needs Docker *and* a display, so it is not in CI |
 | `npm run ui:preview` | Serve the built renderer to a browser with the IPC bridge stubbed, for looking at the UI where Electron cannot run (see below) |
 | `npm run dist` | Build icons, compile, and package (.deb + AppImage) |
 | `npm run dist:deb` | Debian package only |
@@ -1254,47 +1256,66 @@ Notes for anyone extending it:
   container — on CI that is the only view of the server side.
 - CI deliberately does not run `tsc -b`; see the note in the workflow.
 
-## Send end-to-end, through real windows (`test:send-e2e`)
+## End-to-end, through real windows (`test:e2e`)
 
 ```bash
-npm run test:send-e2e            # build, start GreenMail, run it, tear down
-npm run test:send-e2e -- --keep  # leave the container up afterwards
+npm run test:e2e            # build, start GreenMail, run every suite, tear down
+npm run test:e2e -- --keep  # leave the container up afterwards
 ```
 
 **Requires Docker *and* a display; it is not in CI.** `test:imap` is windowless
-by design, which means the compose window's lifecycle — its `close` handler, the
-draft flush, what happens to both after a send — is the one part of the app it
-cannot reach. This closes that gap: `scripts/send-e2e.mjs` starts GreenMail on
-its own ports (`orbit-mail-greenmail-e2e`, IMAP 3243, SMTP 3225, so it can run
-alongside `test:imap`), and `scripts/send-e2e.suite.ts` imports
-`electron/main.ts` **whole** — the handlers, windows and close paths are the
-app's own, not a re-implementation — with `userData` redirected to a throwaway
-directory before any app module loads, so a real database is never opened.
+by design, which means a *window's* lifecycle — a `close` handler, the draft
+flush, parent/child destroy order — is the one part of the app it cannot reach.
+These close that gap. `scripts/e2e.mjs` starts GreenMail on its own ports
+(`orbit-mail-greenmail-e2e`, IMAP 3243, SMTP 3225, so it can run alongside
+`test:imap`) and runs each suite in its own Electron process. Every suite imports
+`electron/main.ts` **whole** — the handlers, windows and close paths are the app's
+own, not a re-implementation — with `userData` redirected to a throwaway directory
+before any app module loads, so a real database is never opened.
 
-What it drives, in one pass: `drafts.open` → the composer loads the draft → a
-click on the real **Send** button → `handleSend` → preload →
+**`e2e-send.suite.ts` — the send path.** `drafts.open` → the composer loads the
+draft → a click on the real **Send** button → `handleSend` → preload →
 `ipcMain('compose:send')` → `smtp-send` → GreenMail → draft row deleted → Sent
 synced → window closed with no save-as-draft prompt → the recipient's copy read
-back off IMAP. It also asserts **nothing threw**, which is how the destroyed-window
-bug in `liveMainWindow()` was found.
+back off IMAP. It also asserts nothing threw, which is how the destroyed-window
+bug below was found.
 
-Things worth knowing before touching it:
+**`e2e-window.suite.ts` — window lifecycle.** Closes the main window with a
+composer open (`closeToTray` off, which is also how a desktop with no tray
+behaves) and asserts nothing throws. That is the `liveMainWindow()` regression:
+the composer is a *child* of the main window, so closing the parent destroys both,
+and the child's `closed` handler calls `notifyMessagesUpdated()` against a window
+that has gone. It needs no mail server. Two things it is deliberately shaped
+around, both learned by getting them wrong: nulling `mainWindow` in its own
+`closed` handler does not fix the bug (the child's `closed` runs first), and
+checking `window.isDestroyed()` alone does not either (the webContents dies
+first) — so the check is "does anything throw", not "is the reference null".
+
+Things worth knowing before touching these:
 
 - **Headless is not an option.** Ozone segfaults on the first `BrowserWindow`,
   hidden ones included, so there is no CI mode and the runner refuses to start
   without `DISPLAY`/`WAYLAND_DISPLAY`. Windows appear on screen for a few
   seconds; that is expected, not a bug.
-- **The harness bundle is written to `out/main/`** so `__dirname` resolves
+- **A suite that ends with every window destroyed cannot share a process** with
+  one that does not — closing the last window quits the app. That is why the
+  window suite is separate, and why it holds one hidden window of its own open so
+  the process survives long enough to report.
+- **A throw is reported the moment it happens**, not at the end. The
+  destroyed-window regression derails the close it occurs in and takes the process
+  down with a second throw before any summary can print; without the immediate
+  line, a real failure read as three passes and a stack trace.
+- **Harness bundles are written to `out/main/`** so `__dirname` resolves
   `../renderer` and `../preload` the way the real main bundle does. The runner
-  deletes it afterwards — a stray 6 MB file there would be packaged into the app.
-- **The runner owns the temp `userData`**, not the harness: deleting it from
-  inside a still-running app just lets SQLite recreate the WAL behind you.
-- **Two ways this has already passed while proving nothing**, both now guarded by
-  their own assertions: picking windows out of `getAllWindows()` by index (order
-  is not creation order, and sending from the *main* window succeeds too), and
-  opening the composer with a bare `draftId` via `compose.open` (which does not
-  load the draft, so `draftIdRef` — what the close-time flush reads — stays
-  null, and the prompt cannot fire whether the bug is present or not). If a
+  deletes them afterwards — a stray 6 MB file there would be packaged into the app.
+- **The runner owns the temp `userData` dirs**, not the harnesses: deleting one
+  from inside a still-running app just lets SQLite recreate the WAL behind you.
+- **Two ways the send suite has already passed while proving nothing**, both now
+  guarded by their own assertions: picking windows out of `getAllWindows()` by
+  index (order is not creation order, and sending from the *main* window succeeds
+  too), and opening the composer with a bare `draftId` via `compose.open` (which
+  does not load the draft, so `draftIdRef` — what the close-time flush reads —
+  stays null, and the prompt cannot fire whether the bug is present or not). If a
   check here goes green suspiciously easily, suspect these first.
 - Docker orchestration is shared with `test:imap` in `scripts/greenmail.mjs`;
   each runner brings its own container name and host ports.

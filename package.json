@@ -21,7 +21,7 @@
     "postinstall": "electron-builder install-app-deps && bash scripts/install-electron.sh",
     "test:imap": "node scripts/imap-integration.mjs",
     "test:store": "node scripts/store-race.mjs",
-    "test:send-e2e": "npm run build && node scripts/send-e2e.mjs",
+    "test:e2e": "npm run build && node scripts/e2e.mjs",
     "ui:preview": "node scripts/ui-preview.mjs"
   },
   "dependencies": {
