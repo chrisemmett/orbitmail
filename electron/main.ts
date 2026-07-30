@@ -155,9 +155,30 @@ let composeWindow: BrowserWindow | null = null
 let composeSentAndClosing = false
 let lastNotificationAt = 0
 
+/**
+ * The main window if it is still there, null once it has gone.
+ *
+ * `mainWindow?.` is not enough on its own: a destroyed BrowserWindow is not
+ * null, so the optional chain passes and the call throws "Object has been
+ * destroyed". Nulling the reference in `closed` does not cover it either,
+ * because a compose window is created with `parent: mainWindow` and its own
+ * `closed` handler runs *before* the parent's — so anything firing from a
+ * window or sync callback has to ask whether the window is alive, not just
+ * whether it exists.
+ */
+function liveMainWindow(): BrowserWindow | null {
+  if (!mainWindow || mainWindow.isDestroyed()) return null
+  // The webContents goes *before* the window reports itself destroyed, so a
+  // window-level check alone still let `webContents.send` throw — that was the
+  // object in "Object has been destroyed", not the window.
+  if (mainWindow.webContents.isDestroyed()) return null
+  return mainWindow
+}
+
 function notifyMessagesUpdated(): void {
-  updateAppBadge(mainWindow)
-  mainWindow?.webContents.send('sync:messagesUpdated')
+  const win = liveMainWindow()
+  updateAppBadge(win)
+  win?.webContents.send('sync:messagesUpdated')
 }
 
 // Told once per run, so a repeating background fault cannot spam the user.
@@ -447,10 +468,14 @@ function handleMailtoArgv(argv: string[]): boolean {
 }
 
 function focusMainWindow(): void {
-  if (!mainWindow) return
-  if (mainWindow.isMinimized()) mainWindow.restore()
-  mainWindow.show()
-  mainWindow.focus()
+  // Reached from `second-instance` and the mailto handler, either of which can
+  // arrive after the window has gone (a compose window keeps the app alive), so
+  // this needs the live check rather than a null one.
+  const win = liveMainWindow()
+  if (!win) return
+  if (win.isMinimized()) win.restore()
+  win.show()
+  win.focus()
 }
 
 function configureMailtoProtocolClient(enabled: boolean): void {
@@ -490,6 +515,20 @@ function createMainWindow(): void {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow?.show()
+  })
+
+  // The reference has to go when the window does, the way composeWindow's does.
+  // Every `mainWindow?.…` here guards against null, not against a *destroyed*
+  // window — and a destroyed BrowserWindow is not null, so those guards passed
+  // and the call threw "Object has been destroyed". A compose window is created
+  // with `parent: mainWindow`, so closing the main window destroys the composer
+  // too, and the composer's own `closed` handler then calls
+  // notifyMessagesUpdated() — badge, title and a send to the renderer, all on
+  // the window that has just gone. The two places that already checked
+  // isDestroyed() by hand (the quit flush, reportUnexpectedError) were working
+  // around the missing null.
+  mainWindow.on('closed', () => {
+    mainWindow = null
   })
 
   // DIAGNOSTIC (dev only): surface renderer console (incl. [renderer-lag] and
@@ -646,7 +685,7 @@ async function createComposeWindow(payload?: Partial<ComposePayload>): Promise<v
       const account = listAccounts().find(
         (a) => a.id === getDraftPayload(draftId)?.payload.accountId
       )
-      mainWindow?.webContents.send(
+      liveMainWindow()?.webContents.send(
         'app:toast',
         account ? `Draft saved in ${account.email} → Drafts` : 'Draft saved'
       )
@@ -1504,7 +1543,7 @@ if (!gotSingleInstanceLock) {
     })
 
     setOnNewMailArrived((count) => {
-      updateAppBadge(mainWindow)
+      updateAppBadge(liveMainWindow())
       showNewMailNotification(count)
     })
 
@@ -1514,11 +1553,12 @@ if (!gotSingleInstanceLock) {
     })
 
     onSyncStatusChange((status: SyncStatus) => {
-      if (mainWindow) {
-        mainWindow.webContents.send('sync:status', status)
+      const win = liveMainWindow()
+      if (win) {
+        win.webContents.send('sync:status', status)
       }
       if (!status.syncing) {
-        updateAppBadge(mainWindow)
+        updateAppBadge(win)
       }
     })
 
@@ -1547,8 +1587,8 @@ if (!gotSingleInstanceLock) {
     initSyncFromPersistence()
     createMainWindow()
     // Tray before the first badge update, so that update paints the count.
-    initTray(() => mainWindow)
-    updateAppBadge(mainWindow)
+    initTray(() => liveMainWindow())
+    updateAppBadge(liveMainWindow())
     configureMailtoProtocolClient(getAppState().handleMailtoLinks === true)
     handleMailtoArgv(process.argv)
 

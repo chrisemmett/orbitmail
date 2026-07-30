@@ -295,6 +295,23 @@ the control, and the README says so.
   calls `focusMainWindow()`, so re-launching Orbit Mail un-hides the window.
   There is no toggle yet — no general settings dialog exists to host one.
 
+  **A destroyed window is not null, so `mainWindow?.` is not a guard.** Anything
+  that fires from a window or sync callback reads the window through
+  `liveMainWindow()`, which returns null once the window *or its webContents* has
+  gone. Both halves are load-bearing: the webContents is destroyed **before** the
+  window reports `isDestroyed()`, so a window-level check alone still let
+  `webContents.send` throw. What made this reachable is that a compose window is
+  created with `parent: mainWindow` — closing the main window destroys the
+  composer too, and the composer's own `closed` handler calls
+  `notifyMessagesUpdated()`, i.e. badge, title and a send, all aimed at the
+  window that has just gone. With close-to-tray off (or no tray at all) that
+  threw `TypeError: Object has been destroyed` from `updateAppBadge`, twice, on
+  the way out. Nulling `mainWindow` in its own `closed` handler does **not** fix
+  it on its own — the child's `closed` runs first — though the reference is
+  nulled there anyway, so the `?? undefined` fallbacks elsewhere behave. The two
+  places that already hand-checked `isDestroyed()` (the quit flush,
+  `reportUnexpectedError`) were working around the same missing guard.
+
   Attribution depends on `StartupWMClass` matching the window's real `WM_CLASS`,
   which Chromium derives from the name `main.ts` passes to `app.setName()` on
   Linux: **`Orbit Mail`**, not the package name. It read `orbit-mail` in both the

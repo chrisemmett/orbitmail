@@ -2179,6 +2179,23 @@ async function main(): Promise<void> {
       `close handler source ${closeHandler.length} chars`)
     ok('and the mark is cleared once the window is gone',
       /composeWindow\.on\('closed'[\s\S]*?composeSentAndClosing = false/.test(mainSource))
+
+    // A destroyed BrowserWindow is not null, so `mainWindow?.` passes and the
+    // call throws. Closing the main window destroys the compose window with it
+    // (`parent: mainWindow`), and the composer's `closed` handler then aimed
+    // notifyMessagesUpdated() — badge, title, send — at the window that had just
+    // gone. Windows cannot be driven from this suite, so the guard is pinned
+    // here: it must exist, cover the webContents (destroyed *before* the window
+    // reports it), and be what notifyMessagesUpdated reads.
+    const live = mainSource.match(/function liveMainWindow\(\)[\s\S]*?\n\}/)?.[0] ?? ''
+    ok('liveMainWindow checks the window and its webContents',
+      /mainWindow\.isDestroyed\(\)/.test(live) &&
+        /mainWindow\.webContents\.isDestroyed\(\)/.test(live),
+      live.replace(/\s+/g, ' ') || 'liveMainWindow not found')
+    const notify = mainSource.match(/function notifyMessagesUpdated\(\)[\s\S]*?\n\}/)?.[0] ?? ''
+    ok('notifyMessagesUpdated goes through it rather than the raw reference',
+      /liveMainWindow\(\)/.test(notify) && !/\bmainWindow\b/.test(notify),
+      notify.replace(/\s+/g, ' '))
   }
 
   // -------------------------------------------------------------------------
