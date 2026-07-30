@@ -319,6 +319,33 @@ the control, and the README says so.
   Linux: **`Orbit Mail`**, not the package name. It read `orbit-mail` in both the
   dev launcher and the packaged entry, so no desktop could tie the window to the
   entry. `npm run test:imap` now checks all three agree.
+
+  **electron-builder warns about `desktopName` on every build; that warning is
+  expected here, and acting on it naively would break this.** It fires whenever
+  `desktopName` is absent from `package.json`, without checking whether the
+  association actually works — and on X11 it does. Measured against the packaged
+  0.5.1 build with `xprop`: the main window's `WM_CLASS` is
+  `"orbit mail", "Orbit Mail"`, and the shipped `orbit-mail.desktop` says
+  `StartupWMClass=Orbit Mail`, so they match. (The second X window, class
+  `orbit-mail`, is the tray icon, which is not what a desktop associates.)
+
+  The trap is in what the option does: electron-builder derives the
+  `StartupWMClass` it writes from `desktopName` minus the `.desktop` suffix,
+  falling back to `productName`. Setting `desktopName: "orbit-mail.desktop"` and
+  dropping the explicit `StartupWMClass` — which is what the warning's docs
+  suggest — would write `orbit-mail` while the app still announces `Orbit Mail`,
+  reintroducing exactly the mismatch that once left the badge with no icon to
+  land on. The `test:imap` check above catches that combination, so try it there
+  before believing it. `syncDesktopName` only affects the installed `.desktop`
+  *filename*, which is already `orbit-mail.desktop` via `executableName` and is
+  hardcoded as `LINUX_DESKTOP_ENTRY_ID` for the launcher badge; changing it would
+  break that too.
+
+  **What is genuinely untested is native Wayland**, where a compositor matches on
+  `app_id` rather than `WM_CLASS`. Electron runs under XWayland unless started
+  with an Ozone Wayland flag, so the X11 path above is what most sessions get,
+  but nobody has checked the native-Wayland case — this machine is X11-only, so it
+  could not be checked here rather than being deemed fine.
 - **Folder roles** — a folder's `type` (inbox/sent/drafts/trash/junk) decides where
   Delete, Archive and Junk send mail, so getting it wrong silently breaks delete.
   It is resolved per account by `detectFolderTypes` (`imap-sync.ts`), which ranks
