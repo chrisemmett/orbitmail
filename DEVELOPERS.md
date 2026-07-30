@@ -838,6 +838,38 @@ Things that are load-bearing:
   `heads.length === 0` early return, or a Drafts folder holding only local
   drafts renders empty in threaded view while the flat list shows them.
 
+### Bcc, and the two copies of a sent message
+
+A sent message exists twice, and Bcc has to be handled in opposite directions in
+each. **What is transmitted must not carry a `Bcc` header** — the SMTP envelope
+is what routes the mail, and a header would disclose the blind-copied recipients
+to everyone else on the message. **What is filed in `Sent` must carry it**, or the
+sender has no way to tell afterwards who they blind-copied; every mainstream
+client keeps it there.
+
+nodemailer strips `Bcc` while building, and `keepBcc` on the compiled MimeNode is
+how its own stream/JSON transports keep it — so `sendMail` builds the filed copy a
+second time with that set, and only when there actually is a Bcc (otherwise the
+two builds would differ in nothing but MIME boundaries, at the cost of composing
+every attachment twice).
+
+**The `messageId` is pinned by us** (`<uuid@from-domain>`) rather than left to
+nodemailer, which mints one per compile. Two builds with two Message-IDs would
+thread separately and defeat the label dedupe, which keys on `message_id`. That
+pinning is load-bearing, not tidiness — the suite asserts the filed and delivered
+copies share one.
+
+This applies to the copy *Orbit Mail* files, which is manual IMAP accounts only:
+Gmail files SMTP-submitted mail itself, so appending would leave two copies, and
+O365's behaviour here is governed by `MessageCopyForSMTPClientSubmissionEnabled`
+and remains unverified (TODO.md).
+
+A note on how this is tested, since it was nearly tested wrongly: the privacy
+half must be asserted against the **delivered** copy, not the filed one. The check
+originally read `Sent` for it, which was only ever a proxy — the same bytes went
+to both places — and would have quietly passed while the transmitted message
+leaked.
+
 ### Forwarding
 
 `buildReplyPayload` (`smtp-send.ts`) produces only the *body* of a forward — the
@@ -1223,7 +1255,7 @@ reimplementing them, so it exercises the shipping code paths:
 | UIDVALIDITY | After a validity reset the cache is *rebuilt to its previous size*, not truncated to one batch, with no duplicate rows. |
 | IDLE | Push works, survives a full server restart, and resumes afterwards. |
 | Responsiveness | A mark-read issued while a flag reconcile is in flight is not stuck behind the whole pass — `imap-pool` serializes per account, so anything holding the lane across every folder blocks user actions. |
-| Send | SMTP submission succeeds; the message is filed in `Sent` exactly once, shares its Message-ID with the delivered copy, and does not carry `Bcc` in its headers. |
+| Send | SMTP submission succeeds; the message is filed in `Sent` exactly once and shares its Message-ID with the delivered copy; the **delivered** copy carries no `Bcc` header, while the **filed** copy does. |
 | Attachments | Two parts sharing a filename get distinct cache paths **and** distinct content — the second used to overwrite the first on disk *and* resolve to the first MIME part, so it was never downloaded. Also that executable extensions are classified for the open-warning, and ordinary documents are not. |
 | OAuth config | Credentials resolve environment-first, fall back to values entered in the app, and the status payload never carries a value back to the renderer. Plus the rule-5 guards: no OAuth constants in the build config, no placeholders in the bundle, and no `.env` value present in `out/main/index.js`. |
 | Tray icon | The count→icon mapping: nothing unread shows the plain icon, single digits show that number, ten or more collapses to `9+`, a fractional count floors instead of naming a file that does not exist, and junk (negative, `NaN`) falls back to the plain icon. Every file the mapping can name is checked to exist in `build/icons/tray/`, and the tooltip keeps the exact number past nine, singular at one. |

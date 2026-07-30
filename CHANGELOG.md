@@ -7,6 +7,16 @@ which keeps decisions rather than just tasks.
 Versions follow [semantic versioning](https://semver.org/). Before 1.0 the minor
 number moves for anything substantial.
 
+## Unreleased
+
+### Writing mail
+
+- **The copy of a sent message in Sent now shows who you blind-copied.** Bcc is
+  still kept out of what is actually sent — putting it there would tell every
+  other recipient who was blind-copied — but your own filed copy records it, the
+  way other mail clients do. Applies to IMAP accounts, where Orbit Mail files the
+  Sent copy itself; Gmail files its own.
+
 ## 0.5.1 — 2026-07-30
 
 Mostly fixes, including one that affected the 0.5.0 downloads themselves.
