@@ -7,9 +7,9 @@ which keeps decisions rather than just tasks.
 Versions follow [semantic versioning](https://semver.org/). Before 1.0 the minor
 number moves for anything substantial.
 
-## Unreleased
+## 0.5.1 — 2026-07-30
 
-Landed since 0.5.0, not released yet.
+Mostly fixes, including one that affected the 0.5.0 downloads themselves.
 
 ### AI (optional, and off unless you add your own key)
 
