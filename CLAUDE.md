@@ -186,5 +186,23 @@ unchanged, and the app failed at runtime with "No handler registered".
 
 ## Working conventions
 
-- Branch from `main` per task; verify with `npm run build`; commit and open a PR/merge when asked (don't fuss over cosmetics).
+- Branch from `main` per task; commit and open a PR/merge when asked (don't fuss over cosmetics).
 - The renderer uses optimistic UI (read/star/flag/move/delete patch the list immediately and roll back on IPC failure — `patchMessageInList` in `mailStore.ts`). Preserve that pattern when adding message actions.
+
+**Before committing**, in order — and **say which of these you ran and which you
+did not**, because "verified" with no list has meant `build` alone more than once:
+
+1. `npm run build` — always. It is the gate; nothing else substitutes for it.
+2. `npm run test:store` — if you touched `src/stores/` or `RecipientInput.tsx`. ~1s.
+3. `npm run test:imap` — if you touched `electron/`, the IPC contract, the schema,
+   or any doc it checks. Also the honest default when you are unsure: it is what
+   CI will run anyway, so finding out now is cheaper.
+4. `npm run test:e2e` — if you touched the **compose or send path**, or anything
+   **window-lifecycle** (a `close` handler, a parent/child relationship, a
+   `BrowserWindow` reference held across time). This is the only check that drives
+   real windows, and CI *cannot* run it — so if you skip it there, nothing catches
+   it later. Needs a display and opens windows for a few seconds.
+5. Docs in the same commit (rule 6), and grep for the claim you are replacing.
+
+A new check earns its place here only if it fails on the unfixed code. Both of the
+current e2e suites were confirmed that way — see their TODO.md entries.
