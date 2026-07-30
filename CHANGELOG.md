@@ -7,6 +7,37 @@ which keeps decisions rather than just tasks.
 Versions follow [semantic versioning](https://semver.org/). Before 1.0 the minor
 number moves for anything substantial.
 
+## Unreleased
+
+Landed since 0.5.0, not released yet.
+
+### AI (optional, and off unless you add your own key)
+
+- **Choose which model to use, and how hard it thinks**, in Settings → AI.
+  Previously both were fixed. A change applies to the next thing you ask for,
+  not the next time you start the app.
+- **Re-analyze all** re-runs the mailbox sweep over messages it has already read.
+  Results are cached — an email does not change, so nothing re-reads a message on
+  its own — which makes this the way to pick up a different model. It tells you
+  how many messages it will send and asks before starting.
+
+### Fixed
+
+- **Sending no longer asks whether to save the message as a draft.** It had been
+  asking about the message that had *just been sent*, and answering **Save draft**
+  then said a draft had been filed when none existed. Sending now simply closes
+  the window; closing it yourself still asks, as before.
+- **Settings → AI: the "API key" label no longer runs into the row above it**, so
+  it reads as its own field rather than part of the status line.
+
+### Installing
+
+- **Packaged files no longer have spaces in their names** — `orbit-mail-0.5.0-…`
+  rather than `Orbit Mail-0.5.0-…`. The 0.5.0 downloads were affected: GitHub
+  turns spaces into dots on upload, so the names on the release page matched
+  neither the files nor the published checksums. The install commands in the
+  README and INSTALL.md quoted the old name and found nothing; both are fixed.
+
 ## 0.5.0 — 2026-07-29
 
 The first release since the initial version. A month of work: everything below
