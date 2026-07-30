@@ -43,6 +43,7 @@ const PORTS = { imap: 3243, imaps: 4093, smtp: 3225 }
 
 const SUITES = [
   { name: 'send', entry: 'e2e-send.suite.ts' },
+  { name: 'signature', entry: 'e2e-signature.suite.ts' },
   { name: 'window', entry: 'e2e-window.suite.ts' }
 ]
 

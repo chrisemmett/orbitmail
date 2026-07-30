@@ -887,6 +887,10 @@ function registerIpc(): void {
     setAccountSignature(accountId, signature)
   })
 
+  ipcMain.handle('accounts:getSignature', (_, accountId: string) =>
+    getAccountSignature(accountId)
+  )
+
   ipcMain.handle('accounts:getManualSettings', (_, accountId: string) => {
     const account = getAccountById(accountId)
     if (!account || (account.provider !== 'imap' && account.provider !== 'pop3')) return null

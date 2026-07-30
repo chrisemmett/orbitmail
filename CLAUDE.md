@@ -116,17 +116,19 @@ The larger one is `npm run test:imap` — a growing suite of checks against a re
 
 `npm run test:e2e` — end-to-end **through real windows**, the one thing
 `test:imap` structurally cannot reach: it is windowless, so a `close` handler, the
-draft flush and parent/child destroy order are invisible to it. Both suites import
+draft flush and parent/child destroy order are invisible to it. Each suite imports
 `electron/main.ts` whole and run in their own Electron process. **send** drives
 `drafts.open` → the composer → a click on the real Send button → GreenMail, then
 checks the draft is deleted, the message is in Sent, the recipient got it, and the
-window closed without a save-as-draft prompt. **window** closes the main window
+window closed without a save-as-draft prompt. **signature** types into a composer
+and switches the From account across three accounts, checking the signature block
+is swapped, removed and re-appended without eating what was typed. **window** closes the main window
 with a composer open and asserts nothing throws — the `liveMainWindow()`
 regression, where the composer is a child, so closing the parent destroys both and
-the child's `closed` handler fires at a window that has gone. Both also assert
+the child's `closed` handler fires at a window that has gone. All three also assert
 **nothing threw**. Needs Docker *and* a display (headless Ozone segfaults on the
 first window), so it is **not in CI** — run it after touching the compose/send
-path or anything window-lifecycle. Windows appear on screen for a few seconds.
+path, signatures, or anything window-lifecycle. Windows appear on screen for a few seconds.
 Read the traps in DEVELOPERS.md → End-to-end first: the send suite has twice
 passed while proving nothing, once from picking windows by index and once from a
 composer that never loaded its draft. When you report a check, say which of the

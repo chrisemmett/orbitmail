@@ -17,6 +17,7 @@ import { RichTextEditor } from './RichTextEditor'
 import { RecipientInput } from './RecipientInput'
 import { formatBytes } from '../../utils/format'
 import { joinBodyWithQuote } from '../../utils/composeBody'
+import { SIGNATURE_CLASS, signatureAppendix } from '../../../shared/signature'
 
 const emptyPayload = (accountId: string): ComposePayload => ({
   accountId,
@@ -72,6 +73,9 @@ export function ComposeWindow() {
   // The editable quote's DOM node. It is uncontrolled like the body editor, so
   // its current content is read out of the DOM rather than mirrored in state.
   const quoteElementRef = useRef<HTMLDivElement | null>(null)
+  // The body editor's own node, needed to swap the signature block in place when
+  // the From account changes — see swapSignature.
+  const editorElementRef = useRef<HTMLDivElement | null>(null)
   const attachmentsRef = useRef<AttachmentDraft[]>([])
   payloadRef.current = payload
   quotedRef.current = quoted
@@ -224,6 +228,82 @@ export function ComposeWindow() {
     scheduleDraftSave()
   }
 
+  /**
+   * Take the blank line before the signature with the signature.
+   *
+   * The separator is deliberately outside the block (see shared/signature.ts), so
+   * removing the block on its own leaves the `<br><br>` behind — and appending a
+   * signature again adds another pair. Switching From back and forth then grows a
+   * stack of blank lines above the signature.
+   */
+  const dropSeparatorBefore = (node: Element): void => {
+    let removedBreaks = 0
+    let prev = node.previousSibling
+    while (prev && removedBreaks < 2) {
+      const isBreak = prev.nodeName === 'BR'
+      const isBlankText = prev.nodeType === Node.TEXT_NODE && !prev.textContent?.trim()
+      if (!isBreak && !isBlankText) break
+      const doomed = prev
+      prev = prev.previousSibling
+      if (isBreak) removedBreaks++
+      ;(doomed as ChildNode).remove()
+    }
+  }
+
+  /**
+   * Replace the signature block with the newly chosen account's, in place.
+   *
+   * Done to the DOM rather than through state because the body editor is
+   * uncontrolled: re-rendering it means remounting it (the `editorSeq` key),
+   * which would throw away everything typed so far. So this edits around the
+   * user, leaving their text and the caret alone.
+   *
+   * The three cases, all of them reachable:
+   * - a block is there and the new account has a signature → swap its contents
+   * - a block is there and the new account has none → remove it
+   * - no block (an account with no signature composed this, or the user deleted
+   *   it) and the new account has one → append one
+   *
+   * A signature the user has *edited* is still replaced, which is what swapping
+   * means and what other clients do — the block is marked as the signature, not
+   * as prose. Sanitized on the way in even though it was sanitized when saved:
+   * this is an innerHTML sink in a window carrying the full preload, and the
+   * stored value came from a different process.
+   */
+  const swapSignature = async (accountId: string): Promise<void> => {
+    const el = editorElementRef.current
+    if (!el) return
+
+    let signature = ''
+    try {
+      signature = await window.orbitMail.accounts.getSignature(accountId)
+    } catch {
+      // A signature that cannot be read is not worth failing a compose over; the
+      // previous one stays, which is the pre-existing behaviour.
+      return
+    }
+
+    const existing = el.querySelector(`.${SIGNATURE_CLASS}`)
+    const clean = signature.trim() ? sanitizeEmailHtml(signature) ?? '' : ''
+
+    if (existing && clean) {
+      existing.innerHTML = clean
+    } else if (existing) {
+      dropSeparatorBefore(existing)
+      existing.remove()
+    } else if (clean) {
+      el.insertAdjacentHTML('beforeend', signatureAppendix(clean))
+    } else {
+      return
+    }
+
+    // The editor only reports changes the user makes, so mirror the new content
+    // into the refs the send and the autosave read.
+    bodyHtmlRef.current = el.innerHTML
+    bodyTextRef.current = el.innerText
+    scheduleDraftSave()
+  }
+
   const addDrafts = (drafts: AttachmentDraft[]) => {
     if (drafts.length === 0) return
     scheduleDraftSave()
@@ -353,7 +433,10 @@ export function ComposeWindow() {
         <select
           className="compose-input"
           value={payload.accountId}
-          onChange={(e) => update({ accountId: e.target.value })}
+          onChange={(e) => {
+            update({ accountId: e.target.value })
+            void swapSignature(e.target.value)
+          }}
         >
           {displayAccounts.map((a) => (
             <option key={a.id} value={a.id}>
@@ -425,6 +508,9 @@ export function ComposeWindow() {
           initialHtml={payload.bodyHtml}
           placeholder="Write your message…"
           onImageRejected={setToast}
+          onElement={(el) => {
+            editorElementRef.current = el
+          }}
           onChange={(html, text) => {
             bodyHtmlRef.current = html
             bodyTextRef.current = text
