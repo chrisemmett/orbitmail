@@ -246,9 +246,44 @@ the control, and the README says so.
   `logout()`: the client is already unusable, so a polite LOGOUT has nobody to
   talk to and could hang the lane on a dead socket.
 - **Connection pool** — one reused IMAP client per account (`imap-pool.ts`) with a
-  per-account operation mutex and 30s idle-close, so a batch of server ops shares a
-  single connection instead of reconnecting each time. Kept separate from the IDLE
-  monitor's persistent client.
+  per-account operation mutex and a **five-minute** idle-close, so a batch of
+  server ops shares a single connection instead of reconnecting each time. Kept
+  separate from the IDLE monitor's persistent client.
+
+  **Why five minutes, and what it costs.** A cold open measured **~130ms against
+  loopback with no TLS** — the floor, since a real server adds TCP, TLS and auth
+  round trips and Gmail adds a token refresh when the access token has expired —
+  against ~1ms on a warm client. At 30s, any interaction after a half-minute pause
+  paid that. The trade is connections: two per account, well inside Gmail's limit
+  of 15.
+
+  **A longer idle needs the staleness probe, and the two shipped together.** A
+  connection can die with neither end noticing — a NAT or firewall dropping it
+  without a FIN leaves `usable === true` and a socket that answers nothing — and
+  the next real operation then hangs until imapflow's 300s socket timeout and
+  fails, on whatever the user just clicked. So a client idle longer than
+  `probeAfterMs` (60s) is checked with a **NOOP** before use, bounded at 3s, and
+  replaced if it does not answer.
+
+  Three details that are load-bearing rather than incidental:
+
+  - **The probe is a NOOP, and nothing retries `fn`.** Half of what goes through
+    this pool is a mutation — move, delete, append — and re-running one that had
+    in fact reached the server would apply it twice. A probe is idempotent; an
+    arbitrary retry is not.
+  - **`logout()` is bounded too** (`LOGOUT_TIMEOUT_MS`, then `close()`). The
+    polite close waits for a server response a dead connection never sends; it was
+    measured hanging for 300s with the caller's click waiting behind it.
+  - **The idle comparison is `>=`, not `>`.** With `>`, a threshold of zero — what
+    the test hook sets — skipped the probe whenever two operations landed in the
+    same millisecond. That surfaced as a check failing one run in three, hanging
+    for the full 300s on the very operation the probe exists to protect.
+
+  Tested against a TCP proxy that stops forwarding on an established connection
+  while holding both sockets open, which is a half-open socket and cannot be
+  simulated by closing anything. Blackholing the whole proxy instead of the single
+  connection makes the test unpassable, because the recovery path needs to be able
+  to open a new one.
 - **Batched writes** — each folder's fetched messages upsert in one transaction.
   Only attachment *metadata* is buffered across the batch, not the parsed content
   `Buffer`s: each message is reduced via `toAttachmentMeta` as it is parsed, so a
