@@ -3316,24 +3316,37 @@ async function main(): Promise<void> {
       !!sentMessageId && sentMessageId === deliveredMessageId,
       `sent=${sentMessageId} delivered=${deliveredMessageId}`)
 
-    // The message is built by hand now, so guard the privacy property that
-    // nodemailer normally owns: Bcc belongs in the SMTP envelope, never in the
-    // headers, or every recipient learns who was blind-copied.
-    const sentLock = await client.getMailboxLock('Sent')
-    let sentSource = ''
-    try {
-      for await (const msg of client.fetch({ all: true }, { source: true, envelope: true })) {
-        if (msg.envelope?.subject === 'Integration send') {
-          sentSource = msg.source?.toString('utf8') ?? ''
+    // Bcc pulls in two directions, and the two copies are now built separately
+    // to satisfy both. What is *delivered* must not name the blind-copied
+    // recipient — the envelope routes the mail, and a Bcc header would disclose
+    // them to everyone else on it. What is *filed* must, or the sender cannot
+    // tell afterwards who they blind-copied.
+    //
+    // This check used to read the Sent copy for the privacy half, which was only
+    // ever a proxy: the same bytes went to both places. It reads the delivered
+    // copy now, which is the thing the property is actually about.
+    const sourceBySubject = async (mailbox: string, subject: string): Promise<string> => {
+      const lock = await client.getMailboxLock(mailbox)
+      try {
+        for await (const msg of client.fetch({ all: true }, { source: true, envelope: true })) {
+          if (msg.envelope?.subject === subject) return msg.source?.toString('utf8') ?? ''
         }
+        return ''
+      } finally {
+        lock.release()
       }
-    } finally {
-      sentLock.release()
     }
-    const headerBlock = sentSource.split('\r\n\r\n')[0] ?? ''
-    ok('Bcc is not written into the message headers',
-      headerBlock.length > 0 && !/^bcc:/im.test(headerBlock),
-      /^bcc:/im.test(headerBlock) ? 'LEAKED' : 'absent, as it should be')
+    const headersOf = (source: string): string => source.split('\r\n\r\n')[0] ?? ''
+
+    const delivered = headersOf(await sourceBySubject('INBOX', 'Integration send'))
+    ok('Bcc is not written into the headers of what is delivered',
+      delivered.length > 0 && !/^bcc:/im.test(delivered),
+      /^bcc:/im.test(delivered) ? 'LEAKED to the recipient' : 'absent, as it should be')
+
+    const filed = headersOf(await sourceBySubject('Sent', 'Integration send'))
+    ok('the copy filed in Sent records who was blind-copied',
+      /^bcc:\s*hidden@example\.com\s*$/im.test(filed),
+      filed.match(/^bcc:.*$/im)?.[0] ?? 'no Bcc header on the filed copy')
 
     await client.logout()
   }

@@ -122,11 +122,17 @@ export async function sendMail(
   // Images pasted into the body ride as their own MIME parts, not as data: URIs
   // (which most clients strip on receipt).
   const inline = extractInlineImages(payload.bodyHtml)
+  // Pinned rather than left to nodemailer, which mints one per compile: when a
+  // Bcc'd message is built twice (see below) the two builds must carry the *same*
+  // Message-ID, or the filed copy threads separately from the delivered one and
+  // the label dedupe stops recognising them as one message.
+  const messageId = `<${randomUUID()}@${fromAddress.split('@')[1] ?? 'localhost'}>`
   const mailOptions: Mail.Options = {
     from: fromAddress,
     to: payload.to,
     cc: payload.cc,
     bcc: payload.bcc,
+    messageId,
     subject: payload.subject,
     text: payload.bodyText,
     html: inline.html,
@@ -157,15 +163,40 @@ export async function sendMail(
   if (attachments.length > 0) mailOptions.attachments = attachments
 
   // Build the MIME message up front rather than letting sendMail do it, so the
-  // copy filed in Sent is byte-identical to what went out — same Message-ID,
-  // same boundaries. `info.message` used to be read for this, but the SMTP
-  // transport never sets it (only the stream/JSON transports do), so the append
-  // below was unreachable and manual IMAP accounts kept no record of sent mail.
+  // copy filed in Sent is the same message that went out, with the same
+  // Message-ID. `info.message` used to be read for this, but the SMTP transport
+  // never sets it (only the stream/JSON transports do), so the append below was
+  // unreachable and manual IMAP accounts kept no record of sent mail.
+  const buildMime = (node: ReturnType<MailComposer['compile']>): Promise<Buffer> =>
+    new Promise((resolve, reject) => {
+      node.build((err, message) => (err ? reject(err) : resolve(message)))
+    })
+
   const composed = new MailComposer(mailOptions).compile()
   const envelope = composed.getEnvelope()
-  const raw: Buffer = await new Promise((resolve, reject) => {
-    composed.build((err, message) => (err ? reject(err) : resolve(message)))
-  })
+  const raw = await buildMime(composed)
+
+  /**
+   * The message as it should be *filed*, which is not the message that goes out.
+   *
+   * Bcc must not appear in the transmitted headers — the envelope is what routes
+   * a message, and a Bcc header would disclose those recipients to everyone else
+   * on it. The copy in Sent is the opposite case: it is the user's own record of
+   * what they sent, and every mainstream client keeps Bcc there, so without it
+   * you cannot tell afterwards who was blind-copied.
+   *
+   * nodemailer strips Bcc while building, and `keepBcc` on the compiled node is
+   * how its own stream/JSON transports keep it — so the filed copy is a second
+   * build with that set. Only when there is actually a Bcc: otherwise the two
+   * builds would differ in nothing but their MIME boundaries, at the cost of
+   * composing every attachment twice.
+   */
+  const sentCopyOf = async (transmitted: Buffer): Promise<Buffer> => {
+    if (!payload.bcc?.trim()) return transmitted
+    const node = new MailComposer(mailOptions).compile()
+    node.keepBcc = true
+    return buildMime(node)
+  }
 
   try {
     await transport.sendMail({ raw, envelope })
@@ -196,7 +227,7 @@ export async function sendMail(
   // (O365 is not as consistent here — tracked in TODO.md rather than guessed at.)
   if (provider === 'imap') {
     try {
-      await appendToSentFolder(payload.accountId, provider, raw)
+      await appendToSentFolder(payload.accountId, provider, await sentCopyOf(raw))
     } catch (err) {
       // The message is already delivered; failing the send now would be a lie,
       // and would tempt the user into sending it a second time.
