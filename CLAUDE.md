@@ -97,7 +97,7 @@ Two habits that prevent the worst of it:
 
 - `npm run ui:preview` — serve the built renderer to a browser with the IPC bridge stubbed, so UI changes can be looked at where Electron will not start. Not a test; see the GUI note below.
 
-- `npm run test:send-e2e` — the send path end to end through real windows (Docker + a display; not in CI). See below.
+- `npm run test:e2e` — end-to-end suites through real windows: the send path, and window lifecycle (Docker + a display; not in CI). See below.
 
 There is **no unit-test framework and no linter** in this repo. Verification = `npm run build` passes, plus three test commands.
 
@@ -114,18 +114,23 @@ the same trick works for any pure renderer logic. Run it after touching
 
 The larger one is `npm run test:imap` — a growing suite of checks against a real GreenMail server in Docker, inside a windowless Electron main process (the DB needs `app.getPath`, and `better-sqlite3` is built for Electron's ABI). It covers the sync layer (STARTTLS, sync, UIDVALIDITY rebuild, IDLE reconnect, send, lane contention), the security controls (OAuth loopback `state`, credential handling, attachment classification), account-data hygiene (removal deletes AI tasks; freelist reclaim), and pure-logic invariants (launcher badge signal, IPC contract, docs-match-code). It runs in CI on every push. Run it locally after touching anything in `electron/services/`. Details in DEVELOPERS.md → Integration tests.
 
-`npm run test:send-e2e` — the send path end to end **through real windows**, the
-one thing `test:imap` structurally cannot reach: it is windowless, so the compose
-window's `close` handler and the draft flush are invisible to it. This imports
-`electron/main.ts` whole and drives `drafts.open` → the composer → a click on the
-real Send button → GreenMail, then checks the draft is deleted, the message is in
-Sent, the recipient got it, the window closed without a save-as-draft prompt, and
-that **nothing threw**. Needs Docker *and* a display (headless Ozone segfaults on
-the first window), so it is **not in CI** — run it after touching the compose or
-send path. Windows appear on screen for a few seconds. Read the traps in
-DEVELOPERS.md → Send end-to-end first: it has twice passed while proving nothing,
-once from picking windows by index and once from a composer that never loaded its
-draft. When you report a check, say which of the three you ran.
+`npm run test:e2e` — end-to-end **through real windows**, the one thing
+`test:imap` structurally cannot reach: it is windowless, so a `close` handler, the
+draft flush and parent/child destroy order are invisible to it. Both suites import
+`electron/main.ts` whole and run in their own Electron process. **send** drives
+`drafts.open` → the composer → a click on the real Send button → GreenMail, then
+checks the draft is deleted, the message is in Sent, the recipient got it, and the
+window closed without a save-as-draft prompt. **window** closes the main window
+with a composer open and asserts nothing throws — the `liveMainWindow()`
+regression, where the composer is a child, so closing the parent destroys both and
+the child's `closed` handler fires at a window that has gone. Both also assert
+**nothing threw**. Needs Docker *and* a display (headless Ozone segfaults on the
+first window), so it is **not in CI** — run it after touching the compose/send
+path or anything window-lifecycle. Windows appear on screen for a few seconds.
+Read the traps in DEVELOPERS.md → End-to-end first: the send suite has twice
+passed while proving nothing, once from picking windows by index and once from a
+composer that never loaded its draft. When you report a check, say which of the
+three commands you ran.
 
 **Do not treat `tsc -b` as a pass/fail gate.** The source does not cleanly pass a standalone `tsc -b` even on `main` (target/lib and third-party typing mismatches that esbuild transpiles past). Use `npm run build`.
 
@@ -136,7 +141,7 @@ draft. When you report a check, say which of the three you ran.
 - **Windowless main process** — `app.whenReady()` with no BrowserWindow, plus `app.disableHardwareAcceleration()` and `--no-sandbox`. Hosts the real DB layer, which is how `npm run test:imap` runs.
 - **Hidden `BrowserWindow({ show: false })`** — renders real pages; used to verify CSP enforcement, console errors, and whether React mounted. Attach `out/preload/index.js` or the renderer errors on missing IPC.
 - **`offscreen: true` hangs forever.** That is the thing that does not work, and what made "the GUI can't run" look absolute.
-- **A *visible* window works on the real display** with `--disable-gpu` — that is what `npm run test:send-e2e` uses, and it is how anything window-lifecycle (a `close` handler, a parent/child destroy order) can be tested at all. Headless Ozone segfaults on the first window instead, which is why that check cannot run in CI.
+- **A *visible* window works on the real display** with `--disable-gpu` — that is what `npm run test:e2e` uses, and it is how anything window-lifecycle (a `close` handler, a parent/child destroy order) can be tested at all. Headless Ozone segfaults on the first window instead, which is why those checks cannot run in CI.
 
 To inspect state, read the SQLite DB directly with `ELECTRON_RUN_AS_NODE=1`; DB lives at `~/.config/orbit-mail/data/orbit-mail.db`. **Copy the `-wal` file too** — the DB runs in WAL mode, so a copy of just the `.db` can be missing recent commits.
 
