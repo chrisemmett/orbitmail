@@ -939,6 +939,91 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Pool: a connection dropped without a FIN does not fail the next click')
+  // -------------------------------------------------------------------------
+  {
+    // The pooled client is held for five minutes now, which is worth ~130ms per
+    // interaction (measured against loopback with no TLS — a real server costs
+    // more) but exposes a connection that dies *silently*: a NAT or firewall
+    // dropping it without a FIN leaves imapflow with `usable === true` and a
+    // socket that answers nothing. Without a probe the user's next action hangs
+    // and then fails.
+    //
+    // Simulated with a TCP proxy that can be told to stop forwarding while
+    // holding both sockets open — which is precisely a half-open connection, and
+    // cannot be simulated by closing anything.
+    const net = await import('net')
+    const { randomUUID } = await import('crypto')
+
+    // Per *connection*, not per proxy: a NAT dropping one connection does not stop
+    // new ones being made, and blackholing the whole proxy would leave the pool
+    // unable to recover — which is a test that cannot pass, not a bug.
+    const pairs: Array<{ dead: boolean; destroy: () => void }> = []
+    const proxy = net.createServer((downstream) => {
+      const upstream = net.createConnection({ host: HOST, port: IMAP_PORT })
+      const pair = { dead: false, destroy: () => upstream.destroy() }
+      pairs.push(pair)
+      downstream.on('data', (chunk) => { if (!pair.dead) upstream.write(chunk) })
+      upstream.on('data', (chunk) => { if (!pair.dead) downstream.write(chunk) })
+      const bin = () => { /* keep both sockets open; swallow */ }
+      downstream.on('error', bin)
+      upstream.on('error', bin)
+      downstream.on('close', () => upstream.destroy())
+    })
+    await new Promise<void>((resolve) => proxy.listen(0, '127.0.0.1', () => resolve()))
+    const proxyPort = (proxy.address() as { port: number }).port
+
+    const proxied = db.saveManualAccount('imap', {
+      authType: 'password',
+      email: `pooled-${randomUUID()}@example.com`,
+      displayName: 'Pooled',
+      username: LOGIN,
+      password: PASSWORD,
+      incoming: { host: HOST, port: proxyPort, security: 'none' },
+      outgoing: { host: HOST, port: SMTP_PORT, security: 'none' }
+    })
+
+    const pool = await import('../electron/services/imap-pool')
+    const listMailboxes = (client: { list: () => Promise<unknown[]> }) => client.list()
+
+    // Warm the lane so the next call reuses the connection.
+    await pool.withImapClient(proxied.id, 'imap', listMailboxes as never)
+
+    // Every subsequent call now counts as "idle long enough to check".
+    pool.setProbeAfterMsForTests(0)
+
+    // The connection is alive: the probe costs a round trip and changes nothing.
+    const healthy = await pool.withImapClient(proxied.id, 'imap', listMailboxes as never)
+    ok('a live pooled connection still serves the operation',
+      Array.isArray(healthy) && healthy.length > 0, `${(healthy as unknown[]).length} mailboxes`)
+
+    // Now kill the connection the pool is holding, the way a NAT does: no FIN,
+    // no RST, just silence. Connections opened after this still work.
+    for (const pair of pairs) pair.dead = true
+
+    const started = Date.now()
+    let poolError: Error | null = null
+    let recovered: unknown = null
+    try {
+      recovered = await pool.withImapClient(proxied.id, 'imap', listMailboxes as never)
+    } catch (err) {
+      poolError = err as Error
+    }
+    const elapsed = Date.now() - started
+
+    ok('a half-open connection is replaced rather than surfacing an error',
+      poolError === null && Array.isArray(recovered) && (recovered as unknown[]).length > 0,
+      poolError?.message ?? `${(recovered as unknown[])?.length} mailboxes in ${elapsed}ms`)
+    ok('and the probe is bounded, so the click does not hang', elapsed < 10_000, `${elapsed}ms`)
+
+    pool.setProbeAfterMsForTests(60_000)
+    await pool.closeAccountPool(proxied.id)
+    db.removeAccount(proxied.id)
+    for (const pair of pairs) pair.destroy()
+    proxy.close()
+  }
+
+  // -------------------------------------------------------------------------
   section('POP3: an out-of-window message is read once, not on every poll')
   // -------------------------------------------------------------------------
   {

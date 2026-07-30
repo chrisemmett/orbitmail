@@ -16,6 +16,12 @@ number moves for anything substantial.
   new mail arrived for those accounts and the unread count never moved. IMAP,
   Gmail and Office 365 accounts were unaffected. If you use a POP3 account, this
   is the release to update to.
+- **Clicking something after a pause is quicker.** The connection to your mail
+  server is now kept for five minutes rather than thirty seconds, so marking,
+  moving or deleting mail after a short break no longer waits for a fresh login
+  first. If the connection has quietly died in the meantime — which happens on
+  home routers and hotel wifi — it is now detected and replaced instead of the
+  action failing.
 - **POP3 polls no longer re-read old messages.** Mail older than the sync window
   is not kept, but every poll — every twenty seconds — was still asking the server
   for its headers. It is now remembered as too old and left alone, so a mailbox
