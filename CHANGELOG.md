@@ -11,6 +11,12 @@ number moves for anything substantial.
 
 ### Writing mail
 
+- **Changing the From account now swaps the signature.** Previously it was chosen
+  when the composer opened and stayed put, so a message sent from a second account
+  went out with the first account's sign-off. What you have typed is left alone;
+  switching to an account with no signature removes the block. A signature you
+  have edited in the composer is replaced along with the rest of it.
+
 - **The copy of a sent message in Sent now shows who you blind-copied.** Bcc is
   still kept out of what is actually sent — putting it there would tell every
   other recipient who was blind-copied — but your own filed copy records it, the

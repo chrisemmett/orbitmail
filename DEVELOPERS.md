@@ -706,10 +706,36 @@ way.
   The content is the user's own typing in our own editor — the risk being managed
   is malformed markup reaching outgoing mail, not an attacker.
 
-**Not handled:** the signature is chosen when the composer opens. Changing the
-**From** account afterwards does not swap it — doing that means tracking which
-part of a contentEditable body is the signature and replacing it, and the pane
-says so rather than leaving it to be discovered.
+**Changing the From account swaps the signature**, which needs the signature to be
+findable: `appendSignature` wraps it in a `div.orbit-signature`
+(`SIGNATURE_CLASS`, `shared/signature.ts`, shared because main writes it, the
+composer looks for it and the suite asserts it). Unmarked, it is indistinguishable
+from anything else the user typed. Gmail does the same with `gmail_signature`. The
+marker travels in the sent message and the saved draft on purpose — a draft
+reopened tomorrow must still be swappable.
+
+`swapSignature` (`ComposeWindow.tsx`) fetches the new account's signature through
+`accounts:getSignature` — a channel that exists because `getInfo` also carries the
+signature but computes message counts, attachment stats and on-disk size to do it —
+then edits the **live DOM**: replace the block's contents, remove the block if the
+new account has no signature, or append one if there is no block (an account with
+no signature composed this, or the user deleted it). It cannot go through state:
+the body editor is uncontrolled, so re-rendering means remounting it via the
+`editorSeq` key, which would discard everything typed so far. A signature the user
+has *edited* is still replaced — the block is marked as the signature, not as
+prose — and the settings pane says so.
+
+Two placement traps, both of which this change hit and `e2e-signature.suite.ts`
+now asserts against:
+
+- **The `<br><br>` separator must stay *outside* the block.** Moving it inside
+  looks tidier, and on a new message the body is otherwise empty — so the block
+  becomes the editor's first child, focusing puts the caret inside it, and the
+  user types into their own signature. The next From switch then replaces the
+  block and deletes the message with it.
+- **Removing the block must take the separator with it** (`dropSeparatorBefore`),
+  or switching From back and forth grows a stack of blank lines: each removal
+  leaves a pair behind and each append adds another.
 
 ### Inline images in compose
 
@@ -1338,6 +1364,17 @@ draft → a click on the real **Send** button → `handleSend` → preload →
 synced → window closed with no save-as-draft prompt → the recipient's copy read
 back off IMAP. It also asserts nothing threw, which is how the destroyed-window
 bug below was found.
+
+**`e2e-signature.suite.ts` — the signature follows the From account.** Opens a
+composer, types into it, and switches From across three accounts (one with a
+signature, another with a different one, a third with none), asserting the block is
+swapped, removed and re-appended, that the typed text survives each, and that blank
+lines do not accumulate. End-to-end because the mechanism only exists end to end:
+main writes the marker, it has to survive DOMPurify in the renderer, and the
+composer then edits the live DOM. A unit test of any one of the three would pass
+with the feature broken — and the two real defects this caught (the caret opening
+*inside* the signature block, and the separator being left behind) were both
+invisible to everything else. No mail server needed.
 
 **`e2e-window.suite.ts` — window lifecycle.** Closes the main window with a
 composer open (`closeToTray` off, which is also how a desktop with no tray

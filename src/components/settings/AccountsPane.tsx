@@ -163,8 +163,8 @@ function SignatureSettings({
         </button>
       </div>
       <p className="account-hint">
-        A signature is added when the composer opens. Changing the From account after that does
-        not swap it.
+        A signature is added when the composer opens, and changing the From account swaps it —
+        including one you have edited, which is replaced along with the rest of the block.
       </p>
     </section>
   )

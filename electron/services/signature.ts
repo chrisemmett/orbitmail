@@ -1,4 +1,5 @@
 import type { ComposePayload } from '../../shared/types'
+import { signatureAppendix } from '../../shared/signature'
 
 /**
  * Append an account's signature to the editable body of a compose payload.
@@ -12,6 +13,11 @@ import type { ComposePayload } from '../../shared/types'
  * **Skipped when reopening a draft.** The signature was appended when that draft
  * was first composed and is part of its saved body; appending again on every
  * reopen would stack them, one copy per time the draft was opened.
+ *
+ * **Wrapped in `SIGNATURE_CLASS`** so the composer can find it again and replace
+ * it when the From account changes. Unmarked, it is indistinguishable from
+ * anything else in the body, and switching accounts could only leave the previous
+ * account's signature in place.
  */
 export function appendSignature(
   payload: Partial<ComposePayload>,
@@ -19,5 +25,5 @@ export function appendSignature(
 ): Partial<ComposePayload> {
   if (payload.draftId) return payload
   if (!signature.trim()) return payload
-  return { ...payload, bodyHtml: `${payload.bodyHtml ?? ''}<br><br>${signature}` }
+  return { ...payload, bodyHtml: `${payload.bodyHtml ?? ''}${signatureAppendix(signature)}` }
 }

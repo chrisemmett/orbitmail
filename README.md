@@ -58,8 +58,8 @@ messages and pull out what you still need to do.
   in webmail or on your phone.
 - **Signatures**, per account, set in Settings → Accounts. They can be formatted
   and can include a pasted logo, and are added to the end of what you write —
-  above the quoted text on a reply. Note the signature is chosen when the window
-  opens: switching the From account afterwards does not swap it.
+  above the quoted text on a reply. Changing the From account swaps the signature
+  for that account's, leaving what you have written alone.
 - **Paste or drop an image straight into the message** and it appears where your
   cursor is. Images are sent inside the message so they show up in the
   recipient's client rather than arriving as a download. Anything over 5MB is

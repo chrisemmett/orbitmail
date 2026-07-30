@@ -26,6 +26,7 @@ const api: OrbitMailAPI = {
       ipcRenderer.invoke('accounts:updateSyncDays', accountId, syncDays),
     updateSignature: (accountId: string, signature: string) =>
       ipcRenderer.invoke('accounts:updateSignature', accountId, signature),
+    getSignature: (accountId) => ipcRenderer.invoke('accounts:getSignature', accountId),
     getManualSettings: (accountId) =>
       ipcRenderer.invoke('accounts:getManualSettings', accountId),
     updateManualSettings: (accountId, update) =>

@@ -426,6 +426,15 @@ export interface OrbitMailAPI {
      */
     updateSignature: (accountId: string, signature: string) => Promise<void>
     /**
+     * The account's stored signature, empty string when it has none.
+     *
+     * Exists for the composer's From switch, which needs one account's signature
+     * and nothing else. `getInfo` also carries it, but computes message counts,
+     * attachment stats and on-disk size to do so — too much work for a select
+     * change, and none of it wanted.
+     */
+    getSignature: (accountId: string) => Promise<string>
+    /**
      * A manual account's server settings. Never includes the password — see
      * ManualAccountSettings. Null for OAuth accounts, which have none.
      */

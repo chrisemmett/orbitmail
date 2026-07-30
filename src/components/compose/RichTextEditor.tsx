@@ -22,6 +22,14 @@ interface RichTextEditorProps {
   placeholder?: string
   /** Told when an image was too large to inline, so the caller can say so. */
   onImageRejected?: (message: string) => void
+  /**
+   * Handed the editable element on mount, for the rare caller that has to edit
+   * the content *around* the user — the composer swapping the signature block
+   * when the From account changes. Remounting to do that (the `key` trick) would
+   * discard everything typed so far, and re-rendering from state is not available
+   * here: the DOM is the source of truth.
+   */
+  onElement?: (element: HTMLDivElement | null) => void
 }
 
 const BTN = { size: 16, weight: 'bold' as const }
@@ -50,7 +58,8 @@ export function RichTextEditor({
   initialHtml,
   onChange,
   placeholder,
-  onImageRejected
+  onImageRejected,
+  onElement
 }: RichTextEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null)
   const savedRange = useRef<Range | null>(null)
@@ -66,6 +75,8 @@ export function RichTextEditor({
     // is an untrusted-input sink in a window that carries the full preload.
     el.innerHTML = sanitizeEmailHtml(initialHtml) ?? ''
     setEmpty(el.innerText.trim().length === 0)
+    onElement?.(el)
+    return () => onElement?.(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
