@@ -1398,29 +1398,69 @@ export interface ThreadContextMessage {
   bodyHtml: string | null
 }
 
-// All messages in a conversation for an account (across folders), oldest first.
-// Lightweight projection for AI reply-draft grounding.
+/**
+ * All messages in a conversation for an account (across folders), oldest first.
+ *
+ * Lightweight projection — no attachments, no flags — for the AI features that
+ * need the conversation as *text*: reply drafting and thread analysis.
+ *
+ * **Matched and deduplicated exactly as `getThread` does**, and both halves are
+ * corrections rather than preferences. It used to match `thread_id` for equality,
+ * which silently dropped every message whose `thread_id` is NULL — a message is
+ * its own thread when it has no threading headers, so a one-message conversation
+ * returned *nothing*. And it did not deduplicate, so on Gmail — where a label is
+ * a folder and one email is stored once per label — an archived-and-starred
+ * message appeared three times in the context handed to the model.
+ *
+ * The dedupe is `GROUP BY` rather than a filter in JS so `limit` still yields
+ * that many *distinct* messages; deduplicating afterwards would silently return
+ * fewer than asked for, which is worse on the path where the limit is the token
+ * budget. Which row of a duplicate set survives does not matter: they are copies
+ * of one email.
+ *
+ * **When the limit bites it keeps the newest, and returns them oldest-first.**
+ * A plain `ORDER BY date LIMIT n` keeps the *oldest* n, which is the wrong end
+ * of a conversation for everything that calls this: `draftReply` asks the model
+ * for "a reply to the most recent message in this conversation", and on a thread
+ * longer than its cap it was handing over the twelve oldest — so the model never
+ * saw the message it was answering. Hence the inner query orders descending to
+ * choose, and the outer one restores reading order for the prompt.
+ */
 export function listThreadMessages(
   accountId: string,
   threadId: string,
   limit = 30
 ): ThreadContextMessage[] {
-  const db = getDb()
-  return db
-    .select({
-      id: messages.id,
-      from: messages.from,
-      to: messages.to,
-      subject: messages.subject,
-      date: messages.date,
-      bodyText: messages.bodyText,
-      bodyHtml: messages.bodyHtml
-    })
-    .from(messages)
-    .where(and(eq(messages.accountId, accountId), eq(messages.threadId, threadId)))
-    .orderBy(messages.date)
-    .limit(limit)
-    .all()
+  const rows = getRawSqlite()
+    .prepare(
+      `SELECT * FROM (
+         SELECT id, from_addr, to_addr, subject, date, body_text, body_html
+         FROM messages
+         WHERE account_id = ? AND COALESCE(thread_id, id) = ?
+         GROUP BY COALESCE(message_id, id)
+         ORDER BY date DESC, id DESC
+         LIMIT ?
+       ) ORDER BY date, id`
+    )
+    .all(accountId, threadId, limit) as Array<{
+    id: string
+    from_addr: string
+    to_addr: string
+    subject: string
+    date: number
+    body_text: string | null
+    body_html: string | null
+  }>
+
+  return rows.map((r) => ({
+    id: r.id,
+    from: r.from_addr,
+    to: r.to_addr,
+    subject: r.subject,
+    date: r.date,
+    bodyText: r.body_text,
+    bodyHtml: r.body_html
+  }))
 }
 
 export function getMessageAiAnalysis(

@@ -2834,6 +2834,94 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('AI: the conversation handed to the model is the whole conversation')
+  // -------------------------------------------------------------------------
+  {
+    // `listThreadMessages` is what grounds a reply draft in the thread, and it
+    // got the thread wrong in two ways at once. It matched `thread_id` for
+    // equality, so a message with no threading headers — which is its own
+    // thread, with a NULL `thread_id` — was invisible to it. And it did not
+    // deduplicate, so on Gmail, where one email is stored once per label, the
+    // same message was handed to the model several times over.
+    const { randomUUID } = await import('crypto')
+    const threadRaw = (await import('../electron/db')).getRawSqlite()
+
+    const threadAccount = db.saveManualAccount('imap', {
+      authType: 'password',
+      email: `threads-${randomUUID()}@example.com`,
+      displayName: 'Threads',
+      username: LOGIN,
+      password: PASSWORD,
+      incoming: { host: HOST, port: IMAP_PORT, security: 'none' },
+      outgoing: { host: HOST, port: SMTP_PORT, security: 'none' }
+    })
+    const inboxFolder = db.upsertFolder(threadAccount.id, 'INBOX', 'INBOX', 'inbox')
+    const archiveFolder = db.upsertFolder(threadAccount.id, 'Archive', 'Archive', 'custom')
+
+    const addMessage = (
+      id: string,
+      folderId: string,
+      uid: number,
+      messageId: string | null,
+      threadId: string | null,
+      date: number
+    ) =>
+      threadRaw
+        .prepare(
+          `INSERT INTO messages (id, folder_id, account_id, uid, message_id, thread_id,
+                                 from_addr, to_addr, subject, snippet, body_text, date)
+           VALUES (?, ?, ?, ?, ?, ?, 'them@example.com', 'me@example.com', 'Subject', 'snip', 'body', ?)`
+        )
+        .run(id, folderId, threadAccount.id, uid, messageId, threadId, date)
+
+    // A conversation of two emails, the second of which Gmail stores twice
+    // because it carries two labels.
+    addMessage('t-root', inboxFolder.id, 1, '<root@example.com>', 'thread-key', 1000)
+    addMessage('t-reply-inbox', inboxFolder.id, 2, '<reply@example.com>', 'thread-key', 2000)
+    addMessage('t-reply-archive', archiveFolder.id, 3, '<reply@example.com>', 'thread-key', 2000)
+
+    const conversation = db.listThreadMessages(threadAccount.id, 'thread-key')
+    ok('every message in the conversation is included',
+      conversation.length === 2, `${conversation.length} messages`)
+    ok('and a message stored once per label appears once',
+      new Set(conversation.map((m) => m.id)).size === conversation.length &&
+        conversation.filter((m) => m.id.startsWith('t-reply')).length === 1,
+      conversation.map((m) => m.id).join(', '))
+
+    // A message with no threading headers is its own conversation, and its
+    // thread_id is NULL — the case the old equality match dropped entirely.
+    addMessage('t-lonely', inboxFolder.id, 4, null, null, 3000)
+    const lonely = db.listThreadMessages(threadAccount.id, 't-lonely')
+    ok('a message that is its own thread is not invisible',
+      lonely.length === 1 && lonely[0].id === 't-lonely', `${lonely.length} messages`)
+
+    // The limit has to bound *distinct* messages: deduplicating after the fact
+    // would quietly return fewer than asked for, and this limit is a token
+    // budget on the AI path.
+    const oneOnly = db.listThreadMessages(threadAccount.id, 'thread-key', 1)
+    ok('the limit counts distinct messages, not stored rows',
+      oneOnly.length === 1, `${oneOnly.length} messages`)
+
+    // When the limit bites, it must keep the *newest* messages. This is a token
+    // budget on a conversation, and the whole point of a reply draft is the
+    // message being replied to — `draftReply`'s own prompt says "the most recent
+    // message in this conversation", so handing it the twelve oldest of forty
+    // means the model never sees what it is answering.
+    for (let i = 0; i < 20; i++) {
+      addMessage(`t-long-${i}`, inboxFolder.id, 100 + i, `<long-${i}@example.com>`, 'long-key', 10_000 + i)
+    }
+    const window = db.listThreadMessages(threadAccount.id, 'long-key', 5)
+    ok('when the limit bites it keeps the newest messages',
+      window.length === 5 && window[window.length - 1].id === 't-long-19',
+      window.map((m) => m.id).join(', '))
+    ok('and still hands them back oldest first',
+      window.every((m, i) => i === 0 || m.date >= window[i - 1].date),
+      window.map((m) => m.date).join(', '))
+
+    db.removeAccount(threadAccount.id)
+  }
+
+  // -------------------------------------------------------------------------
   section('Attachments: only files the user chose can be attached')
   // -------------------------------------------------------------------------
   {
