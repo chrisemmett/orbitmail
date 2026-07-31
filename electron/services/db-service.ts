@@ -1092,33 +1092,50 @@ export function countThreads(folderId: string | 'unified', unreadOnly = false): 
   return row.n
 }
 
-// The full conversation for a thread, across all folders in the account, oldest
-// first (received + Sent interleave). Deduplicated by Message-ID so Gmail's
-// per-label copies of the same email appear once.
+/**
+ * The full conversation for a thread, across all folders in the account, oldest
+ * first (received + Sent interleave). Deduplicated by Message-ID so Gmail's
+ * per-label copies of the same email appear once.
+ *
+ * **When the limit bites it keeps the newest, and both halves of that were
+ * wrong before.** It ordered ascending and limited, so a 250-message thread
+ * returned messages 1–200 and hid everything recent — and the reader takes
+ * `messages[length - 1]` as "the latest", which is what Reply, Reply All,
+ * Forward and Draft reply all target. So a reply went out against a mid-thread
+ * message: threaded under the wrong parent, and reply-all addressed to the
+ * recipients of a message from months ago rather than the current ones. That is
+ * mail sent to the wrong people, not a display quirk.
+ *
+ * The dedupe also ran *after* the limit, in JS, so Gmail's label copies spent
+ * the budget: a thread whose messages each carry three labels hit the ceiling at
+ * roughly 67 distinct messages rather than 200. It is `GROUP BY` now, so the
+ * limit counts distinct messages — the same correction `listThreadMessages`
+ * needed.
+ */
 export function getThread(accountId: string, threadKey: string, limit = 200): MessageDetail[] {
   const db = getDb()
-  const allRows = db
-    .select()
-    .from(messages)
-    .where(
-      and(
-        eq(messages.accountId, accountId),
-        sql`COALESCE(${messages.threadId}, ${messages.id}) = ${threadKey}`
-      )
+  // Choose the newest `limit` distinct messages, then hand them back in reading
+  // order. Two steps because the choice is by recency and the render is not.
+  const chosen = getRawSqlite()
+    .prepare(
+      `SELECT id FROM (
+         SELECT id, date FROM messages
+         WHERE account_id = ? AND COALESCE(thread_id, id) = ?
+         GROUP BY COALESCE(message_id, id)
+         ORDER BY date DESC, COALESCE(message_id, id) DESC
+         LIMIT ?
+       ) ORDER BY date, id`
     )
-    .orderBy(messages.date)
-    .limit(limit)
-    .all()
-  if (allRows.length === 0) return []
+    .all(accountId, threadKey, limit) as Array<{ id: string }>
+  if (chosen.length === 0) return []
 
-  const seen = new Set<string>()
-  const rows: typeof allRows = []
-  for (const r of allRows) {
-    const key = r.messageId ?? r.id
-    if (seen.has(key)) continue
-    seen.add(key)
-    rows.push(r)
-  }
+  const chosenIds = chosen.map((r) => r.id)
+  const byId = new Map(
+    db.select().from(messages).where(inArray(messages.id, chosenIds)).all().map((r) => [r.id, r])
+  )
+  // Ordered by the id list, not by re-sorting: the SQL above already settled
+  // reading order, including how same-timestamp messages tie-break.
+  const rows = chosenIds.map((id) => byId.get(id)!).filter(Boolean)
 
   const ids = rows.map((r) => r.id)
   const atts = db.select().from(attachments).where(inArray(attachments.messageId, ids)).all()

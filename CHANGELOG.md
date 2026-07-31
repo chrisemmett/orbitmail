@@ -7,6 +7,18 @@ which keeps decisions rather than just tasks.
 Versions follow [semantic versioning](https://semver.org/). Before 1.0 the minor
 number moves for anything substantial.
 
+## Unreleased
+
+### Fixed
+
+- **Replying to a very long conversation now replies to the latest message.** On
+  a thread of more than a couple of hundred messages the reader was showing the
+  oldest part of it, and Reply, Reply All, Forward and Draft reply all acted on a
+  message from the middle — so the reply threaded oddly for everyone else, and
+  Reply All could go to the people who were on the conversation back then rather
+  than the people on it now. Gmail accounts hit this sooner, because a message
+  filed under several labels counted several times.
+
 ## 0.5.2 — 2026-07-31
 
 The one to take if you use a POP3 account: they were not syncing at all in

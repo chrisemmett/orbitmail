@@ -2922,6 +2922,84 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Reader: a long conversation shows its recent end, not its start')
+  // -------------------------------------------------------------------------
+  {
+    // `getThread` feeds the thread reader, and the reader treats the last
+    // element as "the latest message" — it is what Reply, Reply All, Forward and
+    // Draft reply target. Truncating from the oldest end therefore did not just
+    // hide recent mail: it addressed replies from a mid-thread message, so they
+    // threaded under the wrong parent and reply-all went to that message's
+    // recipients rather than the current ones.
+    const { randomUUID } = await import('crypto')
+    const readerRaw = (await import('../electron/db')).getRawSqlite()
+
+    const readerAccount = db.saveManualAccount('imap', {
+      authType: 'password',
+      email: `reader-${randomUUID()}@example.com`,
+      displayName: 'Reader',
+      username: LOGIN,
+      password: PASSWORD,
+      incoming: { host: HOST, port: IMAP_PORT, security: 'none' },
+      outgoing: { host: HOST, port: SMTP_PORT, security: 'none' }
+    })
+    const readerInbox = db.upsertFolder(readerAccount.id, 'INBOX', 'INBOX', 'inbox')
+    const readerArchive = db.upsertFolder(readerAccount.id, 'Archive', 'Archive', 'custom')
+
+    const addReaderMessage = (
+      id: string,
+      folderId: string,
+      uid: number,
+      messageId: string,
+      date: number
+    ) =>
+      readerRaw
+        .prepare(
+          `INSERT INTO messages (id, folder_id, account_id, uid, message_id, thread_id,
+                                 from_addr, to_addr, subject, snippet, body_text, date)
+           VALUES (?, ?, ?, ?, ?, 'big-thread', 'them@example.com', 'me@example.com', ?, 'snip', 'body', ?)`
+        )
+        .run(id, folderId, readerAccount.id, uid, messageId, `Message ${id}`, date)
+
+    for (let i = 0; i < 250; i++) {
+      addReaderMessage(`r-${String(i).padStart(3, '0')}`, readerInbox.id, i, `<r${i}@example.com>`, 1000 + i)
+    }
+
+    const page = db.getThread(readerAccount.id, 'big-thread')
+    ok('a 250-message conversation is capped', page.length === 200, `${page.length} messages`)
+    ok('and the cap keeps the newest, not the oldest',
+      page[page.length - 1].id === 'r-249', page[page.length - 1].id)
+    ok('the reply target is the actual latest message',
+      page[page.length - 1].messageId === '<r249@example.com>',
+      String(page[page.length - 1].messageId))
+    ok('still handed back oldest-first, so the thread reads in order',
+      page.every((m, i) => i === 0 || m.date >= page[i - 1].date))
+
+    // Gmail stores one email once per label. The dedupe used to run after the
+    // limit, so those copies spent the budget and the ceiling was a third of
+    // what it claimed.
+    for (let i = 0; i < 250; i++) {
+      addReaderMessage(
+        `r-copy-${String(i).padStart(3, '0')}`,
+        readerArchive.id,
+        1000 + i,
+        `<r${i}@example.com>`,
+        1000 + i
+      )
+    }
+    const withLabels = db.getThread(readerAccount.id, 'big-thread')
+    ok('a label copy does not spend the message budget',
+      withLabels.length === 200, `${withLabels.length} messages`)
+    ok('and the newest message is still the newest',
+      withLabels[withLabels.length - 1].messageId === '<r249@example.com>',
+      String(withLabels[withLabels.length - 1].messageId))
+    ok('with no message appearing twice',
+      new Set(withLabels.map((m) => m.messageId)).size === withLabels.length)
+
+    db.removeAccount(readerAccount.id)
+  }
+
+  // -------------------------------------------------------------------------
   section('AI: a conversation summary is cached, goes stale, and is never orphaned')
   // -------------------------------------------------------------------------
   {
