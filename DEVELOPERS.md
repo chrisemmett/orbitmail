@@ -129,6 +129,28 @@ The AI features — per-message **Analyze**, **Draft reply**, the conversation
 
 `electron/services/ai-service.ts` uses `@anthropic-ai/sdk` with structured output (`messages.parse` against a JSON schema, one per feature). Message content is sent to Anthropic only when the user triggers a feature. On **Analyze**, the user can opt to include a message's attachments for extra context (text extracted inline; images and PDFs sent as native content blocks) — the UI prompts first because attachments increase token usage.
 
+### Reading a long conversation
+
+`getThread` caps a conversation at 200 messages and **keeps the newest**, handing
+them back oldest-first. Both halves used to be wrong, and the consequence was not
+cosmetic: the reader takes `messages[length - 1]` as "the latest", and that is
+what Reply, Reply All, Forward and Draft reply target. Truncating from the oldest
+end meant a reply on a long thread was addressed from a mid-thread message —
+threaded under the wrong parent, and **reply-all sent to that message's
+recipients** rather than the current ones.
+
+The dedupe also ran after the limit, in JS, so Gmail's per-label copies spent the
+budget: with two labels a 250-message thread yielded 100 distinct messages and
+treated the hundredth as newest. It is `GROUP BY COALESCE(message_id, id)` now, so
+the limit counts distinct messages — the same correction `listThreadMessages`
+needed, and the same shape of fix (choose in a `date DESC` subquery, restore
+reading order outside it).
+
+**Still capped, and still silent about it.** A 260-message thread shows its most
+recent 200 and says nothing about the other 60. Fixing that means returning a
+total alongside the messages, which is the same shape change pagination wants —
+see TODO.md.
+
 ### Conversation summaries
 
 `analyzeThread` (`ai-service.ts`) summarizes a whole thread: what it is about,
