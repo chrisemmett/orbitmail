@@ -428,26 +428,39 @@ the control, and the README says so.
   dev launcher and the packaged entry, so no desktop could tie the window to the
   entry. `npm run test:imap` now checks all three agree.
 
-  **electron-builder warns about `desktopName` on every build; that warning is
-  expected here, and acting on it naively would break this.** It fires whenever
-  `desktopName` is absent from `package.json`, without checking whether the
-  association actually works — and on X11 it does. Measured against the packaged
-  0.5.1 build with `xprop`: the main window's `WM_CLASS` is
-  `"orbit mail", "Orbit Mail"`, and the shipped `orbit-mail.desktop` says
-  `StartupWMClass=Orbit Mail`, so they match. (The second X window, class
-  `orbit-mail`, is the tray icon, which is not what a desktop associates.)
+  **`desktopName` is set, and the build warning it silences was never the whole
+  story.** electron-builder warns whenever `desktopName` is absent from
+  `package.json`, without checking whether the association actually works — and
+  on X11 it already did. Measured against the packaged 0.5.1 build with `xprop`:
+  the main window's `WM_CLASS` is `"orbit mail", "Orbit Mail"`, and the shipped
+  `orbit-mail.desktop` says `StartupWMClass=Orbit Mail`, so they matched. (The
+  second X window, class `orbit-mail`, is the tray icon, which is not what a
+  desktop associates.)
 
-  The trap is in what the option does: electron-builder derives the
-  `StartupWMClass` it writes from `desktopName` minus the `.desktop` suffix,
-  falling back to `productName`. Setting `desktopName: "orbit-mail.desktop"` and
-  dropping the explicit `StartupWMClass` — which is what the warning's docs
-  suggest — would write `orbit-mail` while the app still announces `Orbit Mail`,
-  reintroducing exactly the mismatch that once left the badge with no icon to
-  land on. The `test:imap` check above catches that combination, so try it there
-  before believing it. `syncDesktopName` only affects the installed `.desktop`
-  *filename*, which is already `orbit-mail.desktop` via `executableName` and is
-  hardcoded as `LINUX_DESKTOP_ENTRY_ID` for the launcher badge; changing it would
-  break that too.
+  Two things make acting on that warning less obvious than it reads:
+
+  - **`desktopName` is top-level metadata, not a `build.linux` option.**
+    electron-builder reads `packager.info.metadata.desktopName`; putting it under
+    `linux` fails its schema outright, which is the first thing anyone tries.
+  - **It derives `StartupWMClass` from `desktopName` minus the `.desktop`
+    suffix**, falling back to `productName`. Taken alone that would write
+    `orbit-mail` while the app announces `Orbit Mail` — the mismatch that once
+    left the launcher badge with no icon to land on. What saves it is ordering:
+    `LinuxTargetHelper` applies `linux.desktop.entry` *last* in its `deepAssign`,
+    so an explicit `StartupWMClass` wins over the derived one. Dropping that
+    explicit value — which is what the warning's own docs suggest — is the way to
+    break this, and `test:imap` fails on exactly that combination.
+
+  `syncDesktopName` derives the installed `.desktop` *filename* from
+  `desktopName`, which here resolves to the `orbit-mail.desktop` it already had
+  via `executableName`. That name is also hardcoded as `LINUX_DESKTOP_ENTRY_ID`
+  and used for both `app.setDesktopName` and the libunity object path, so the
+  suite pins the two together: renaming one silently renames the installed file
+  out from under the other.
+
+  The change was verified by diffing the produced entry against the published
+  0.5.4 `.deb` — **byte-for-byte identical**, so the warning went away with no
+  change to what ships.
 
   **What is genuinely untested is native Wayland**, where a compositor matches on
   `app_id` rather than `WM_CLASS`. Electron runs under XWayland unless started
