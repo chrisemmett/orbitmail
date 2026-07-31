@@ -1272,6 +1272,44 @@ which carries the full-privilege preload. Three independent layers:
    `blockRemoteContent: true` before it goes into the reply's preview and sent
    body, so the sender's scripts, navigation sinks and remote trackers are not
    carried into our reply or the Sent copy (#69).
+### Sender colours in dark mode
+
+Forbidding `<style>` has a consequence beyond security: an email's colours can
+only reach the page through inline `style` attributes and the presentational
+`bgcolor`/`color=` attributes, because a head stylesheet is thrown away before
+render. Those inline declarations beat our stylesheet, so in dark mode
+`.reader-body`'s theme colours lose and the message is painted with colours
+chosen for a canvas it is not on. It was reported as unreadable text, and it
+happens in both directions: dark text with no background lands on our dark grey,
+and a light background with no text colour puts *our* light text on the sender's
+white table.
+
+`src/utils/emailColorScheme.ts` decides, per message, whether its colours only
+make sense on a light page; when they do, the reader gives it one
+(`.email-html-paper`) rather than trying to rewrite them. Rewriting means
+guessing which foreground goes with which background, and getting that pair
+wrong reproduces the same unreadable text — a light surface is correct by
+construction, because it is the canvas the sender assumed. The cost is real and
+worth stating: most HTML mail sets *some* colour, so in dark mode most HTML mail
+renders on a white card while the app around it stays dark. Mail that sets no
+colour, and mail that brought its own dark background, are left on the theme.
+
+Two details that are easy to get wrong, both covered by `npm run test:store`:
+
+- The thresholds are derived from the dark theme's own `--bg-main` (`#1e1e24`)
+  and `--text-primary` (`#f4f4f8`) at the WCAG AA bar of 4.5:1, not picked. A
+  foreground counts as "written for a light page" when it would fail that bar on
+  our surface, which puts the boundary between `#777` and `#888`; a background
+  counts as light when *our* text would fail on it.
+- `background-color` contains the string `color`, and `bgcolor=` ends in
+  `color=`. A substring match reads a dark background as dark text and papers a
+  message that needed nothing — so properties are compared whole and the
+  attribute pattern is anchored. Both are mutation-tested rather than assumed.
+
+The classifier is deliberately string work rather than a DOM walk so it can run
+under `test:store`, which is plain node with no DOM at all. The CSS is gated to
+`:root[data-theme='dark']`, so the light theme is provably unchanged.
+
 2. **Navigation** — `blockOffAppNavigation` in `main.ts` cancels `will-navigate`
    and `will-frame-navigate` to anything outside the app shell, forwarding
    `http(s)` to the OS browser. Without it, a form submit inside an email could
@@ -1586,7 +1624,10 @@ optimistic-UI invariants live.
 
 The same harness reaches any pure renderer logic worth pinning down without a
 GUI: it also bundles `src/components/compose/RecipientInput.tsx` for the
-address-token functions below.
+address-token functions below, and `src/utils/emailColorScheme.ts` for the
+dark-mode contrast rule. That second one is why the classifier is string work
+rather than a DOM walk — there is no DOM here at all, so a DOM-based version
+could only have been tested through a real window.
 
 | Area | What it asserts |
 |------|-----------------|
@@ -1599,6 +1640,7 @@ address-token functions below.
 | Reader open failures | A rejected `getThread`/`get` stops the loading flag, records `readerError` with the message and the retry target, and leaves the row selected; `retryReaderLoad` re-runs the right one; a later selection clears the error so it cannot outlive its subject. |
 | Optimistic rollback in conversation view | A star applied to a message in the open conversation, or in an inline-expanded one, shows immediately and updates the collapsed row's aggregate; when the server rejects the write, both the message and the aggregate roll back. The flat list keeps its existing behaviour. |
 | Bulk archive and move | Archive and move batch a multi-selection into one `moveMany`, in both views, with every item aimed at the resolved destination; the rows leave the list; archive does not go out over the delete channel; and a move to the folder the messages are already in is a no-op rather than a round-trip. |
+| Dark-mode contrast rule | `assumesLightBackground` flags the two shapes that were reported unreadable — dark text with no background, and a light background with no text colour — and leaves alone mail that sets no colour, mail with its own dark background, and light text. The formats real mail uses are read (3- and 6-digit hex, `rgb()`, named colours, `bgcolor`, `<font color>`), and things that paint nothing (`transparent`, zero-alpha, a bare `url()`) imply nothing. The threshold is asserted from *both* sides, since one-sided assertions leave it free to be anywhere. Two traps are mutation-tested rather than assumed: `background-color` contains `color`, and `bgcolor=` ends in `color=` — either read as a foreground papers a message that needed nothing. The `bgcolor` check initially passed for the wrong reason and was rewritten around a *dark* `bgcolor`, which is the only value that discriminates. |
 | Recipient autocomplete | `activeToken` picks the address the caret is in — including when the caret is back inside an earlier one, and without splitting on a comma inside a quoted display name — and `applySuggestion` rewrites only that token: the addresses already entered survive, a completion mid-list leaves what follows intact, the caret lands ready for the next address, a display name containing a comma is re-quoted so the list still parses, and a contact with no name inserts the bare address. Getting these bounds wrong eats an address the user typed, which they would not notice until after sending. |
 
 The stub is deliberately thin — it is the IPC surface the store touches, nothing
@@ -1637,6 +1679,14 @@ reacts, and that the renderer mounts with no console errors.
 pane can look perfect while the channel behind it is missing or wrong. The IPC
 contract check and the behaviour tests in `npm run test:imap` cover that, and
 this replaces neither.
+
+**A fixture that is too clean hides bugs.** The thread fixture's three messages
+originally had `bodyHtml: null`, so every body rendered as plain text through the
+theme — and the dark-mode contrast bug, which only exists in *sender* HTML, could
+not appear here at all. They now carry HTML chosen to cover the three states
+worth looking at: colours that assume a white page, a light background with no
+text colour, and no colours at all. When adding a fixture, ask what the realistic
+version of the field looks like, not just what satisfies the type.
 
 **A fixture missing a field does not degrade — it throws**, in the component,
 with a stack that looks exactly like an app bug (`info.unreadCount` is

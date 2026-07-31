@@ -6,6 +6,7 @@ import type {
   ThreadActionItem
 } from '../../../shared/types'
 import { sanitizeEmailHtml } from '../../utils/sanitizeEmailHtml'
+import { assumesLightBackground } from '../../utils/emailColorScheme'
 import { RemoteContentBar, useRemoteImageBlocking } from './RemoteContentBar'
 import {
   useMailStore,
@@ -360,6 +361,9 @@ export function MessageView() {
     () => sanitizeEmailHtml(selectedMessage?.bodyHtml, { blockRemoteContent: remoteImages.blocked }),
     [selectedMessage?.id, selectedMessage?.bodyHtml, remoteImages.blocked]
   )
+  // Memoized rather than computed inline: it scans the whole body, and the
+  // reader re-renders on every hover and selection change.
+  const bodyPaper = useMemo(() => assumesLightBackground(sanitizedHtml), [sanitizedHtml])
 
   // A failed open takes priority over every empty state below: those all read as
   // "nothing selected", which is the wrong story when a fetch just failed.
@@ -601,7 +605,10 @@ export function MessageView() {
       )}
       <div className="reader-body" onClick={handleBodyClick}>
         {sanitizedHtml ? (
-          <div dangerouslySetInnerHTML={{ __html: sanitizedHtml }} />
+          <div
+            className={bodyPaper ? 'email-html-paper' : undefined}
+            dangerouslySetInnerHTML={{ __html: sanitizedHtml }}
+          />
         ) : readerLoading && !selectedMessage.bodyText ? (
           <div className="reader-body-loading">Loading message…</div>
         ) : (
@@ -1009,6 +1016,7 @@ const ThreadMessage = memo(function ThreadMessage({
     () => sanitizeEmailHtml(message.bodyHtml, { blockRemoteContent: remoteImages.blocked }),
     [message.id, message.bodyHtml, remoteImages.blocked]
   )
+  const bodyPaper = useMemo(() => assumesLightBackground(sanitizedHtml), [sanitizedHtml])
 
   const handleBodyClick = (event: React.MouseEvent<HTMLDivElement>) => {
     const anchor = (event.target as HTMLElement).closest('a')
@@ -1095,7 +1103,10 @@ const ThreadMessage = memo(function ThreadMessage({
       )}
       <div className="reader-body thread-msg-body" onClick={handleBodyClick}>
         {sanitizedHtml ? (
-          <div dangerouslySetInnerHTML={{ __html: sanitizedHtml }} />
+          <div
+            className={bodyPaper ? 'email-html-paper' : undefined}
+            dangerouslySetInnerHTML={{ __html: sanitizedHtml }}
+          />
         ) : (
           <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}>
             {message.bodyText ?? 'No content'}
