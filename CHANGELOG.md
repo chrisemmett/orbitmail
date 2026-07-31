@@ -7,6 +7,15 @@ which keeps decisions rather than just tasks.
 Versions follow [semantic versioning](https://semver.org/). Before 1.0 the minor
 number moves for anything substantial.
 
+## Unreleased
+
+### Fixed
+
+- **New mail no longer notifies you twice.** A message that arrived while the app
+  was watching for push could also be picked up by the periodic check a moment
+  later, and each announced it. They now agree on which message they are talking
+  about, so one email is one notification.
+
 ## 0.5.3 — 2026-07-31
 
 A single fix, shipped on its own because of what it touches: on very long

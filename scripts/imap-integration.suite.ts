@@ -2922,6 +2922,91 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Notifications: one arrival is announced once, however it is noticed')
+  // -------------------------------------------------------------------------
+  {
+    // Two paths announce new mail and neither knows about the other: the IDLE
+    // push handler, and the safety-net poll that runs every 90s for IDLE-capable
+    // accounts with `announce` defaulting true. One arrival reaches both whenever
+    // the poll's estimate is taken before IDLE has stored the message.
+    //
+    // The old guard was a five-second wall clock, which is a rate limit and not
+    // a dedupe: it collapsed duplicates that happened to be close together and
+    // let through the ones that were not — and the poll's pass takes seconds, so
+    // the second announcement usually landed outside the window. Every check
+    // below that passes `now` well past the limit fails under that guard.
+    const { randomUUID } = await import('crypto')
+    const notice = await import('../electron/services/new-mail-notice')
+    const noticePrefs = await import('../electron/services/preferences-service')
+    const noticeRaw = (await import('../electron/db')).getRawSqlite()
+
+    const noticeAccount = db.saveManualAccount('imap', {
+      authType: 'password',
+      email: `notify-${randomUUID()}@example.com`,
+      displayName: 'Notifications',
+      username: LOGIN,
+      password: PASSWORD,
+      incoming: { host: HOST, port: IMAP_PORT, security: 'none' },
+      outgoing: { host: HOST, port: SMTP_PORT, security: 'none' }
+    })
+    const noticeInbox = db.upsertFolder(noticeAccount.id, 'INBOX', 'INBOX', 'inbox')
+
+    const arrive = (id: string, from: string, subject: string, date: number) =>
+      noticeRaw
+        .prepare(
+          `INSERT INTO messages (id, folder_id, account_id, uid, message_id, from_addr, to_addr,
+                                 subject, snippet, body_text, date)
+           VALUES (?, ?, ?, ?, ?, ?, 'me@example.com', ?, 'snip', 'body', ?)`
+        )
+        .run(id, noticeInbox.id, noticeAccount.id, Number(id.split('-')[1]), `<${id}@x>`, from, subject, date)
+
+    notice.resetNewMailNoticeForTests()
+    const t0 = 1_000_000
+
+    arrive('n-1', 'Jan <jan@example.com>', 'Lunch?', t0)
+    const first = notice.takeNewMailNotice(1, t0)
+    ok('the first sighting of an arrival is announced', first?.message.subject === 'Lunch?',
+      first?.message.subject ?? 'nothing')
+
+    // The second path notices the same message a few seconds later. This is the
+    // one that got through: outside the old five-second window, same email.
+    const second = notice.takeNewMailNotice(1, t0 + 8000)
+    ok('the same message is not announced again, however long the gap',
+      second === null, second ? `announced "${second.message.subject}" twice` : 'silent')
+
+    // Not a rate limit hiding it: still silent an hour later.
+    ok('and not merely delayed — it stays announced',
+      notice.takeNewMailNotice(1, t0 + 3_600_000) === null)
+
+    // A genuinely new message must still get through.
+    arrive('n-2', 'Priya <priya@example.com>', 'Re: Lunch?', t0 + 3_700_000)
+    const third = notice.takeNewMailNotice(1, t0 + 3_700_000)
+    ok('a different message is announced', third?.message.subject === 'Re: Lunch?',
+      third?.message.subject ?? 'nothing')
+
+    // The rate limit still exists, for distinct arrivals landing together.
+    arrive('n-3', 'Sam <sam@example.com>', 'Third', t0 + 3_700_100)
+    ok('two different arrivals in the same moment are one interruption',
+      notice.takeNewMailNotice(1, t0 + 3_700_100) === null)
+
+    // Muting is upstream of all of this: nothing to announce means silence
+    // rather than a contentless "you have mail".
+    noticeRaw.prepare('DELETE FROM messages WHERE account_id = ?').run(noticeAccount.id)
+    notice.resetNewMailNoticeForTests()
+    ok('an empty inbox announces nothing', notice.takeNewMailNotice(1, t0) === null)
+
+    // The preference is honoured, and checked before any of the above.
+    arrive('n-4', 'Jan <jan@example.com>', 'After the switch', t0)
+    noticePrefs.patchAppState({ desktopNotifications: false })
+    notice.resetNewMailNoticeForTests()
+    ok('nothing is announced when notifications are switched off',
+      notice.takeNewMailNotice(1, t0) === null)
+    noticePrefs.patchAppState({ desktopNotifications: true })
+
+    db.removeAccount(noticeAccount.id)
+  }
+
+  // -------------------------------------------------------------------------
   section('Reader: a long conversation shows its recent end, not its start')
   // -------------------------------------------------------------------------
   {

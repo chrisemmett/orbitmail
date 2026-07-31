@@ -454,6 +454,27 @@ the control, and the README says so.
   with an Ozone Wayland flag, so the X11 path above is what most sessions get,
   but nobody has checked the native-Wayland case — this machine is X11-only, so it
   could not be checked here rather than being deemed fine.
+- **New-mail notifications are deduplicated by message, not by clock**
+  (`electron/services/new-mail-notice.ts`). Two paths announce new mail and neither knows
+  about the other: the IDLE push handler, and the safety-net poll that runs every
+  90s for IDLE-capable accounts with `announce` defaulting true. One arrival
+  reaches both whenever the poll's estimate is taken before IDLE has stored the
+  message — so the same email was announced twice.
+
+  The old guard was a five-second wall clock, which is a rate limit rather than a
+  dedupe: it collapsed the duplicates that happened to land close together and let
+  through the ones that did not, and the poll's pass takes seconds, so the second
+  announcement usually fell *outside* the window. `takeNewMailNotice` now decides
+  on the message id — `getLatestInboxMessage` carries one for exactly this — and
+  keeps the rate limit only for genuinely distinct arrivals. It is `take`, not a
+  predicate: a truthy result records that the message has been announced, so the
+  caller must show it.
+
+  Muting and blocking are upstream and unchanged: `getLatestInboxMessage` filters
+  both, and a null with mail in the inbox means everything recent is from someone
+  the user asked not to be interrupted about — say nothing rather than raise a
+  contentless "you have mail".
+
 - **Folder roles** — a folder's `type` (inbox/sent/drafts/trash/junk) decides where
   Delete, Archive and Junk send mail, so getting it wrong silently breaks delete.
   It is resolved per account by `detectFolderTypes` (`imap-sync.ts`), which ranks
