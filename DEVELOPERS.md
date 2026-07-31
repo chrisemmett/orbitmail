@@ -124,9 +124,60 @@ MICROSOFT_TENANT_ID=common
 
 ## AI (optional)
 
-The AI features — per-message **Analyze**, **Draft reply**, and the folder **Tasks** sweep — are off unless the user supplies an Anthropic API key. Unlike the OAuth credentials above, this key is **not** read from `.env`: it's entered in-app (✦ toolbar button → AI settings), encrypted with Electron `safeStorage`, and stored in the `app_preferences` table under `ai_api_key`. So there is nothing to configure at build time for AI.
+The AI features — per-message **Analyze**, **Draft reply**, the conversation
+**Summarize**, and the folder **Tasks** sweep — are off unless the user supplies an Anthropic API key. Unlike the OAuth credentials above, this key is **not** read from `.env`: it's entered in-app (✦ toolbar button → AI settings), encrypted with Electron `safeStorage`, and stored in the `app_preferences` table under `ai_api_key`. So there is nothing to configure at build time for AI.
 
 `electron/services/ai-service.ts` uses `@anthropic-ai/sdk` with structured output (`messages.parse` against a JSON schema, one per feature). Message content is sent to Anthropic only when the user triggers a feature. On **Analyze**, the user can opt to include a message's attachments for extra context (text extracted inline; images and PDFs sent as native content blocks) — the UI prompts first because attachments increase token usage.
+
+### Conversation summaries
+
+`analyzeThread` (`ai-service.ts`) summarizes a whole thread: what it is about,
+the decisions actually reached, outstanding action items **with an owner**, and
+questions nobody has answered. Two channels, `ai:analyzeThread` and
+`ai:getCachedThreadAnalysis`; the second mirrors `ai:getCachedAnalysis`, so
+reopening a thread shows what was already paid for without calling the API.
+
+**Budget: 12 messages × 4000 chars**, the same allowance `draftReply` uses,
+because the input is the same shape — a conversation as text. Deliberately not
+`MAX_BODY_CHARS` (8000), which is a *single message's* budget and would quadruple
+the worst case.
+
+**The window is the opener plus the most recent eleven**, not the last twelve
+(`selectThreadWindow`). A summary needs both ends: the opening message is usually
+the only place the original request appears, and the tail is where the thread now
+stands. When anything is left out the prompt says so, and the panel says so, so a
+partial summary cannot read as an account of the whole thread.
+
+**Every body goes through `fenceUntrusted`.** A thread is many people's text —
+more injection surface than one message, not less — and the suite asserts one
+fence per message, that a body cannot close the fence early, and that a
+display-name spoof is not labelled `FROM YOU`.
+
+Cached in `thread_analysis`, keyed `(account_id, thread_id)`. Two ways that cache
+goes wrong, both handled:
+
+- **Stale.** `message_count` and `latest_message_id` are stored with the summary
+  and compared on read; either alone misses a real change (a count misses a
+  delete plus an arrival, an id misses an older message backfilled by a
+  server-side search). A stale summary is **still returned and labelled**, not
+  dropped and not silently regenerated — regenerating on open would spend the
+  user's money every time they reopened a busy thread, which is the same argument
+  that made **Re-analyze all** an explicit button.
+- **Orphaned.** A thread key is *derived*, so it can stop existing:
+  `regroupThreadsForAccount` re-links conversations after every sync that ingests
+  mail, and a late reply bridging two threads collapses them onto one key. The
+  loser's row is then unreachable, not merely stale, and no foreign key can
+  express that because `thread_id` keys no table. `pruneOrphanedThreadAnalysis`
+  runs from inside `regroupThreadsForAccount` — in the callee, and in a `finally`,
+  so neither a fourth call site nor the empty-account early return can skip it.
+  It prunes rather than adopting: after a merge the surviving conversation is a
+  *different, larger* one, and a summary written about a subset of it was never an
+  answer about it.
+
+**Identity is the Message-ID, not the row id**, in both the count and the newest
+message. Gmail stores one email once per label, so keying on rows meant starring
+a message added a "new" row and flipped its summary to stale — caught by a test,
+not by reading.
 
 ### Model and effort
 

@@ -9,6 +9,7 @@ import type {
   ManualAccountInput,
   FlagColor,
   AiAnalysis,
+  AiThreadAnalysis,
   SweepTask,
   CompletedTask,
   SweepScope,
@@ -128,6 +129,10 @@ interface MailState {
   expandedThreadMessages: Record<string, MessageDetail[]>
   aiAnalysisById: Record<string, AiAnalysis>
   aiAnalyzingId: string | null
+  // Conversation summaries, keyed `${accountId} ${threadId}` — the same key the
+  // expanded-thread cache uses, so there is one keying convention rather than two.
+  threadAnalysisByKey: Record<string, AiThreadAnalysis>
+  analyzingThreadKey: string | null
   draftingReplyId: string | null
   // Who the next AI draft is addressed to. Sticky for the session so a
   // reply-all-heavy conversation doesn't mean re-picking it every time.
@@ -192,6 +197,8 @@ interface MailState {
   setExpandedThreadMessages: (map: Record<string, MessageDetail[]>) => void
   setAiAnalysis: (messageId: string, analysis: AiAnalysis) => void
   setAiAnalyzingId: (id: string | null) => void
+  setThreadAnalysis: (key: string, analysis: AiThreadAnalysis) => void
+  setAnalyzingThreadKey: (key: string | null) => void
   setDraftingReplyId: (id: string | null) => void
   setDraftReplyMode: (mode: 'reply' | 'reply-all') => void
   setFlaggingTaskId: (id: string | null) => void
@@ -253,6 +260,8 @@ export const useMailStore = create<MailState>((set) => ({
   expandedThreadMessages: {},
   aiAnalysisById: {},
   aiAnalyzingId: null,
+  threadAnalysisByKey: {},
+  analyzingThreadKey: null,
   draftingReplyId: null,
   draftReplyMode: 'reply',
   flaggingTaskId: null,
@@ -314,6 +323,9 @@ export const useMailStore = create<MailState>((set) => ({
   setAiAnalysis: (messageId, analysis) =>
     set((state) => ({ aiAnalysisById: { ...state.aiAnalysisById, [messageId]: analysis } })),
   setAiAnalyzingId: (id) => set({ aiAnalyzingId: id }),
+  setThreadAnalysis: (key, analysis) =>
+    set((state) => ({ threadAnalysisByKey: { ...state.threadAnalysisByKey, [key]: analysis } })),
+  setAnalyzingThreadKey: (key) => set({ analyzingThreadKey: key }),
   setDraftingReplyId: (id) => set({ draftingReplyId: id }),
   setDraftReplyMode: (mode) => set({ draftReplyMode: mode }),
   setFlaggingTaskId: (id) => set({ flaggingTaskId: id }),
@@ -787,7 +799,10 @@ export async function toggleUnreadFilter(): Promise<void> {
   }
 }
 
-function expandKey(accountId: string, threadId: string): string {
+// One conversation's key, `${accountId} ${threadId}`. Exported because the
+// reader needs it to look up a summary, and two spellings of the same key would
+// mean a cache that silently never hits.
+export function expandKey(accountId: string, threadId: string): string {
   return `${accountId} ${threadId}`
 }
 
@@ -868,6 +883,23 @@ export async function selectThread(accountId: string, threadId: string): Promise
   if (after.selectedThreadId !== threadId) return // user moved on
   after.setSelectedThread(messages)
   after.setThreadLoading(false)
+
+  // Surface a stored conversation summary (cached-only — no API call, no spend)
+  // so reopening a thread shows what was already paid for. Same shape as the
+  // per-message one in selectMessage: fire-and-forget, and only applied if this
+  // is still the selection.
+  const key = expandKey(accountId, threadId)
+  if (!after.threadAnalysisByKey[key]) {
+    void window.orbitMail.ai
+      .getCachedThreadAnalysis(accountId, threadId)
+      .then((analysis) => {
+        const s = useMailStore.getState()
+        if (analysis && s.selectedThreadId === threadId && !s.threadAnalysisByKey[key]) {
+          s.setThreadAnalysis(key, analysis)
+        }
+      })
+      .catch(() => {})
+  }
 
   // Optimistically clear the thread's unread dot in the list.
   markThreadReadInList(accountId, threadId)
@@ -2462,6 +2494,40 @@ export async function analyzeMessage(
     store.setToast(err instanceof Error ? err.message : 'Analysis failed')
   } finally {
     store.setAiAnalyzingId(null)
+  }
+}
+
+/**
+ * Summarize a whole conversation and cache it in the store.
+ *
+ * Same guard as `analyzeMessage`: one summary in flight at a time, errors as a
+ * toast, and AI settings opened when there is no key. `force` regenerates a
+ * summary the user is already looking at — which is also what "Update" does on a
+ * stale one, since staleness means the conversation grew, not that the request
+ * failed.
+ */
+export async function analyzeThread(
+  accountId: string,
+  threadId: string,
+  force = false
+): Promise<void> {
+  const store = useMailStore.getState()
+  if (store.analyzingThreadKey) return
+  const key = expandKey(accountId, threadId)
+  store.setAnalyzingThreadKey(key)
+  try {
+    const result = await window.orbitMail.ai.analyzeThread(accountId, threadId, force)
+    if ('error' in result) {
+      store.setToast(result.error)
+      const status = await window.orbitMail.ai.getStatus()
+      if (!status.configured) openSettings('ai')
+      return
+    }
+    store.setThreadAnalysis(key, result)
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : 'Could not summarize this conversation')
+  } finally {
+    store.setAnalyzingThreadKey(null)
   }
 }
 

@@ -102,6 +102,10 @@ Off by default. Nothing is sent anywhere until you add an
 - **Analyze** turns the open email into action items, open questions and key
   context — and knows the difference between what you owe someone and what you
   asked of them.
+- **Summarize** turns a long conversation into what it is about, what was
+  decided, what is still outstanding and who owes it, and what nobody has
+  answered. It reads the mail already on this computer, and says so when a
+  thread is longer than it can take in or has moved on since.
 - **Draft reply** writes an editable reply grounded in the conversation, in your
   choice of tone, and opens it in the composer for you to check and send. Choose
   **Reply** or **Reply All** in the same menu — that sets the recipients *and*

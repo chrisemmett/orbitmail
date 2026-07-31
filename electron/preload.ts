@@ -179,6 +179,10 @@ const api: OrbitMailAPI = {
       ipcRenderer.invoke('ai:flagAsTask', folderId, messageId),
     getCachedAnalysis: (messageId: string) =>
       ipcRenderer.invoke('ai:getCachedAnalysis', messageId),
+    analyzeThread: (accountId, threadId, force) =>
+      ipcRenderer.invoke('ai:analyzeThread', accountId, threadId, force),
+    getCachedThreadAnalysis: (accountId, threadId) =>
+      ipcRenderer.invoke('ai:getCachedThreadAnalysis', accountId, threadId),
     exportTasks: (markdown: string, defaultName: string) =>
       ipcRenderer.invoke('ai:exportTasks', markdown, defaultName),
     completeTask: (folderId: string, taskId: string) =>

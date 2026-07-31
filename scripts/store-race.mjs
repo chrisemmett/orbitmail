@@ -230,7 +230,13 @@ function installWindowStub() {
       app: {
         getPlatformCapabilities: async () => backend.capabilities
       },
-      ai: { getCachedAnalysis: async () => null }
+      // Both cached-only reads, because selectMessage and selectThread each fire
+      // one on open. A missing stub here is not a missing assertion — it throws
+      // inside every test that opens a message or a thread.
+      ai: {
+        getCachedAnalysis: async () => null,
+        getCachedThreadAnalysis: async () => null
+      }
     }
   }
 }

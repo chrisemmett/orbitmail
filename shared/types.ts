@@ -326,6 +326,48 @@ export interface AiAnalysis {
   skippedAttachments?: string[]
 }
 
+/** One outstanding commitment from a conversation, and who owes it. */
+export interface ThreadActionItem {
+  action: string
+  /**
+   * "You" for the user, otherwise the participant as the conversation names
+   * them, or "Unassigned". Free text rather than an enum — the owners of a real
+   * conversation are people, not a closed set — and derived from sender-written
+   * content, so render it, never act on it.
+   */
+  owner: string
+}
+
+/**
+ * A conversation summarized as a whole, rather than message by message.
+ *
+ * Separate from `AiAnalysis` rather than a widening of it: that shape's
+ * `actionItems` are plain strings, and a thread's need an owner. Changing it
+ * would alter the per-message payload for no reason.
+ */
+export interface AiThreadAnalysis {
+  summary: string
+  decisions: string[]
+  actionItems: ThreadActionItem[]
+  openQuestions: string[]
+  generatedAt: number
+  cached: boolean
+  /** Distinct messages in the conversation when this was generated. */
+  messageCount: number
+  /** How many of those actually went to the model — the rest exceeded the cap. */
+  analyzedCount: number
+  /** Distinct messages in the conversation right now. */
+  currentMessageCount: number
+  /**
+   * The conversation has changed since this was written. A stale summary is
+   * still returned — it remains true about the earlier part of the thread — so
+   * the UI must label it rather than present it as current.
+   */
+  stale: boolean
+}
+
+export type AiThreadAnalysisResult = AiThreadAnalysis | { error: string }
+
 export interface AiStatus {
   configured: boolean
 }
@@ -625,6 +667,23 @@ export interface OrbitMailAPI {
     flagAsTask: (folderId: string | 'unified', messageId: string) => Promise<AiSweepResult>
     // Cached-only AI analysis (never calls the API); null when none is stored.
     getCachedAnalysis: (messageId: string) => Promise<AiAnalysis | null>
+    /**
+     * Summarize a whole conversation. `threadId` is the thread *key* the reader
+     * groups on — `COALESCE(thread_id, id)`, the same value passed to
+     * `messages.getThread`. A fresh cached summary is returned without calling
+     * the API; a stale one is regenerated, since reaching this channel means the
+     * user clicked. `force` regenerates regardless.
+     */
+    analyzeThread: (
+      accountId: string,
+      threadId: string,
+      force?: boolean
+    ) => Promise<AiThreadAnalysisResult>
+    /** Cached-only conversation summary (never calls the API); null when none. */
+    getCachedThreadAnalysis: (
+      accountId: string,
+      threadId: string
+    ) => Promise<AiThreadAnalysis | null>
     exportTasks: (markdown: string, defaultName: string) => Promise<string | null>
     completeTask: (folderId: string | 'unified', taskId: string) => Promise<void>
     reopenTask: (folderId: string | 'unified', taskId: string) => Promise<void>

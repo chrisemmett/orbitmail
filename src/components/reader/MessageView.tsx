@@ -1,5 +1,10 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import type { AiAnalysis, DraftTone, MessageDetail } from '../../../shared/types'
+import type {
+  AiAnalysis,
+  DraftTone,
+  MessageDetail,
+  ThreadActionItem
+} from '../../../shared/types'
 import { sanitizeEmailHtml } from '../../utils/sanitizeEmailHtml'
 import { RemoteContentBar, useRemoteImageBlocking } from './RemoteContentBar'
 import {
@@ -7,6 +12,8 @@ import {
   toggleMessageStar,
   toggleThreadMessageStar,
   analyzeMessage,
+  analyzeThread,
+  expandKey,
   draftReply,
   flagMessageAsTask,
   retryReaderLoad,
@@ -331,6 +338,7 @@ export function MessageView() {
   const selectedMessageId = useMailStore((s) => s.selectedMessageId)
   const selectionCount = useMailStore((s) => s.selectedMessageIds.length)
   const selectedThread = useMailStore((s) => s.selectedThread)
+  const selectedThreadId = useMailStore((s) => s.selectedThreadId)
   const threadLoading = useMailStore((s) => s.threadLoading)
   const readerError = useMailStore((s) => s.readerError)
   const readerLoading = useMailStore((s) => s.readerLoading)
@@ -367,8 +375,11 @@ export function MessageView() {
   }
 
   // Conversation mode: a thread is open (takes priority over single-message).
-  if (selectedThread && selectedThread.length > 0) {
-    return <ThreadView messages={selectedThread} />
+  // The id is part of the condition rather than asserted non-null: it is what
+  // keys the conversation summary, and a thread rendered without one would look
+  // fine while silently sharing another conversation's cache entry.
+  if (selectedThread && selectedThread.length > 0 && selectedThreadId) {
+    return <ThreadView messages={selectedThread} threadId={selectedThreadId} />
   }
   if (threadLoading && !selectedThread) {
     return (
@@ -626,6 +637,27 @@ function AiSection({ title, items }: { title: string; items: string[] }) {
   )
 }
 
+// Action items from a conversation carry an owner. Same markup as AiSection so
+// the two panels read as one thing; the owner leads because "who owes this" is
+// the question a thread summary is being asked.
+function AiOwnerSection({ title, items }: { title: string; items: ThreadActionItem[] }) {
+  if (!items || items.length === 0) return null
+  return (
+    <div className="reader-ai-section">
+      <div className="reader-ai-section-title">{title}</div>
+      <ul>
+        {items.map((item, i) => (
+          <li key={i}>
+            <strong>{item.owner}</strong>
+            {' — '}
+            {item.action}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -783,9 +815,49 @@ function AttachmentList({
 
 // ---- Conversation (thread) reader ----------------------------------------
 
-function ThreadView({ messages }: { messages: MessageDetail[] }) {
+// "Summarize conversation" — the thread-level sibling of AnalyzeButton. The
+// label says what the click will do, because the three states cost different
+// things: a first summary and a regeneration both spend tokens, and an update is
+// what a stale one needs.
+function ThreadSummaryButton({
+  accountId,
+  threadId
+}: {
+  accountId: string
+  threadId: string
+}) {
+  const key = expandKey(accountId, threadId)
+  const analysis = useMailStore((s) => s.threadAnalysisByKey[key])
+  const analyzing = useMailStore((s) => s.analyzingThreadKey === key)
+
+  const label = analyzing
+    ? 'Summarizing…'
+    : !analysis
+      ? 'Summarize'
+      : analysis.stale
+        ? 'Update summary'
+        : 'Re-summarize'
+
+  return (
+    <button
+      type="button"
+      className="reader-ai-btn"
+      title="Summarize this conversation with AI"
+      disabled={analyzing}
+      onClick={() => void analyzeThread(accountId, threadId, !!analysis)}
+    >
+      <Sparkle size={16} weight="duotone" />
+      {label}
+    </button>
+  )
+}
+
+function ThreadView({ messages, threadId }: { messages: MessageDetail[]; threadId: string }) {
   const setToast = useMailStore((s) => s.setToast)
   const latest = messages[messages.length - 1]
+  const threadKey = expandKey(latest.accountId, threadId)
+  const analysis = useMailStore((s) => s.threadAnalysisByKey[threadKey])
+  const summarizing = useMailStore((s) => s.analyzingThreadKey === threadKey)
 
   const handleReply = () => {
     void window.orbitMail.compose.open({
@@ -867,9 +939,44 @@ function ThreadView({ messages }: { messages: MessageDetail[] }) {
               Print
             </button>
             <DraftReplyButton messageId={latest.id} />
+            <ThreadSummaryButton accountId={latest.accountId} threadId={threadId} />
           </div>
         </div>
       </div>
+
+      {(analysis || summarizing) && (
+        <div className="reader-ai-panel">
+          <div className="reader-ai-panel-header">
+            <Sparkle size={14} weight="fill" />
+            <span>Conversation Summary</span>
+          </div>
+          {summarizing && !analysis ? (
+            <div className="reader-ai-loading">Reading this conversation…</div>
+          ) : analysis ? (
+            <div className="reader-ai-body">
+              {/* Say what the summary does and does not cover, rather than
+                  letting it read as an account of the whole thread. */}
+              {analysis.stale && (
+                <p className="reader-ai-note">
+                  {analysis.currentMessageCount - analysis.messageCount === 1
+                    ? '1 new message has arrived since this summary.'
+                    : `${analysis.currentMessageCount - analysis.messageCount} new messages have arrived since this summary.`}
+                </p>
+              )}
+              {analysis.analyzedCount < analysis.messageCount && (
+                <p className="reader-ai-note">
+                  Covers the first message and the {analysis.analyzedCount - 1} most recent, of{' '}
+                  {analysis.messageCount}.
+                </p>
+              )}
+              <p className="reader-ai-summary">{analysis.summary}</p>
+              <AiSection title="Decisions" items={analysis.decisions} />
+              <AiOwnerSection title="Action Items" items={analysis.actionItems} />
+              <AiSection title="Open Questions" items={analysis.openQuestions} />
+            </div>
+          ) : null}
+        </div>
+      )}
 
       <div className="thread-conversation">
         {messages.map((message, i) => (

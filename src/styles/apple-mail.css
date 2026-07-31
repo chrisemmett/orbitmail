@@ -2047,6 +2047,16 @@ textarea {
   color: var(--text-primary, inherit);
 }
 
+/* What a conversation summary does and does not cover — new messages since it
+   was written, or a thread longer than the model was shown. Quieter than the
+   summary itself: it qualifies the answer rather than being part of it. */
+.reader-ai-note {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-secondary, #6b7280);
+}
+
 .reader-ai-section {
   margin-top: 10px;
 }

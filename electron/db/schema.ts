@@ -197,6 +197,37 @@ export const pop3Skipped = sqliteTable(
   (t) => [primaryKey({ columns: [t.accountId, t.serverUid] })]
 )
 
+// A cached AI summary of one conversation, keyed by the same thread key the
+// reader groups on — `COALESCE(thread_id, id)`, scoped per account.
+//
+// The account FK is the only one available: a thread key is *derived*, not a key
+// of any table, so nothing can enforce that a row's conversation still exists.
+// `regroupThreadsForAccount` re-links an account's threads after every sync that
+// ingests mail, and a late reply bridging two conversations makes one of the two
+// keys vanish — leaving a row nothing will ever ask for again. Pruning is
+// therefore hand-rolled, and hangs off regroup; see `pruneOrphanedThreadAnalysis`.
+//
+// `message_count` and `latest_message_id` are stored together because either
+// alone misses a real change: a count alone misses a delete plus an arrival, and
+// a latest id alone misses an older message backfilled by a server-side search.
+// `analyzed_count` is how many of them actually reached the model, so the UI can
+// say "the 12 most recent of 30" rather than implying the whole thread was read.
+export const threadAnalysis = sqliteTable(
+  'thread_analysis',
+  {
+    accountId: text('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    threadId: text('thread_id').notNull(),
+    json: text('json').notNull(),
+    generatedAt: integer('generated_at').notNull(),
+    messageCount: integer('message_count').notNull(),
+    analyzedCount: integer('analyzed_count').notNull(),
+    latestMessageId: text('latest_message_id').notNull()
+  },
+  (t) => [primaryKey({ columns: [t.accountId, t.threadId] })]
+)
+
 export const contacts = sqliteTable(
   'contacts',
   {
