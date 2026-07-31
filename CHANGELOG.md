@@ -16,7 +16,10 @@ number moves for anything substantial.
   white table — came out near-invisible against the dark theme. Those messages
   now render on a light card, the way the sender intended, while the rest of the
   app stays dark. Mail that sets no colours of its own, or that brings its own
-  dark styling, is unchanged.
+  dark styling, is unchanged. The quoted original when you reply gets the
+  same treatment, so a reply is readable while you write it.
+- **The composer's formatting toolbar is no longer a white bar in dark mode**,
+  and neither is the panel shown when you drag a file onto a message.
 
 - **New mail no longer notifies you twice.** A message that arrived while the app
   was watching for push could also be picked up by the periodic check a moment

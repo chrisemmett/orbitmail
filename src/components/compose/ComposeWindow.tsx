@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { sanitizeEmailHtml } from '../../utils/sanitizeEmailHtml'
+import { assumesLightBackground } from '../../utils/emailColorScheme'
 import { Paperclip } from '@phosphor-icons/react/dist/ssr/Paperclip'
 import { X } from '@phosphor-icons/react/dist/ssr/X'
 import { CaretRight } from '@phosphor-icons/react/dist/ssr/CaretRight'
@@ -49,6 +50,13 @@ export function ComposeWindow() {
   const [showBcc, setShowBcc] = useState(false)
   const [attachments, setAttachments] = useState<AttachmentDraft[]>([])
   const [quoted, setQuoted] = useState<{ html: string; text: string } | null>(null)
+  // Whether the quoted original needs a light surface to be readable in dark
+  // mode — the same problem the reader has, since this is the same sender HTML.
+  // Decided once, when the quote arrives, rather than from the live edited
+  // value: it is a fact about the mail being replied to, and recomputing it per
+  // keystroke would also let the block flip colour mid-edit as the user trims
+  // the coloured part away.
+  const [quotedPaper, setQuotedPaper] = useState(false)
   const [quotedExpanded, setQuotedExpanded] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [editorSeq, setEditorSeq] = useState(0)
@@ -190,14 +198,14 @@ export function ComposeWindow() {
       // it verbatim would carry their scripts/navigation sinks and, worse, their
       // remote trackers into our reply and the Sent copy. blockRemoteContent
       // strips remote images/backgrounds, matching how the reader renders them.
+      const quotedHtml =
+        sanitizeEmailHtml(initial.quotedHtml ?? '', { blockRemoteContent: true }) ?? ''
       setQuoted(
         initial.quotedHtml || initial.quotedText
-          ? {
-              html: sanitizeEmailHtml(initial.quotedHtml ?? '', { blockRemoteContent: true }) ?? '',
-              text: initial.quotedText ?? ''
-            }
+          ? { html: quotedHtml, text: initial.quotedText ?? '' }
           : null
       )
+      setQuotedPaper(assumesLightBackground(quotedHtml))
       setQuotedExpanded(false)
       if (initial.cc) setShowCc(true)
       if (initial.bcc) setShowBcc(true)
@@ -549,9 +557,13 @@ export function ComposeWindow() {
               // The HTML was sanitized when the payload arrived, so this is not
               // re-cleaning attacker content on every keystroke; it is the same
               // string, now editable.
+              // The paper class is on this element, not inside it, so it is not
+              // part of `innerHTML` and cannot travel out with the reply.
               <div
                 ref={quoteElementRef}
-                className="compose-quote-body is-editable"
+                className={`compose-quote-body is-editable${
+                  quotedPaper ? ' email-html-paper' : ''
+                }`}
                 contentEditable
                 role="textbox"
                 aria-multiline="true"

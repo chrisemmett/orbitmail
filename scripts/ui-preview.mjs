@@ -208,12 +208,47 @@ function fallback(method, args) {
   return null
 }
 
+// One payload per event subscriber that needs one. The reply carries the same
+// sender HTML as the thread fixture's first message, since the quoted original
+// in the composer is that mail and has the same dark-mode contrast problem.
+const SUBSCRIBERS = {
+  'compose.onOpen': {
+    accountId: 'acc-1',
+    to: 'Jan <jan@work.example>',
+    cc: '',
+    subject: 'Re: Q3 launch date',
+    bodyHtml: '',
+    bodyText: '',
+    quotedHtml:
+      '<blockquote>On 31 July, Jan wrote:<br>' +
+      '<div style="color:#1a1a1a;font-family:Arial,sans-serif">' +
+      '<p>Can we move the launch to the 14th? That gives the printers a week of slack.</p>' +
+      '<p style="color:#333">Happy either way, but I would rather not cut it fine.</p>' +
+      '</div></blockquote>',
+    quotedText: 'On 31 July, Jan wrote:\\n> Can we move the launch to the 14th?',
+    inReplyTo: '<m1@work.example>',
+    mode: 'reply',
+    originalMessageId: 'm1'
+  }
+}
+
 window.orbitMail = new Proxy({}, {
   get: (_t, ns) => new Proxy({}, {
     get: (_t2, method) => {
       if (typeof method !== 'string') return undefined
-      // Event subscribers are synchronous and hand back an unsubscribe.
-      if (/^on[A-Z]/.test(method)) return () => () => {}
+      // Event subscribers are synchronous and hand back an unsubscribe. Some
+      // also deliver one payload, because the pane behind them renders nothing
+      // until they do: #/compose is an empty form until compose.onPayload
+      // fires, so a bare no-op leaves the whole composer unlookable. Delivered
+      // in a later task so the subscribing effect has finished first, which is
+      // the order the real preload produces.
+      if (/^on[A-Z]/.test(method)) {
+        const payload = SUBSCRIBERS[ns + '.' + method]
+        return (cb) => {
+          if (payload !== undefined) setTimeout(() => cb(structuredClone(payload)), 0)
+          return () => {}
+        }
+      }
       const key = ns + '.' + method
       return (...args) => {
         const value = key in OVERRIDES ? OVERRIDES[key] : fallback(method, args)
