@@ -7,6 +7,16 @@ which keeps decisions rather than just tasks.
 Versions follow [semantic versioning](https://semver.org/). Before 1.0 the minor
 number moves for anything substantial.
 
+## Unreleased
+
+### Fixed
+
+- **Buttons and menu items now respond when you hover them.** Several controls —
+  the formatting buttons in the composer, the account menu, the status bar
+  actions — were meant to highlight under the pointer and never did. Attachment
+  chips and inline code in a message also get the background they were supposed
+  to have, and the account menu its shadow.
+
 ## 0.5.4 — 2026-07-31
 
 Three fixes to things you would have noticed while using it: dark mode, and

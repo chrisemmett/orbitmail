@@ -1340,15 +1340,30 @@ Drafts were already safe here: `currentDraft` stores `quotedHtml` separately
 from `bodyHtml`, so reopening a draft puts the quote back into the quote block
 rather than into the editor, and the editor only ever holds what the user wrote.
 
-**Undefined CSS variables are a live hazard in this stylesheet.** `.rte-toolbar`
-and `.compose-drop-overlay` both asked for `var(--bg-primary, …, #fff)`, and
-`--bg-primary` has never existed in either theme — so both fell through to the
-literal `#fff`, which was right by accident in light mode and a white bar with
-2:1 icons in dark. A `var()` with no fallback fails more quietly still: the
-declaration is invalid and the property falls back to its initial value, which
-is how nine `var(--bg-hover)` hover states came to do nothing at all. When
-adding a rule, check the variable exists — `:root` and `:root[data-theme='dark']`
-at the top of `apple-mail.css` are the whole list.
+**Undefined CSS variables were a live hazard in this stylesheet, and are now
+checked.** `.rte-toolbar` and `.compose-drop-overlay` both asked for
+`var(--bg-primary, …, #fff)`, and `--bg-primary` has never existed in either
+theme — so both fell through to the literal `#fff`, which was right by accident
+in light mode and a white bar with 2:1 icons in dark. A `var()` with **no**
+fallback fails more quietly still: the declaration is invalid at computed-value
+time and the property falls back to its initial value, which is how nine
+`var(--bg-hover)` hover states came to do nothing at all — indistinguishable
+from a design choice, which is why nobody reported them.
+
+`npm run test:imap` now checks the stylesheet directly, and would have caught
+all of it:
+
+- **every `var()` names a variable that exists** — comments are stripped first,
+  since the fixes above describe the old broken names in prose;
+- **every themed variable is restated for dark**, because one defined only in
+  the light block reads as working everywhere and degrades silently in dark.
+  Layout and typography (`--font`, `--radius-*`, the fixed widths, the folder
+  colours) are theme-independent by design and exempt.
+
+The convention when adding a rule: `--hover-overlay` for controls and nav items,
+`--bg-list-hover` for list rows and solid subtle surfaces, `--accent-soft` for an
+accent-tinted state, `--shadow-soft` for elevation. `:root` and
+`:root[data-theme='dark']` at the top of `apple-mail.css` are the whole list.
 
 2. **Navigation** — `blockOffAppNavigation` in `main.ts` cancels `will-navigate`
    and `will-frame-navigate` to anything outside the app shell, forwarding

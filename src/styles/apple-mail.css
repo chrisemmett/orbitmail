@@ -398,7 +398,11 @@ textarea {
 }
 
 .search-server-btn:hover:not(:disabled) {
-  background: var(--bg-hover, rgba(43, 125, 233, 0.1));
+  /* Was `var(--bg-hover, rgba(43, 125, 233, 0.1))`. That variable has never
+     existed, so the literal fallback was what showed: an off-palette blue at
+     10% that did not follow the theme. --accent-soft is the same intent,
+     stated in the palette. */
+  background: var(--accent-soft);
 }
 
 .search-server-btn:disabled {
@@ -1296,7 +1300,7 @@ textarea {
 }
 
 .rte-btn:hover {
-  background: var(--bg-hover);
+  background: var(--hover-overlay);
 }
 
 .rte-btn.is-active {
@@ -1405,7 +1409,7 @@ textarea {
 .rte-editor code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.9em;
-  background: var(--bg-hover);
+  background: var(--bg-list-hover);
   padding: 1px 5px;
   border-radius: 4px;
 }
@@ -1438,7 +1442,7 @@ textarea {
 }
 
 .compose-quote-toggle:hover {
-  background: var(--bg-hover);
+  background: var(--hover-overlay);
 }
 
 .compose-quote-toggle svg {
@@ -1466,7 +1470,7 @@ textarea {
 }
 
 .compose-quote-remove:hover {
-  background: var(--bg-hover);
+  background: var(--hover-overlay);
   color: #ff3b30;
 }
 
@@ -2328,7 +2332,7 @@ textarea {
   padding: 7px 9px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--bg-hover);
+  background: var(--bg-list-hover);
   min-width: 0;
 }
 
@@ -2399,7 +2403,7 @@ textarea {
 }
 
 .sidebar-account-menu-btn:hover {
-  background: var(--bg-hover);
+  background: var(--hover-overlay);
   color: var(--text-primary);
 }
 
@@ -2411,7 +2415,7 @@ textarea {
   background: var(--bg-sidebar);
   border: 1px solid var(--border);
   border-radius: 8px;
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-soft);
   z-index: 50;
   overflow: hidden;
 }
@@ -2431,7 +2435,7 @@ textarea {
 }
 
 .account-menu-item:hover {
-  background: var(--bg-hover);
+  background: var(--hover-overlay);
 }
 
 .account-menu-item.danger {
@@ -2460,7 +2464,7 @@ textarea {
 }
 
 .status-action:hover {
-  background: var(--bg-hover);
+  background: var(--hover-overlay);
 }
 
 .status-bar {

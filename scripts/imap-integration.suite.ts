@@ -2296,6 +2296,60 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Stylesheet: every CSS variable resolves')
+  // -------------------------------------------------------------------------
+  {
+    // A `var(--x)` naming a variable that does not exist fails in one of two
+    // ways, and both hid real bugs here for a long time:
+    //
+    //  - With a fallback, the fallback is what renders. `.rte-toolbar` asked for
+    //    `var(--bg-primary, var(--bg-list, #fff))` and neither variable has ever
+    //    been defined, so the composer's toolbar was a literal white bar —
+    //    accidentally right in light mode, and unreadable in dark.
+    //  - Without one, the declaration is invalid at computed-value time and the
+    //    property falls back to its initial value. Nine `var(--bg-hover)` hover
+    //    states therefore did nothing at all, which looks like a design choice
+    //    rather than a bug and so was never reported.
+    //
+    // Neither shows up in a build: CSS has no undefined-name error. This is a
+    // pure string check over the one stylesheet, so it costs nothing.
+    const { readFileSync: readCss } = await import('fs')
+    const cssPath = join(process.cwd(), 'src/styles/apple-mail.css')
+    // Comments are stripped first — the fixes above describe the old broken
+    // names in prose, and a scan that reads those would fail on documentation.
+    const css = readCss(cssPath, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+
+    const defined = new Set(css.match(/^\s*(--[a-z0-9-]+)\s*:/gm)?.map((d) =>
+      d.trim().replace(/\s*:$/, '')) ?? [])
+    const used = new Set(Array.from(css.matchAll(/var\(\s*(--[a-z0-9-]+)/g), (m) => m[1]))
+
+    ok('the stylesheet defines some variables to check against', defined.size > 20,
+      `${defined.size} defined`)
+
+    const undefinedVars = Array.from(used).filter((v) => !defined.has(v)).sort()
+    ok('every var() names a variable that exists',
+      undefinedVars.length === 0,
+      undefinedVars.length ? undefinedVars.join(', ') : `${used.size} references, all resolve`)
+
+    // Every custom property is declared in the two theme blocks at the top. One
+    // defined in only the light block reads as a working variable everywhere and
+    // silently degrades to its fallback — or to nothing — in dark mode.
+    const darkBlock = readCss(cssPath, 'utf8').match(
+      /:root\[data-theme='dark'\]\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
+    const darkDefined = new Set(darkBlock.match(/^\s*(--[a-z0-9-]+)\s*:/gm)?.map((d) =>
+      d.trim().replace(/\s*:$/, '')) ?? [])
+    // Layout and typography are theme-independent by design; only colours and
+    // shadows need restating for dark.
+    const SHARED = /^--(font|radius|toolbar-height|sidebar-width|list-width|folder-)/
+    const lightOnly = Array.from(defined)
+      .filter((v) => !darkDefined.has(v) && !SHARED.test(v))
+      .sort()
+    ok('every themed variable is defined for dark as well as light',
+      lightOnly.length === 0,
+      lightOnly.length ? lightOnly.join(', ') : `${darkDefined.size} restated for dark`)
+  }
+
+  // -------------------------------------------------------------------------
   section('Docs: claims must match the code (CLAUDE.md rule 6)')
   // -------------------------------------------------------------------------
   {
