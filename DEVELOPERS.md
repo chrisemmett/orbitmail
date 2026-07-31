@@ -1310,6 +1310,33 @@ The classifier is deliberately string work rather than a DOM walk so it can run
 under `test:store`, which is plain node with no DOM at all. The CSS is gated to
 `:root[data-theme='dark']`, so the light theme is provably unchanged.
 
+The composer gets the same treatment for the same reason: a reply quotes that
+sender HTML, sanitized by the same helper, into `.compose-quote-body`. Two
+differences worth knowing:
+
+- The decision is made **once, when the quote arrives**, not from the live
+  edited value. It is a fact about the mail being replied to, and recomputing it
+  per keystroke would also let the block flip colour mid-edit as the user trims
+  the coloured part away.
+- The class sits on the `contenteditable` element itself, so it is **not part of
+  `innerHTML`** and cannot travel out with the reply — `readQuoteFromDom` and
+  `currentQuote` both read `el.innerHTML`. Anything styling the quote must stay
+  on that element, never wrapped inside it.
+
+Drafts were already safe here: `currentDraft` stores `quotedHtml` separately
+from `bodyHtml`, so reopening a draft puts the quote back into the quote block
+rather than into the editor, and the editor only ever holds what the user wrote.
+
+**Undefined CSS variables are a live hazard in this stylesheet.** `.rte-toolbar`
+and `.compose-drop-overlay` both asked for `var(--bg-primary, …, #fff)`, and
+`--bg-primary` has never existed in either theme — so both fell through to the
+literal `#fff`, which was right by accident in light mode and a white bar with
+2:1 icons in dark. A `var()` with no fallback fails more quietly still: the
+declaration is invalid and the property falls back to its initial value, which
+is how nine `var(--bg-hover)` hover states came to do nothing at all. When
+adding a rule, check the variable exists — `:root` and `:root[data-theme='dark']`
+at the top of `apple-mail.css` are the whole list.
+
 2. **Navigation** — `blockOffAppNavigation` in `main.ts` cancels `will-navigate`
    and `will-frame-navigate` to anything outside the app shell, forwarding
    `http(s)` to the OS browser. Without it, a form submit inside an email could
@@ -1679,6 +1706,14 @@ reacts, and that the renderer mounts with no console errors.
 pane can look perfect while the channel behind it is missing or wrong. The IPC
 contract check and the behaviour tests in `npm run test:imap` cover that, and
 this replaces neither.
+
+**Event subscribers can carry a payload.** `on*` methods used to return a bare
+no-op unsubscribe, which meant `#/compose` rendered an empty "New Message"
+forever — the composer shows nothing until `compose.onOpen` fires. That pane was
+therefore unlookable, which is why a white toolbar in dark mode survived there
+unnoticed. `SUBSCRIBERS` in the stub maps a channel to one payload, delivered in
+a later task so the subscribing effect has run first. Add an entry when a pane
+only renders in response to an event.
 
 **A fixture that is too clean hides bugs.** The thread fixture's three messages
 originally had `bodyHtml: null`, so every body rendered as plain text through the

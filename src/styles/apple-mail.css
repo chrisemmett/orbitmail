@@ -1274,7 +1274,11 @@ textarea {
   position: sticky;
   top: 0;
   z-index: 2;
-  background: var(--bg-primary, var(--bg-list, #fff));
+  /* Was `var(--bg-primary, var(--bg-list, #fff))`. Neither of those variables
+     has ever existed, so both themes fell through to the literal #fff — right
+     by accident in light mode, and in dark mode a white bar carrying
+     --text-secondary icons at 2:1. */
+  background: var(--bg-main);
   border-bottom: 1px solid var(--border);
 }
 
@@ -1487,6 +1491,18 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+/* The quoted original is the same sender HTML the reader shows, so it has the
+   same dark-mode problem and gets the same answer. Specificity has to beat both
+   `.compose-quote-body` (which sets a muted colour) and `.is-editable` (which
+   sets padding-left), so this is stated explicitly rather than left to source
+   order. Quoted text still reads as secondary — but in the light theme's muted
+   colour, since that is the surface it is now on. */
+:root[data-theme='dark'] .compose-quote-body.email-html-paper {
+  color: #8b8b96;
+  border-left-color: #e4e4ea;
+  padding-left: 16px;
+}
+
 .compose-quote-body blockquote {
   margin: 0 0 0 0.8ex;
   border-left: 2px solid var(--border);
@@ -1527,7 +1543,10 @@ textarea {
   gap: 10px;
   border: 2px dashed var(--accent);
   border-radius: 12px;
-  background: color-mix(in srgb, var(--accent) 10%, var(--bg-primary, #fff));
+  /* Same undefined variable as .rte-toolbar: this mixed the accent into white
+     rather than into the surface, so the drop overlay came up near-white in
+     dark mode with accent-coloured text on it. */
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-main));
   color: var(--accent);
   font-size: 14px;
   font-weight: 500;
