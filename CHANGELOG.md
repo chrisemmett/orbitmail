@@ -7,7 +7,11 @@ which keeps decisions rather than just tasks.
 Versions follow [semantic versioning](https://semver.org/). Before 1.0 the minor
 number moves for anything substantial.
 
-## Unreleased
+## 0.5.2 — 2026-07-31
+
+The one to take if you use a POP3 account: they were not syncing at all in
+0.5.0 or 0.5.1. Also adds conversation summaries, and fixes a reply-drafting
+fault that affected long threads.
 
 ### AI (optional, and off unless you add your own key)
 
