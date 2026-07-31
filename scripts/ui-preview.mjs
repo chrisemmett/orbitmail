@@ -60,6 +60,24 @@ const folders = accounts.flatMap((a) => [
   { id: a.id + '-drafts', accountId: a.id, name: 'Drafts', type: 'drafts', unreadCount: 0, totalCount: 0 }
 ])
 
+// Sender HTML for the thread fixture. Written the way real mail is: a table
+// wrapper with presentational attributes, and colours in inline style
+// attributes, which is the only place they survive the sanitizer (it forbids
+// <style>, so a head stylesheet never applies).
+const BODY_HTML = [
+  '<div style="color:#1a1a1a;font-family:Arial,sans-serif">' +
+    '<p>Can we move the launch to the 14th? That gives the printers a week of slack.</p>' +
+    '<p style="color:#333">Happy either way, but I would rather not cut it fine.</p>' +
+    '<p><a href="https://example.com/schedule" style="color:#1155cc">The current schedule</a></p>' +
+    '</div>',
+  '<div><p>Works for me. I will let Priya know about the pricing page.</p>' +
+    '<p><em>Sent from a device that sets no colours.</em></p></div>',
+  '<table bgcolor="#ffffff" width="100%"><tr><td>' +
+    '<p>Then the 14th it is — I will tell the printers.</p>' +
+    '<p>Priya, does that still work for the pricing page copy?</p>' +
+    '</td></tr></table>'
+]
+
 // Where a caller needs a particular shape. Anything not listed falls through to
 // the generic rule below.
 const OVERRIDES = {
@@ -115,7 +133,15 @@ const OVERRIDES = {
     subject: 'Q3 launch date',
     snippet: '…', date: Date.now() - (3 - i) * 3600000,
     isRead: true, isStarred: false, flagColor: null, hasAttachments: false,
-    bodyText: 'Message ' + (i + 1) + ' of the conversation.', bodyHtml: null,
+    bodyText: 'Message ' + (i + 1) + ' of the conversation.',
+    // All three carry HTML, because the dark-mode contrast bug only appears in
+    // sender HTML and a null body can never show it. Each is one of the three
+    // states worth looking at: message 1 sets dark text and no background (the
+    // common case — the sender assumed a white page), message 3 sets a white
+    // background and no text colour (the same bug from the other side: our own
+    // light text lands on the sender's white table), and message 2 sets no
+    // colour at all, so in dark mode it must stay dark like the app around it.
+    bodyHtml: BODY_HTML[i],
     attachments: []
   })),
   // A stored summary, so the panel renders without an API key. Shaped as

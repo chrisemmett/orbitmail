@@ -318,6 +318,18 @@ async function main() {
     logLevel: 'silent'
   })
 
+  // Reachable here only because the classifier is deliberately string work and
+  // not a DOM walk: this script runs in plain node, where there is no DOM at
+  // all (DOMPurify itself could not run).
+  await build({
+    entryPoints: [join(root, 'src/utils/emailColorScheme.ts')],
+    bundle: true,
+    format: 'cjs',
+    platform: 'node',
+    outfile: join(outDir, 'emailColorScheme.cjs'),
+    logLevel: 'silent'
+  })
+
   installWindowStub()
   const require = createRequire(import.meta.url)
   const store = require(outfile)
@@ -932,6 +944,72 @@ async function main() {
     const bare = applySuggestion('ro', 2, contact('rob@x.com'))
     ok('a contact with no display name inserts the bare address',
       bare.value === 'rob@x.com, ', JSON.stringify(bare.value))
+  }
+
+  // -------------------------------------------------------------------------
+  section('Dark mode: mail written for a white page gets one')
+  // -------------------------------------------------------------------------
+  {
+    const { assumesLightBackground } = require(join(outDir, 'emailColorScheme.cjs'))
+
+    // The two shapes that were actually reported as unreadable.
+    ok('dark text with no background asks for a light page',
+      assumesLightBackground('<div style="color:#1a1a1a">Hello</div>'))
+    ok('a white background with no text colour asks for one too',
+      assumesLightBackground('<table bgcolor="#ffffff"><tr><td>Hello</td></tr></table>'))
+
+    // The whole point of classifying rather than always papering: mail that
+    // sets nothing, and mail that brought its own dark theme, must stay dark.
+    ok('mail that sets no colour at all is left on the theme',
+      !assumesLightBackground('<div><p>Hello</p><em>and again</em></div>'))
+    ok('a dark background with light text is left alone',
+      !assumesLightBackground('<td style="background-color:#101014;color:#ffffff">Hi</td>'))
+    ok('light text on its own is left alone — it is already readable on dark',
+      !assumesLightBackground('<div style="color:#ffffff">Hi</div>'))
+
+    // `background-color` contains the string `color`, so a substring search
+    // would read a dark background as dark *text* and paper the message —
+    // exactly backwards. Properties are compared whole for this reason.
+    ok('a dark background is not mistaken for dark text',
+      !assumesLightBackground('<div style="background-color:#000000">Hi</div>'))
+
+    // Colours that paint nothing imply nothing about the page.
+    ok('transparent is not a light background',
+      !assumesLightBackground('<div style="background:transparent">Hi</div>'))
+    ok('a fully transparent rgba is not a light background',
+      !assumesLightBackground('<div style="background:rgba(255,255,255,0)">Hi</div>'))
+    ok('a background image with no colour is not a light background',
+      !assumesLightBackground('<div style="background:url(cid:x) no-repeat">Hi</div>'))
+
+    // The formats real mail actually uses.
+    ok('a three-digit hex is read', assumesLightBackground('<p style="color:#333">Hi</p>'))
+    ok('rgb() is read', assumesLightBackground('<p style="color:rgb(20, 20, 20)">Hi</p>'))
+    ok('a named colour is read', assumesLightBackground('<font color="black">Hi</font>'))
+    ok('<font color> is read', assumesLightBackground('<font color="#222222">Hi</font>'))
+
+    // `bgcolor=` ends in `color=`, so the <font color> pattern must not match
+    // inside it. The case that discriminates is a *dark* bgcolor: read as a
+    // background it is fine under our light text and nothing happens, but read
+    // as text it looks unreadable and the message is papered for no reason.
+    // A light bgcolor would not catch this — it is flagged either way.
+    ok('a dark bgcolor is not read as dark text',
+      !assumesLightBackground('<table bgcolor="#111111"><tr><td>Hi</td></tr></table>'))
+    ok('a light bgcolor still asks for a page',
+      assumesLightBackground('<table bgcolor="white"><tr><td>Hi</td></tr></table>'))
+
+    // Judged against the dark theme's own surface at the AA bar rather than a
+    // guess at what counts as "dark", which puts the boundary between #777
+    // (3.6:1 on #1e1e24, fails) and #888 (4.6:1, passes). Both sides asserted,
+    // because a threshold only tested from one side can be anywhere.
+    ok('grey text that fails contrast on our dark surface asks for a page',
+      assumesLightBackground('<p style="color:#777777">Hi</p>'))
+    ok('grey text that passes contrast does not',
+      !assumesLightBackground('<p style="color:#888888">Hi</p>'))
+    ok('and light grey is comfortably left alone',
+      !assumesLightBackground('<p style="color:#cccccc">Hi</p>'))
+
+    ok('an empty body asks for nothing', !assumesLightBackground(''))
+    ok('a null body asks for nothing', !assumesLightBackground(null))
   }
 
   console.log(

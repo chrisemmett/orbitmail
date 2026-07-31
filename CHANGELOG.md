@@ -11,6 +11,13 @@ number moves for anything substantial.
 
 ### Fixed
 
+- **Dark mode no longer shows unreadable email text.** Messages written for a
+  white page — black text on no background, or text sitting on the sender's own
+  white table — came out near-invisible against the dark theme. Those messages
+  now render on a light card, the way the sender intended, while the rest of the
+  app stays dark. Mail that sets no colours of its own, or that brings its own
+  dark styling, is unchanged.
+
 - **New mail no longer notifies you twice.** A message that arrived while the app
   was watching for push could also be picked up by the periodic check a moment
   later, and each announced it. They now agree on which message they are talking

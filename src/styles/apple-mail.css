@@ -2268,6 +2268,31 @@ textarea {
   text-decoration: underline;
 }
 
+/* Mail whose own colours only make sense on a light page (see
+   utils/emailColorScheme.ts) gets that page, rather than being repainted.
+   Dark mode only: in light mode this surface already matches --bg-main, so the
+   rule would be a no-op, and gating it keeps the light theme provably
+   unchanged. The values are the light theme's --bg-elevated and
+   --text-primary, not fresh ones, so a message reads as the app in daylight
+   rather than as a stray white box. */
+:root[data-theme='dark'] .email-html-paper {
+  background: #ffffff;
+  color: #18181f;
+  border-radius: var(--radius-sm);
+  padding: 16px;
+  /* The sender assumed a page, not a card, so give the content the same
+     breathing room a page edge would and let wide tables scroll rather than
+     spill over the rounded corner. */
+  overflow-x: auto;
+}
+
+/* Inside the paper the accent link colour is the light theme's, since that is
+   the background it now sits on. A colour the sender set inline still wins,
+   which is intended — this only covers links they left unstyled. */
+:root[data-theme='dark'] .email-html-paper a {
+  color: #5b5fe8;
+}
+
 .compose-attachments {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));

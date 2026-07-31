@@ -108,9 +108,12 @@ reach renderer logic: the main-process suite must not import renderer code. It
 covers the optimistic-UI invariants — a refresh landing mid-delete must not
 resurrect the row, a rejected op must release the hold so the rollback restores
 it, and the selection advances to the next row down. It also bundles
-`RecipientInput.tsx` for the address-token math behind recipient autocomplete —
-the same trick works for any pure renderer logic. Run it after touching
-`src/stores/` or that component. Details in DEVELOPERS.md → Store tests.
+`RecipientInput.tsx` for the address-token math behind recipient autocomplete,
+and `src/utils/emailColorScheme.ts` for the dark-mode contrast rule that decides
+whether a message renders on a light surface — the same trick works for any pure
+renderer logic, which is why that classifier is string work and not a DOM walk.
+Run it after touching `src/stores/`, either of those, or the reader's body
+rendering. Details in DEVELOPERS.md → Store tests.
 
 The larger one is `npm run test:imap` — a growing suite of checks against a real GreenMail server in Docker, inside a windowless Electron main process (the DB needs `app.getPath`, and `better-sqlite3` is built for Electron's ABI). It covers the sync layer (STARTTLS, sync, UIDVALIDITY rebuild, IDLE reconnect, send, lane contention), the security controls (OAuth loopback `state`, credential handling, attachment classification), account-data hygiene (removal deletes AI tasks; freelist reclaim), and pure-logic invariants (launcher badge signal, IPC contract, docs-match-code). It runs in CI on every push. Run it locally after touching anything in `electron/services/`. Details in DEVELOPERS.md → Integration tests.
 
