@@ -2670,6 +2670,35 @@ async function main(): Promise<void> {
     const packagedWmClass = pkg.build?.linux?.desktop?.entry?.StartupWMClass
     ok('the packaged entry’s StartupWMClass matches the app name',
       packagedWmClass === appName, `${packagedWmClass} vs ${appName}`)
+
+    // `desktopName` is top-level metadata, not a `build.linux` option — putting
+    // it under linux fails electron-builder's schema outright, which is the
+    // first thing anyone acting on the build warning tries.
+    ok('desktopName is declared where electron-builder reads it',
+      typeof pkg.desktopName === 'string' && pkg.build?.linux?.desktopName === undefined,
+      `top-level=${pkg.desktopName} linux=${pkg.build?.linux?.desktopName}`)
+
+    // With syncDesktopName the *installed filename* is derived from
+    // desktopName, while LINUX_DESKTOP_ENTRY_ID is hardcoded and used both for
+    // app.setDesktopName (Electron's app_id on Wayland) and for the libunity
+    // object path behind the launcher badge. Changing one without the other
+    // renames the file out from under both, and nothing else would notice.
+    ok('desktopName matches the hardcoded desktop entry id',
+      pkg.desktopName === LINUX_DESKTOP_ENTRY_ID,
+      `${pkg.desktopName} vs ${LINUX_DESKTOP_ENTRY_ID}`)
+    ok('syncDesktopName is on, so the filename follows desktopName',
+      pkg.build?.linux?.syncDesktopName === true,
+      String(pkg.build?.linux?.syncDesktopName))
+
+    // The one that would actually be silently wrong: electron-builder derives
+    // StartupWMClass from desktopName minus the suffix, and only our explicit
+    // `desktop.entry` (applied last in its deepAssign) keeps it at the real
+    // WM_CLASS. Dropping the explicit value — which is what the warning's own
+    // docs suggest — would write "orbit-mail" while the window announces
+    // "Orbit Mail", reintroducing the mismatch that left the badge homeless.
+    ok('the explicit StartupWMClass differs from what desktopName would derive',
+      packagedWmClass !== pkg.desktopName.replace(/\.desktop$/, ''),
+      `explicit=${packagedWmClass} derived=${pkg.desktopName.replace(/\.desktop$/, '')}`)
   }
 
   // -------------------------------------------------------------------------
