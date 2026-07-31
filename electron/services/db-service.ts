@@ -466,6 +466,14 @@ export function getInboxFolderIds(): string[] {
 }
 
 export interface LatestInboxMessage {
+  /**
+   * The row this notification would be about. Carried so the notifier can tell
+   * whether it is about to repeat itself: IDLE and the safety-net poll announce
+   * new mail independently, and without an identity the only possible guard is
+   * "was I noisy recently", which lets the same message through twice as soon as
+   * the two land more than a few seconds apart.
+   */
+  id: string
   accountLabel: string
   from: string
   subject: string
@@ -484,7 +492,12 @@ export function getLatestInboxMessage(): LatestInboxMessage | null {
   // filtering in JS keeps the muted check next to isSenderMuted rather than
   // rebuilding its address matching in SQL.
   const rows = db
-    .select({ from: messages.from, subject: messages.subject, accountId: messages.accountId })
+    .select({
+      id: messages.id,
+      from: messages.from,
+      subject: messages.subject,
+      accountId: messages.accountId
+    })
     .from(messages)
     .where(and(inArray(messages.folderId, inboxIds), blockedDrizzleCondition(blockedFor('unified'))))
     .orderBy(desc(messages.date))
@@ -496,6 +509,7 @@ export function getLatestInboxMessage(): LatestInboxMessage | null {
 
   const account = db.select().from(accounts).where(eq(accounts.id, row.accountId)).get()
   return {
+    id: row.id,
     accountLabel: account?.email || account?.displayName || 'Orbit Mail',
     from: row.from,
     subject: row.subject

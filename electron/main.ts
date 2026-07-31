@@ -18,6 +18,7 @@ import type {
   Provider
 } from '../shared/types'
 import { configureLinuxDesktopIntegration, getAppIconPath } from './app-icon'
+import { takeNewMailNotice } from './services/new-mail-notice'
 import {
   approveAttachmentPath,
   isAttachmentApproved,
@@ -155,7 +156,6 @@ let composeWindow: BrowserWindow | null = null
 // already dealt with the message — it is in Sent and its draft row is gone — so
 // the close must not run the keep-or-discard flow that an ordinary close does.
 let composeSentAndClosing = false
-let lastNotificationAt = 0
 
 /**
  * The main window if it is still there, null once it has gone.
@@ -424,21 +424,17 @@ function senderName(from: string): string {
 }
 
 function showNewMailNotification(count: number): void {
-  // Both callers (the poll's onNewMailArrived and the IDLE push handler) route
-  // through here, so one guard covers both. Deliberately not gated further up
-  // in the sync layer: the unread badge and the tray count must keep updating
-  // whether or not the user wants to be interrupted about it.
-  if (getAppState().desktopNotifications === false) return
+  // Whether to interrupt, and about what, is decided in `takeNewMailNotice` —
+  // both announcing paths (the IDLE push handler and the safety-net poll) route
+  // through here, and one of them is usually about mail the other has already
+  // announced. Deliberately not gated further up in the sync layer: the unread
+  // badge and the tray count must keep updating whether or not the user wants to
+  // be interrupted about it.
   if (!Notification.isSupported()) return
-  if (Date.now() - lastNotificationAt < 5000) return
 
-  // Muted and blocked senders are already excluded from this, so a null result
-  // with mail in the inbox means everything recent is from someone the user
-  // asked not to be interrupted about. Say nothing rather than raising a
-  // contentless "you have a new message" — that is the interruption they muted.
-  const latest = getLatestInboxMessage()
-  if (!latest) return
-  lastNotificationAt = Date.now()
+  const notice = takeNewMailNotice(count)
+  if (!notice) return
+  const latest = notice.message
 
   // Account on the (bold) title line; sender and subject in the body, each
   // truncated so the notification stays within a sensible width.
