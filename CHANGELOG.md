@@ -7,7 +7,10 @@ which keeps decisions rather than just tasks.
 Versions follow [semantic versioning](https://semver.org/). Before 1.0 the minor
 number moves for anything substantial.
 
-## Unreleased
+## 0.5.4 — 2026-07-31
+
+Three fixes to things you would have noticed while using it: dark mode, and
+being told about the same email twice.
 
 ### Fixed
 
@@ -20,7 +23,6 @@ number moves for anything substantial.
   same treatment, so a reply is readable while you write it.
 - **The composer's formatting toolbar is no longer a white bar in dark mode**,
   and neither is the panel shown when you drag a file onto a message.
-
 - **New mail no longer notifies you twice.** A message that arrived while the app
   was watching for push could also be picked up by the periodic check a moment
   later, and each announced it. They now agree on which message they are talking
