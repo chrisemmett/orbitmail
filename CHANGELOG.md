@@ -7,7 +7,10 @@ which keeps decisions rather than just tasks.
 Versions follow [semantic versioning](https://semver.org/). Before 1.0 the minor
 number moves for anything substantial.
 
-## Unreleased
+## 0.5.3 — 2026-07-31
+
+A single fix, shipped on its own because of what it touches: on very long
+conversations, replies were going to the wrong people.
 
 ### Fixed
 
