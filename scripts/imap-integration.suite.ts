@@ -8,7 +8,7 @@
 // GreenMail's plain IMAP port does not advertise STARTTLS, which makes it an
 // accurate stand-in for the downgrade case the TLS check cares about.
 import { app } from 'electron'
-import { mkdtempSync, rmSync, writeFileSync, unlinkSync } from 'fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, unlinkSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { execFileSync } from 'child_process'
@@ -1421,6 +1421,110 @@ async function main(): Promise<void> {
       crash.describeUnexpectedError(new Error('')))
     ok('a huge message is truncated rather than filling the screen',
       crash.describeUnexpectedError(new Error('x'.repeat(5000))).length < 300)
+  }
+
+  // -------------------------------------------------------------------------
+  section('A blank window must leave evidence and a way out')
+  // -------------------------------------------------------------------------
+  {
+    // A render error unmounts the React tree and leaves a white window with the
+    // renderer process still *alive* — nothing crashes, so nothing is logged,
+    // and the stack is in a console the user cannot open. Observed exactly that
+    // way: title bar still counting unread mail, renderer at 199MB, page blank.
+    const crash = await import('../electron/services/crash-report')
+
+    const entry = crash.formatErrorLogEntry(
+      {
+        source: 'render',
+        message: 'Cannot read properties of null (reading \'map\')',
+        stack: 'TypeError: ...\n    at MessageList',
+        componentStack: '\n    in MessageList\n    in App',
+        window: 'main'
+      },
+      Date.UTC(2026, 7, 3, 9, 30, 0)
+    )
+    ok('an entry is timestamped, so "when did this happen" is answerable',
+      entry.includes('2026-08-03T09:30:00.000Z'), entry.split('\n')[0])
+    ok('it records the source, the window and the message',
+      entry.includes('render (main)') && entry.includes('reading \'map\''), entry.split('\n')[0])
+    ok('the stack and component stack are kept — the message alone rarely locates it',
+      entry.includes('at MessageList') && entry.includes('in App'), JSON.stringify(entry))
+    ok('entries are separated so the log can be split back apart',
+      entry.endsWith('\n\n'), JSON.stringify(entry.slice(-4)))
+
+    // Log growth: an app that blanks in a loop must not fill the disk.
+    // Entries carry a stack in reality, so a realistic one is ~1KB — enough
+    // that a few hundred failures actually reach the cap. Sized deliberately:
+    // an earlier version of this check used bare messages, never exceeded the
+    // budget, and so asserted nothing about trimming at all.
+    let log = ''
+    for (let i = 0; i < 300; i++) {
+      log = crash.appendToErrorLog(
+        log,
+        crash.formatErrorLogEntry(
+          { source: 'render', message: `error ${i}`, stack: 'at frame\n'.repeat(60) },
+          0
+        )
+      )
+    }
+    ok('the log actually reached the cap, so trimming is under test',
+      log.length > crash.ERROR_LOG_MAX_BYTES / 2, `${log.length} bytes`)
+    ok('the log stays bounded under repeated failures',
+      log.length <= crash.ERROR_LOG_MAX_BYTES, `${log.length} bytes`)
+    // Derived from the log rather than hard-coded: an expectation written as a
+    // literal index goes stale the moment the loop above changes, and a stale
+    // expectation fails for the wrong reason.
+    const indices = [...log.matchAll(/render: error (\d+)/g)].map((m) => Number(m[1]))
+    ok('and keeps the newest entries rather than the oldest',
+      indices[indices.length - 1] === 299 && indices[0] > 0,
+      `kept ${indices[0]}..${indices[indices.length - 1]}`)
+    // Trimming by bytes rather than by entry would cut a stack in half, and
+    // half a stack reads as a different error.
+    ok('trimming drops whole entries, never half of one',
+      log
+        .split('\n\n')
+        .filter((e) => e.trim())
+        .every((e) => /^\[[^\]]+\] render: error \d+\n(at frame\n)*at frame$/.test(e.trim())),
+      JSON.stringify(log.split('\n\n')[0]?.slice(0, 60)))
+
+    // A single entry bigger than the whole budget still has to survive: a log
+    // that discards what it was just told about is worse than an oversized one.
+    const huge = crash.formatErrorLogEntry(
+      { source: 'render', message: 'x'.repeat(crash.ERROR_LOG_MAX_BYTES * 2) },
+      0
+    )
+    ok('an oversized entry is kept rather than discarded',
+      crash.appendToErrorLog('', huge).includes('xxxx'))
+
+    // The recovery path itself: both handlers must be attached to the main
+    // window, and the composer must NOT be reloaded out from under a draft.
+    const mainSource = readFileSync('electron/main.ts', 'utf8')
+    ok('the main window watches for a dead renderer',
+      /watchForRendererFailure\(mainWindow, 'main', true\)/.test(mainSource))
+    ok('the compose window reports but is not reloaded',
+      /watchForRendererFailure\(composeWindow, 'compose', false\)/.test(mainSource))
+    ok('a dead renderer is reloaded rather than left as a white rectangle',
+      /render-process-gone/.test(mainSource) && /webContents\.reload\(\)/.test(mainSource))
+    ok('a clean exit is not treated as a crash to recover from',
+      /'clean-exit'/.test(mainSource))
+    // Unresponsive is logged, not reloaded — a long render recovers on its own,
+    // and reloading mid-compose would be worse than the freeze.
+    ok('an unresponsive renderer is recorded but not reloaded',
+      /'unresponsive'/.test(mainSource) &&
+        !/on\('unresponsive'[\s\S]{0,200}reload\(\)/.test(mainSource))
+
+    // The renderer half: without a boundary, React 18 unmounts everything.
+    const entryPoint = readFileSync('src/main.tsx', 'utf8')
+    ok('the app is wrapped in an error boundary',
+      /<ErrorBoundary>/.test(entryPoint) && /<App \/>/.test(entryPoint))
+    ok('errors a boundary cannot see are reported too',
+      /addEventListener\('error'/.test(entryPoint) &&
+        /addEventListener\('unhandledrejection'/.test(entryPoint))
+    const boundary = readFileSync('src/components/ErrorBoundary.tsx', 'utf8')
+    ok('the crash screen offers a way back without quitting',
+      /location\.reload\(\)/.test(boundary))
+    ok('and reports before it renders, so a failed report still leaves the way out',
+      boundary.indexOf('reportRendererError') < boundary.indexOf('crash-screen'))
   }
 
   // -------------------------------------------------------------------------

@@ -268,6 +268,13 @@ cannot read your mail. See [INSTALL.md](INSTALL.md#two-google-screens-that-are-e
 Your organisation may block OAuth access to IMAP and SMTP; that setting is your
 administrator's.
 
+**The window has gone blank**  
+Click **Reload** on the panel that appears. If the window is blank with no
+panel, close and reopen Orbit Mail — your mail is stored on this computer, so
+nothing is lost either way. It writes what happened to `renderer-errors.log` in
+your settings folder (`~/.config/orbit-mail/`), which is the useful thing to
+attach if you report it.
+
 **Sync errors in the status bar**  
 Click **Retry**, or **Re-authenticate** if it is an account problem.
 

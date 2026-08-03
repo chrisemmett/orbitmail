@@ -308,6 +308,17 @@ export interface PersistedAppState {
  * without a StatusNotifier host), and `setAsDefaultProtocolClient` silently
  * no-ops without an installed .desktop file — which is every `npm run dev` run.
  */
+/** What the renderer reports when it has fallen over. See `app.reportRendererError`. */
+export interface RendererErrorReport {
+  source: 'render' | 'window'
+  message: string
+  stack?: string
+  /** React's component stack, when an error boundary supplied one. */
+  componentStack?: string
+  /** Which window it came from, so a composer failure is distinguishable. */
+  window?: string
+}
+
 export interface PlatformCapabilities {
   trayActive: boolean
   notificationsSupported: boolean
@@ -579,6 +590,13 @@ export interface OrbitMailAPI {
      */
     onToast: (callback: (message: string) => void) => () => void
     onUnexpectedError: (callback: (message: string) => void) => () => void
+    /**
+     * The renderer fell over. Written to `renderer-errors.log` in the profile
+     * directory, because a render error blanks the window while leaving the
+     * process alive — nothing crashes, so without this nothing is recorded and
+     * the only evidence is a console the user never opened.
+     */
+    reportRendererError: (report: RendererErrorReport) => Promise<void>
     /** Whether OS-level encryption (safeStorage) is available for stored secrets. */
     getSecureStorageStatus: () => Promise<{ available: boolean }>
     /**

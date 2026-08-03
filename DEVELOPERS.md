@@ -1295,6 +1295,58 @@ orbit-mail/
 
 Local database path: `~/.config/orbit-mail/data/orbit-mail.db`
 
+## When the window goes blank
+
+Reported from a running app: a white window, the title bar still counting unread
+mail (`Orbit Mail (37)`), and — checked with `ps` at the time — **the renderer
+process still alive at ~199MB**. Nothing had crashed. Nothing was logged.
+
+That is the signature of a **render-time exception with no error boundary**.
+React 18 unmounts the whole tree when a render throws, so the document is left
+empty while the process keeps running; the main process is unaffected, which is
+why the title kept updating. There was no way back except quitting, and no
+record of the cause anywhere — the stack was in a DevTools console belonging to
+a window the user cannot open.
+
+Two mechanisms produce that same white window, and both are now handled:
+
+| Mechanism | Symptom | Handling |
+|---|---|---|
+| Render throws | tree unmounts, **process alive** | `ErrorBoundary` (`src/components/ErrorBoundary.tsx`) renders a recovery panel with a **Reload** button |
+| Renderer process dies | window survives, **process gone** | `render-process-gone` in `watchForRendererFailure` reloads the window |
+
+Neither existed before; a `mainWindow?.…` guard does not help with either,
+because a live `BrowserWindow` with a dead renderer is neither null nor
+destroyed.
+
+**Everything is written to `renderer-errors.log`** in the profile directory —
+timestamped, with the stack and React's component stack. The log is the point of
+the change rather than a by-product: this class of failure destroys its own
+evidence, so a fix that only recovers the window guarantees the next occurrence
+is equally unfixable. `appendToErrorLog` caps it at 64KB and drops **whole
+entries** from the front, because trimming by bytes cuts a stack in half and
+half a stack reads as a different error.
+
+Three deliberate non-behaviours:
+
+- **The composer is reported but never reloaded.** It holds text the user is
+  part-way through; a reload restores only what autosave already took, so losing
+  the last few sentences silently would be worse than the blank window. Main
+  window state lives in SQLite, so reloading it costs nothing.
+- **`unresponsive` is logged, not recovered.** A long synchronous render
+  recovers on its own, and reloading out from under someone mid-compose is worse
+  than a freeze.
+- **`clean-exit` is not treated as a crash** — that is the window closing
+  normally, and reloading it would resurrect a window the user just closed.
+
+Errors in event handlers, promises and timers never reach a boundary at all;
+`src/main.tsx` installs `error` and `unhandledrejection` listeners so those are
+reported too. They do **not** raise the crash screen — the UI is still usable,
+and replacing it because one async call rejected would be worse than the bug.
+
+**Root cause of the reported incident is still unknown.** What is fixed is that
+it is now recoverable and, next time, diagnosable.
+
 ## Security posture
 
 What the app defends against, and the tests that keep it that way. All of this
