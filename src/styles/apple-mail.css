@@ -2114,6 +2114,14 @@ textarea {
   margin-bottom: 3px;
 }
 
+/* An action the user owes, among the ones other people owe. The list is worth
+   showing whole — what you are waiting on is as useful as what you owe — but
+   yours should be findable without reading the owners one by one. */
+.reader-ai-action-yours {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
 .tasks-modal {
   max-width: 560px;
   width: 100%;

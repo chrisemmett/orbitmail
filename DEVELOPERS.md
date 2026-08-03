@@ -129,6 +129,56 @@ The AI features — per-message **Analyze**, **Draft reply**, the conversation
 
 `electron/services/ai-service.ts` uses `@anthropic-ai/sdk` with structured output (`messages.parse` against a JSON schema, one per feature). Message content is sent to Anthropic only when the user triggers a feature. On **Analyze**, the user can opt to include a message's attachments for extra context — the UI prompts first because attachments increase token usage.
 
+### Every action names an owner
+
+`AiAnalysis.actionItems` and `AiThreadAnalysis.actionItems` are both
+`ActionItem[]` (`{action, owner}`) and are generated from one shared
+`ACTION_ITEM_SCHEMA`, so "who owes this" reads the same whether you are looking
+at a single message or a whole conversation.
+
+The single-message list used to be plain strings, and the prompt said *"Only put
+things the USER needs to do in actionItems"*. That produced a list which was
+either the user's actions or empty — and an empty list is ambiguous in the way
+that matters: it cannot distinguish "nothing here is yours" from "the model
+found nothing". It also threw away the half of a message that is often the point
+of reading it, which is what somebody *else* has undertaken to do. Both lists now
+carry everyone's actions; the renderer sorts the user's first and emphasises
+them (`isOwnedByUser`, `.reader-ai-action-yours`).
+
+`owner` is model output about people, so it is a **presentation hint only** — it
+decides ordering and emphasis, never anything that acts on the user's behalf.
+Matching is on the literal string `"You"`, which the schema asks for explicitly.
+
+**Cached analyses written before this are upgraded on read**, not invalidated:
+`normalizeCachedAnalysis` maps a bare string to `{action, owner: 'You'}`. That
+is not a guess — the prompt that produced those strings emitted only the user's
+own actions, so `"You"` is what they meant. Invalidating instead would re-bill
+the user for analyses they had already paid for, the moment they reopened a
+message; leaving them alone would render every cached row as an empty bullet,
+because the renderer reads `.action` off what is actually a string.
+
+### Detail level
+
+The schema field descriptions are where "how much detail" is set, and they say
+it in sentences rather than token counts: a message summary is *"a short
+paragraph — usually three to six sentences"*, a thread summary *"usually four to
+eight"*, and both list the specifics worth carrying (dates, amounts, names, what
+changed). `keyContext` and `decisions` ask for facts stated in full rather than
+alluded to.
+
+The prompt draws the line that matters — **more detail means saying more about
+what is there, never inventing more**:
+
+> Be specific and substantial: prefer a full account to a terse one … Do not
+> invent deadlines or facts that aren't in the email or its attachments, and do
+> not pad a list with filler to make it longer.
+
+Without that sentence, "be more detailed" reads to a model as licence to
+speculate, and a padded action list is worse than a short one — it costs the
+user time and can put a deadline in their head that nobody set. `test:imap`
+asserts both halves are present, so a future prompt edit cannot drop the
+constraint while keeping the instruction.
+
 ### What "include attachments" can actually read
 
 `buildAttachmentBlocks` decides this, and the decision is constrained by the
@@ -141,16 +191,20 @@ the model as text *we* extracted.
 |---|---|
 | PDF | native `document` block |
 | PNG / JPEG / GIF / WebP | native `image` block |
-| `text/*`, JSON, XML, YAML, CSV, Markdown, HTML | read as UTF-8, inlined |
-| `.docx` / `.xlsx` / `.pptx` | unzipped and flattened to text locally by `office-text.ts` |
+| `text/*`, JSON, XML, YAML, CSV, Markdown, `.ics`, `.vcf`, config and diff files | read as UTF-8, inlined |
+| HTML | flattened with `stripHtml` first — the markup is not what the page says |
+| `.docx` / `.xlsx` / `.pptx` | unzipped and flattened to text by `office-text.ts` |
+| `.odt` / `.ods` / `.odp` | same reader, ODF vocabulary |
+| `.rtf` | decoded by `rtf-text.ts` |
 | everything else | **not sent** — named in `skippedAttachments` |
 
-`electron/services/office-text.ts` is a ~250-line ZIP reader (central directory
-+ `zlib.inflateRawSync`) plus a tag strip. No dependency, and the file never
-leaves the machine — the alternative, uploading it for the code-execution
+`electron/services/office-text.ts` is a ZIP reader (central directory +
+`zlib.inflateRawSync`) plus per-format extraction; `rtf-text.ts` is a scanner
+for the one common format that isn't a container. No dependency, and the file
+never leaves the machine — the alternative, uploading it for the code-execution
 sandbox, would send users' attachments to Anthropic wholesale.
 
-Two details that are load-bearing rather than incidental:
+Three details that are load-bearing rather than incidental:
 
 - **Text comes from run elements (`w:t`, `a:t`) only, never from stripping tags
   across the part.** OOXML stores numbers as element text too, so a blanket
@@ -161,16 +215,42 @@ Two details that are load-bearing rather than incidental:
   row by row.** A sheet stores string cells as indices, so without the table it
   reads as a column of integers, and without rows nothing pairs a label with
   its figure.
+- **Every element regex matches the self-closing form as its own alternative.**
+  `<c\b[^>]*(?:\/>|>…<\/c>)` reads as "either shape of a cell" and is not:
+  `[^>]*` swallows the `/`, the `>` branch matches instead, and the lazy body
+  runs on to the *next* element's closing tag. Two elements become one — an
+  empty cell takes its neighbour's value, and in ODF an empty `<text:p/>`
+  absorbs the paragraph after it. Real documents are full of both, and the
+  merged output still contains the text, so the damage is a lost column or a
+  lost line rather than anything that looks like a parse failure.
+
+RTF is a scanner rather than a container reader, and the same principle drives
+it: the *non-text* parts are what matter. `\fonttbl`, `\colortbl`, `\info`, any
+`{\*\…}` destination and embedded `\pict` data are skipped as groups, because
+stripping control words naively yields a document that opens with
+"Times New Roman;Arial;" and several thousand hex digits. `\bin` ends the
+extraction outright rather than risk emitting binary as text.
 
 **Not handled, deliberately:** the legacy OLE formats (`.doc`/`.xls`/`.ppt`,
-which are not ZIPs), OpenDocument (`.odt`/`.ods`/`.odp`), encrypted documents,
-ZIP64 archives, and images embedded *inside* a document. Each returns null and
+which are not ZIPs), iWork (`.pages`/`.numbers`/`.key` — ZIPs, but the payload
+is a binary protobuf variant), encrypted documents, ZIP64 archives, and images
+embedded *inside* a document. Each returns null and
 lands in `skippedAttachments`, which is cached with the analysis and rendered
 under it — a body-only answer looks exactly like a complete one, so the caveat
 has to outlive the toast that used to be the only signal. That is the bug this
 existed to fix: an "Include attachments" run on a meeting agenda silently sent
 the body alone and produced a summary telling the user to go and read the
 agenda.
+
+**Attachment text is fenced with `fenceUntrusted`, like a message body**, and
+the filename in the heading above it — which sits *outside* the fence, because
+it is a label we write — is stripped of newlines and marker lookalikes first.
+An attachment is written by whoever sent the mail, so it is exactly as
+untrusted as the body, and a document is the *better* hiding place for an
+injected instruction: the user is less likely to have opened it than to have
+read the message. This was not true of the original attachment support, and
+adding formats is what made it worth fixing — every format added is more
+sender-controlled text reaching the prompt.
 
 ### Reading a long conversation
 

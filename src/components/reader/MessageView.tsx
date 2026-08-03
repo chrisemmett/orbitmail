@@ -3,7 +3,7 @@ import type {
   AiAnalysis,
   DraftTone,
   MessageDetail,
-  ThreadActionItem
+  ActionItem
 } from '../../../shared/types'
 import { sanitizeEmailHtml } from '../../utils/sanitizeEmailHtml'
 import { assumesLightBackground } from '../../utils/emailColorScheme'
@@ -588,7 +588,7 @@ export function MessageView() {
           ) : aiAnalysis ? (
             <div className="reader-ai-body">
               <p className="reader-ai-summary">{aiAnalysis.summary}</p>
-              <AiSection title="Action Items" items={aiAnalysis.actionItems} />
+              <AiOwnerSection title="Action Items" items={aiAnalysis.actionItems} />
               <AiSection title="Questions" items={aiAnalysis.questions} />
               <AiSection title="Key Context" items={aiAnalysis.keyContext} />
               <AiSkippedAttachments files={aiAnalysis.skippedAttachments} />
@@ -661,14 +661,19 @@ function AiSection({ title, items }: { title: string; items: string[] }) {
 // Action items from a conversation carry an owner. Same markup as AiSection so
 // the two panels read as one thing; the owner leads because "who owes this" is
 // the question a thread summary is being asked.
-function AiOwnerSection({ title, items }: { title: string; items: ThreadActionItem[] }) {
+function AiOwnerSection({ title, items }: { title: string; items: ActionItem[] }) {
   if (!items || items.length === 0) return null
+  // The user's own actions lead. The list is worth reading precisely because it
+  // includes other people's, but "what do I have to do" is the question being
+  // asked, and it should not have to be found among the answers to it.
+  const mine = items.filter(isOwnedByUser)
+  const theirs = items.filter((item) => !isOwnedByUser(item))
   return (
     <div className="reader-ai-section">
       <div className="reader-ai-section-title">{title}</div>
       <ul>
-        {items.map((item, i) => (
-          <li key={i}>
+        {[...mine, ...theirs].map((item, i) => (
+          <li key={i} className={isOwnedByUser(item) ? 'reader-ai-action-yours' : undefined}>
             <strong>{item.owner}</strong>
             {' — '}
             {item.action}
@@ -677,6 +682,15 @@ function AiOwnerSection({ title, items }: { title: string; items: ThreadActionIt
       </ul>
     </div>
   )
+}
+
+/**
+ * Whether an action is the user's. The owner is model output, so this is a
+ * presentation hint — it decides emphasis and ordering, never anything that
+ * acts on the user's behalf.
+ */
+function isOwnedByUser(item: ActionItem): boolean {
+  return item.owner.trim().toLowerCase() === 'you'
 }
 
 function formatSize(bytes: number): string {
@@ -1100,7 +1114,7 @@ const ThreadMessage = memo(function ThreadMessage({
           ) : aiAnalysis ? (
             <div className="reader-ai-body">
               <p className="reader-ai-summary">{aiAnalysis.summary}</p>
-              <AiSection title="Action Items" items={aiAnalysis.actionItems} />
+              <AiOwnerSection title="Action Items" items={aiAnalysis.actionItems} />
               <AiSection title="Questions" items={aiAnalysis.questions} />
               <AiSection title="Key Context" items={aiAnalysis.keyContext} />
               <AiSkippedAttachments files={aiAnalysis.skippedAttachments} />

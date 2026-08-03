@@ -1,19 +1,23 @@
 /**
- * Text extraction for OOXML attachments (.docx / .xlsx / .pptx).
+ * Text extraction for ZIP-based document attachments — OOXML (.docx / .xlsx /
+ * .pptx) and OpenDocument (.odt / .ods / .odp).
  *
- * The Anthropic API does not accept Office formats: a `document` content block
+ * The Anthropic API does not accept any of these: a `document` content block
  * takes PDF or plain text only, and the Files API's supported-type table maps
  * everything else to the code-execution sandbox. So a .docx that reaches the
  * model has to arrive as text we extracted ourselves. Before this existed, an
  * "Include attachments" analysis of a meeting agenda silently sent the body
  * alone and produced a summary that told the user to read the attachment.
  *
- * OOXML files are ZIP containers of XML parts, so this is an unzip plus a tag
- * strip — no dependency, nothing leaves the machine. Deliberately *not*
- * handled, and left to the caller's skipped list: the legacy OLE formats
- * (.doc/.xls/.ppt, not ZIPs at all), OpenDocument (.odt/.ods/.odp), encrypted
- * documents (which are OLE wrappers around the ciphertext), and ZIP64
- * archives. Images inside a document are not extracted — only its text.
+ * Both families are ZIP containers of XML parts, so one unzip serves both and
+ * the two differ only in which part to read and which elements hold text — no
+ * dependency, nothing leaves the machine.
+ *
+ * Deliberately *not* handled, and left to the caller's skipped list: the legacy
+ * OLE formats (.doc/.xls/.ppt, not ZIPs at all), encrypted documents (OLE
+ * wrappers around the ciphertext), iWork (.pages/.numbers/.key — ZIPs, but the
+ * payload is a binary protobuf variant, not XML), and ZIP64 archives. Images
+ * inside a document are not extracted — only its text.
  */
 
 import { readFileSync } from 'fs'
@@ -32,13 +36,37 @@ const MAX_EOCD_SCAN = 0xffff + 22
 // caller truncates to its own model budget well below this; this is a backstop.
 const MAX_EXTRACTED_CHARS = 200_000
 
-const OOXML_MIME_TYPES = new Set([
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  'application/vnd.openxmlformats-officedocument.presentationml.presentation'
-])
+// A repeated ODF cell can claim the rest of the row (`number-columns-repeated
+// = "16384"` is how a spreadsheet says "and the remaining columns are empty").
+// Expanding that literally turns one cell into a row of thousands, so repeats
+// are honoured only up to here — enough for a real run of repeated values.
+const MAX_ODF_CELL_REPEAT = 50
 
-type OfficeKind = 'word' | 'excel' | 'powerpoint'
+const DOCUMENT_MIME_TYPES: Record<string, DocumentKind> = {
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'word',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'excel',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'powerpoint',
+  'application/vnd.oasis.opendocument.text': 'odf-text',
+  'application/vnd.oasis.opendocument.spreadsheet': 'odf-sheet',
+  'application/vnd.oasis.opendocument.presentation': 'odf-presentation'
+}
+
+const DOCUMENT_EXTENSIONS: Array<[RegExp, DocumentKind]> = [
+  [/\.docx$/i, 'word'],
+  [/\.xlsx$/i, 'excel'],
+  [/\.pptx$/i, 'powerpoint'],
+  [/\.odt$/i, 'odf-text'],
+  [/\.ods$/i, 'odf-sheet'],
+  [/\.odp$/i, 'odf-presentation']
+]
+
+type DocumentKind =
+  | 'word'
+  | 'excel'
+  | 'powerpoint'
+  | 'odf-text'
+  | 'odf-sheet'
+  | 'odf-presentation'
 
 interface ZipEntry {
   name: string
@@ -48,33 +76,28 @@ interface ZipEntry {
 }
 
 /**
- * Which OOXML flavour this attachment is, or null if it isn't one. Senders
- * (and some IMAP servers) label attachments `application/octet-stream`, so the
- * extension is consulted whenever the MIME type doesn't settle it.
+ * Which ZIP-based document flavour this attachment is, or null if it isn't
+ * one. Senders (and some IMAP servers) label attachments
+ * `application/octet-stream`, so the extension is consulted whenever the MIME
+ * type doesn't settle it.
  */
-export function officeKind(mime: string, filename: string): OfficeKind | null {
-  const byMime = OOXML_MIME_TYPES.has(mime)
-    ? mime.endsWith('.document')
-      ? 'word'
-      : mime.endsWith('.sheet')
-        ? 'excel'
-        : 'powerpoint'
-    : null
+export function officeKind(mime: string, filename: string): DocumentKind | null {
+  const byMime = DOCUMENT_MIME_TYPES[mime]
   if (byMime) return byMime
 
-  if (/\.docx$/i.test(filename)) return 'word'
-  if (/\.xlsx$/i.test(filename)) return 'excel'
-  if (/\.pptx$/i.test(filename)) return 'powerpoint'
+  for (const [pattern, kind] of DOCUMENT_EXTENSIONS) {
+    if (pattern.test(filename)) return kind
+  }
   return null
 }
 
 /**
- * Read an OOXML file and return its text, or null if it can't be read as one
- * (not a ZIP, ZIP64, encrypted, missing the expected parts). A null return is
- * the caller's signal to report the attachment as skipped rather than to fail
- * the analysis.
+ * Read a ZIP-based document and return its text, or null if it can't be read
+ * as one (not a ZIP, ZIP64, encrypted, missing the expected parts). A null
+ * return is the caller's signal to report the attachment as skipped rather
+ * than to fail the analysis.
  */
-export function extractOfficeText(path: string, kind: OfficeKind): string | null {
+export function extractOfficeText(path: string, kind: DocumentKind): string | null {
   let buf: Buffer
   try {
     buf = readFileSync(path)
@@ -103,6 +126,17 @@ export function extractOfficeText(path: string, kind: OfficeKind): string | null
       break
     case 'powerpoint':
       text = extractPowerPoint(read, entries)
+      break
+    // Every ODF flavour keeps its content in one part; only the element that
+    // frames a "row" or a "slide" differs.
+    case 'odf-text':
+      text = odfToText(read('content.xml') ?? '')
+      break
+    case 'odf-sheet':
+      text = extractOdfSheet(read('content.xml') ?? '')
+      break
+    case 'odf-presentation':
+      text = extractOdfPresentation(read('content.xml') ?? '')
       break
   }
 
@@ -162,6 +196,110 @@ function extractPowerPoint(read: (name: string) => string | null, entries: ZipEn
   return out.join('\n')
 }
 
+// ---------------------------------------------------------------------------
+// OpenDocument
+//
+// Same principle as OOXML, different vocabulary. Text is read only from
+// paragraph elements (`text:p`, `text:h`) rather than by stripping the whole
+// part, so document settings, styles and drawing geometry — which are element
+// text here too — stay out of the result.
+// ---------------------------------------------------------------------------
+
+// Self-closing first and separately, for the reason given in extractOdfSheet:
+// `<text:p/>` is how ODF writes a blank line, and folding it into one
+// alternation makes it swallow the paragraph that follows — the text survives,
+// but the break between them does not. The empty branch captures nothing, so
+// it yields the blank line it stands for.
+const ODF_PARAGRAPHS = /<text:(?:p|h)\b[^>]*\/>|<text:(p|h)\b[^>]*>([\s\S]*?)<\/text:\1>/g
+
+/** The text of one `text:p`/`text:h` body, with ODF's whitespace elements. */
+function odfParagraphText(inner: string): string {
+  const withWhitespace = inner
+    .replace(/<text:tab\b[^>]*\/?>/g, '\t')
+    .replace(/<text:line-break\b[^>]*\/?>/g, '\n')
+    // Runs of spaces are collapsed by XML, so ODF encodes them explicitly:
+    // <text:s/> is one space, text:c says how many.
+    .replace(/<text:s\b[^>]*text:c="(\d+)"[^>]*\/?>/g, (_, n: string) =>
+      ' '.repeat(Math.min(Number.parseInt(n, 10) || 1, 100))
+    )
+    .replace(/<text:s\b[^>]*\/?>/g, ' ')
+  return decodeEntities(stripTags(withWhitespace))
+}
+
+/** Every paragraph in a fragment, one per line. */
+function odfToText(xml: string): string {
+  const lines: string[] = []
+  let total = 0
+  for (const match of xml.matchAll(ODF_PARAGRAPHS)) {
+    const line = odfParagraphText(match[2] ?? '')
+    total += line.length
+    lines.push(line)
+    if (total > MAX_EXTRACTED_CHARS) break
+  }
+  return lines
+    .join('\n')
+    .replace(/[ \t]+$/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .slice(0, MAX_EXTRACTED_CHARS)
+}
+
+/** `.ods` — one tab-separated line per `table:table-row`, as for `.xlsx`. */
+function extractOdfSheet(xml: string): string {
+  const out: string[] = []
+  const tables = xml.match(/<table:table\b[^>]*>[\s\S]*?<\/table:table>/g) ?? []
+
+  for (const table of tables) {
+    const name = /\btable:name="([^"]*)"/.exec(table)?.[1]
+    const rows: string[] = []
+
+    for (const row of table.match(/<table:table-row\b[^>]*>[\s\S]*?<\/table:table-row>/g) ?? []) {
+      const cells: string[] = []
+      for (const cell of row.match(
+        // Self-closing form first, and as its own alternative rather than a
+        // group inside one: `[^>]*(?:\/>|>…)` looks equivalent but is not —
+        // `[^>]*` swallows the `/`, the `>` branch then matches, and the lazy
+        // body runs on to the *next* cell's closing tag, merging two cells and
+        // applying the empty one's repeat count to its neighbour's value.
+        /<table:table-cell\b[^>]*\/>|<table:table-cell\b[^>]*>[\s\S]*?<\/table:table-cell>/g
+      ) ?? []) {
+        const text = Array.from(cell.matchAll(ODF_PARAGRAPHS))
+          .map((m) => odfParagraphText(m[2] ?? ''))
+          .join(' ')
+        // A repeat on an *empty* cell is padding to the end of the row and is
+        // dropped with the other trailing empties below; only real values are
+        // worth reproducing.
+        const repeat = text
+          ? Math.min(
+              Number.parseInt(/\btable:number-columns-repeated="(\d+)"/.exec(cell)?.[1] ?? '1', 10) || 1,
+              MAX_ODF_CELL_REPEAT
+            )
+          : 1
+        for (let i = 0; i < repeat; i++) cells.push(text)
+      }
+      while (cells.length > 0 && cells[cells.length - 1] === '') cells.pop()
+      if (cells.length > 0) rows.push(cells.join('\t'))
+    }
+
+    if (rows.length === 0) continue
+    if (tables.length > 1 && name) out.push(`[${name}]`)
+    out.push(...rows)
+  }
+  return out.join('\n')
+}
+
+/** `.odp` — `draw:page` is a slide; frames within it hold the text. */
+function extractOdfPresentation(xml: string): string {
+  const out: string[] = []
+  const pages = xml.match(/<draw:page\b[^>]*>[\s\S]*?<\/draw:page>/g) ?? []
+  pages.forEach((page, index) => {
+    const text = odfToText(page)
+    if (!text.trim()) return
+    out.push(`[Slide ${index + 1}]`)
+    out.push(text)
+  })
+  return out.join('\n')
+}
+
 /** `<si>` entries, in order — a sheet cell of type `s` indexes into this. */
 function parseSharedStrings(xml: string): string[] {
   const out: string[] = []
@@ -182,7 +320,10 @@ function parseSheetRows(xml: string, strings: string[]): string[] {
   const rows: string[] = []
   for (const row of xml.match(/<row\b[^>]*>[\s\S]*?<\/row>/g) ?? []) {
     const cells: string[] = []
-    for (const cell of row.match(/<c\b[^>]*(?:\/>|>[\s\S]*?<\/c>)/g) ?? []) {
+    // Self-closing cells (`<c r="B2"/>`, an empty cell carrying only a style)
+    // must be their own alternative — see the note in extractOdfSheet for what
+    // the combined form does to the cell after them.
+    for (const cell of row.match(/<c\b[^>]*\/>|<c\b[^>]*>[\s\S]*?<\/c>/g) ?? []) {
       cells.push(cellValue(cell, strings))
     }
     // Trailing empties are styling artefacts, not data.

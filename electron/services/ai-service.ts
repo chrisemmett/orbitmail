@@ -3,6 +3,7 @@ import { safeStorage } from 'electron'
 import Anthropic from '@anthropic-ai/sdk'
 import { jsonSchemaOutputFormat } from '@anthropic-ai/sdk/helpers/json-schema'
 import type {
+  ActionItem,
   AiAnalysis,
   AiPriority,
   AiThreadAnalysis,
@@ -15,6 +16,7 @@ import type {
 import { getRawSqlite } from '../db'
 import { ensureAttachmentLocal } from './attachment-fetch'
 import { extractOfficeText, officeKind } from './office-text'
+import { extractRtfText, isRtf } from './rtf-text'
 import {
   getMessage,
   listAccounts,
@@ -147,27 +149,51 @@ export function isConfigured(): boolean {
 // Analysis
 // ---------------------------------------------------------------------------
 
+// One action and who owes it, shared by the message and thread schemas so the
+// two panels describe ownership the same way.
+const ACTION_ITEM_SCHEMA = {
+  type: 'object',
+  properties: {
+    action: {
+      type: 'string',
+      description:
+        'One specific outstanding thing that must be done, as a short imperative. Include what it concerns and any date, amount or name the email attaches to it.'
+    },
+    owner: {
+      type: 'string',
+      description:
+        'Who owes it: "You" when it is the user, otherwise the person\'s name or address exactly as the email gives it. "Unassigned" only when the email genuinely does not say.'
+    }
+  },
+  required: ['action', 'owner'],
+  additionalProperties: false
+} as const
+
 const ANALYSIS_SCHEMA = {
   type: 'object',
   properties: {
     summary: {
       type: 'string',
-      description: 'A one or two sentence plain-language summary of the email.'
+      description:
+        'What the email says and what it amounts to, in a short paragraph — usually three to six sentences. Cover what it is about, what is being asked or told, and the specifics that matter: dates, times, places, amounts, names, and anything that has changed since a previous message. Attachments that were provided are part of the email: summarize what they contain rather than noting that they exist. Long enough that the reader does not need to open the email to know where they stand; not a restatement of every line.'
     },
     actionItems: {
       type: 'array',
-      items: { type: 'string' },
-      description: 'Specific things the user needs to do. Empty if none.'
+      items: ACTION_ITEM_SCHEMA,
+      description:
+        'Every outstanding action the email implies, each with its owner — the user\'s and other people\'s alike. Empty only if the email genuinely asks for nothing of anyone.'
     },
     questions: {
       type: 'array',
       items: { type: 'string' },
-      description: 'Open questions the user needs to answer or information requested of them.'
+      description:
+        'Open questions the user needs to answer or information requested of them, each with enough context to be answerable on its own.'
     },
     keyContext: {
       type: 'array',
       items: { type: 'string' },
-      description: 'Important decisions, deadlines, or facts worth remembering.'
+      description:
+        'Decisions, deadlines, figures, arrangements and other facts worth remembering, stated in full rather than alluded to — a reader should not have to open the email to use them.'
     }
   },
   required: ['summary', 'actionItems', 'questions', 'keyContext'],
@@ -221,14 +247,17 @@ export function isMessageFromUser(from: string, userEmails: readonly string[]): 
   return userEmails.some((email) => email.length > 0 && email.toLowerCase() === sender)
 }
 
-const SYSTEM_PROMPT = `You are an expert assistant that analyzes a single email and tells the user what they need to do about it.
+export const ANALYSIS_SYSTEM_PROMPT = `You are an expert assistant that analyzes a single email and tells the user what they need to do about it.
 
-CRITICAL: Pay close attention to who sent the message.
-- If the email is FROM the user, the user is the one making a request or asking for something — that is NOT an action for the user to complete.
-- If the email is TO the user (from someone else), that person is making a request of the user — that IS an action for the user.
-Only put things the USER needs to do in actionItems.
+CRITICAL: Pay close attention to who sent the message, because it decides who owes what.
+- If the email is FROM the user, the user is the one making a request — what they asked for is owed by the recipient, not by the user.
+- If the email is TO the user (from someone else), what that person asks for is owed by the user.
 
-Be specific and actionable. Do not invent deadlines or facts that aren't in the email. Leave a list empty rather than padding it with generic filler.
+List every outstanding action, whoever owes it, and name the owner on each: "You" for the user, otherwise the person as the email names them, or "Unassigned" when it genuinely does not say. Do not silently drop other people's actions — the user needs to see what they are waiting on as well as what they owe. Never assign an action to the user just because the email arrived in their inbox.
+
+Be specific and substantial: prefer a full account to a terse one, and carry the details — dates, times, places, amounts, names — into the text rather than referring to them. If attachments are provided, treat their contents as part of the email and summarize what they say; do not merely note that they exist or tell the user to read them.
+
+Do not invent deadlines or facts that aren't in the email or its attachments, and do not pad a list with filler to make it longer — detail means saying more about what is there, never inventing more. Leave a list empty rather than padding it.
 
 ${UNTRUSTED_CONTENT_RULE}`
 
@@ -266,9 +295,36 @@ function friendlyError(err: unknown): string {
 }
 
 function isTextualAttachment(mime: string, filename: string): boolean {
+  // RTF is `text/rtf` at some senders, but it is markup that needs decoding
+  // rather than text to inline — it has its own branch.
+  if (isRtf(mime, filename)) return false
   if (mime.startsWith('text/')) return true
-  if (/^application\/(json|xml|x-yaml|yaml|csv)$/i.test(mime)) return true
-  return /\.(txt|md|markdown|csv|tsv|json|xml|log|ya?ml|html?)$/i.test(filename)
+  if (/^application\/(json|xml|x-yaml|yaml|csv|toml|sql)$/i.test(mime)) return true
+  // Calendar invitations and contact cards are plain text and are among the
+  // most useful things a mail attachment can contain — a meeting invite says
+  // when the meeting is.
+  if (/^text\/(calendar|vcard|x-vcard)$/i.test(mime)) return true
+  return /\.(txt|md|markdown|csv|tsv|json|xml|log|ya?ml|html?|ics|vcf|ini|conf|cfg|toml|rst|sql|diff|patch)$/i.test(
+    filename
+  )
+}
+
+/** Whether an attachment's text is HTML that should be flattened before sending. */
+function isHtmlAttachment(mime: string, filename: string): boolean {
+  return mime === 'text/html' || /\.html?$/i.test(filename)
+}
+
+/**
+ * A filename for the heading above an attachment's content. The name is chosen
+ * by the sender and sits *outside* the fence — it is a label we are writing —
+ * so it must not be able to introduce lines of its own or forge a fence marker.
+ */
+function safeAttachmentLabel(filename: string): string {
+  return filename
+    .replace(/[\r\n]+/g, ' ')
+    .split(UNTRUSTED_OPEN).join('<<<email-content>>>')
+    .split(UNTRUSTED_CLOSE).join('<<<end-email-content>>>')
+    .slice(0, 200)
 }
 
 // Build Anthropic content blocks for a message's attachments. Text-like files
@@ -289,8 +345,9 @@ async function buildAttachmentBlocks(
     const isPdf = mime === 'application/pdf'
     const isText = isTextualAttachment(mime, att.filename)
     const office = officeKind(mime, att.filename)
+    const rtf = isRtf(mime, att.filename)
 
-    if (!isImage && !isPdf && !isText && !office) {
+    if (!isImage && !isPdf && !isText && !office && !rtf) {
       skipped.push(att.filename)
       continue
     }
@@ -302,21 +359,39 @@ async function buildAttachmentBlocks(
         continue
       }
 
-      if (isText || office) {
-        // An Office document that can't be unzipped (encrypted, ZIP64, or a
-        // legacy .doc misnamed .docx) reports as skipped rather than sending
-        // the model nothing under an attachment heading.
-        let text = office ? extractOfficeText(localPath, office) : readFileSync(localPath, 'utf8')
-        if (text === null) {
+      if (isText || office || rtf) {
+        // A document that can't be decoded (encrypted, ZIP64, a legacy .doc
+        // misnamed .docx, an .rtf that isn't one) reports as skipped rather
+        // than sending the model nothing under an attachment heading.
+        let text: string | null
+        if (office) text = extractOfficeText(localPath, office)
+        else if (rtf) text = extractRtfText(readFileSync(localPath, 'utf8'))
+        else {
+          const raw = readFileSync(localPath, 'utf8')
+          // An HTML attachment is markup around its text; sending the markup
+          // spends the budget on tags and buries what the page says.
+          text = isHtmlAttachment(mime, att.filename) ? stripHtml(raw) : raw
+        }
+        if (text === null || text.trim().length === 0) {
           skipped.push(att.filename)
           continue
         }
         if (text.length > MAX_ATTACHMENT_TEXT_CHARS) {
           text = text.slice(0, MAX_ATTACHMENT_TEXT_CHARS) + '\n... [truncated]'
         }
-        blocks.push({ type: 'text', text: `Attachment "${att.filename}" (${mime}):\n${text}` })
+        // Fenced like the message body. An attachment is written by whoever
+        // sent the mail, so it is exactly as untrusted — and a document is a
+        // *better* place to hide an instruction than the body, because the
+        // user is less likely to have read it.
+        blocks.push({
+          type: 'text',
+          text: `Attachment "${safeAttachmentLabel(att.filename)}" (${mime}):\n${fenceUntrusted(text)}`
+        })
       } else if (isImage) {
-        blocks.push({ type: 'text', text: `Attachment "${att.filename}" (image):` })
+        blocks.push({
+          type: 'text',
+          text: `Attachment "${safeAttachmentLabel(att.filename)}" (image):`
+        })
         blocks.push({
           type: 'image',
           source: {
@@ -326,7 +401,10 @@ async function buildAttachmentBlocks(
           }
         })
       } else {
-        blocks.push({ type: 'text', text: `Attachment "${att.filename}" (PDF):` })
+        blocks.push({
+          type: 'text',
+          text: `Attachment "${safeAttachmentLabel(att.filename)}" (PDF):`
+        })
         blocks.push({
           type: 'document',
           source: {
@@ -353,7 +431,11 @@ export async function analyzeMessage(
     const cached = getMessageAiAnalysis(messageId)
     if (cached) {
       try {
-        return { ...(JSON.parse(cached.json) as Omit<AiAnalysis, 'generatedAt' | 'cached'>), generatedAt: cached.at, cached: true }
+        return {
+          ...normalizeCachedAnalysis(JSON.parse(cached.json) as Record<string, unknown>),
+          generatedAt: cached.at,
+          cached: true
+        }
       } catch {
         // fall through and regenerate on malformed cache
       }
@@ -419,7 +501,7 @@ ${body || '(no body content)'}`)}`
         effort,
         format: jsonSchemaOutputFormat(ANALYSIS_SCHEMA)
       },
-      system: SYSTEM_PROMPT,
+      system: ANALYSIS_SYSTEM_PROMPT,
       messages: [{ role: 'user', content }]
     })
 
@@ -642,38 +724,26 @@ const THREAD_ANALYSIS_SCHEMA = {
     summary: {
       type: 'string',
       description:
-        'What this conversation is about and where it now stands, in two to four plain sentences.'
+        'What this conversation is about and where it now stands, in a short paragraph — usually four to eight sentences. Cover how it started, what has happened since, what is currently blocking or awaiting whom, and the specifics that matter: dates, amounts, names and any position a participant has taken. Long enough that the reader does not need to open the thread to know where it stands.'
     },
     decisions: {
       type: 'array',
       items: { type: 'string' },
       description:
-        'Decisions the participants actually reached. A proposal nobody answered is not a decision. Empty if none were reached.'
+        'Decisions the participants actually reached, each stated in full — what was settled, and any date, figure or condition attached to it. A proposal nobody answered is not a decision. Empty if none were reached.'
     },
     actionItems: {
       type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          action: {
-            type: 'string',
-            description: 'One specific outstanding thing that must be done, as a short imperative.'
-          },
-          owner: {
-            type: 'string',
-            description:
-              'Who owes it: "You" when it is the user, otherwise the participant\'s name or address exactly as the conversation gives it. "Unassigned" only when the conversation genuinely does not say.'
-          }
-        },
-        required: ['action', 'owner'],
-        additionalProperties: false
-      },
+      // The same item shape the single-message analysis uses, so "who owes
+      // this" reads identically in both panels.
+      items: ACTION_ITEM_SCHEMA,
       description: 'Outstanding commitments only — nothing the thread shows as already done.'
     },
     openQuestions: {
       type: 'array',
       items: { type: 'string' },
-      description: 'Questions raised in the conversation that nobody has answered yet.'
+      description:
+        'Questions raised in the conversation that nobody has answered yet, each with enough context to be answerable on its own, and naming who asked where the conversation says.'
     }
   },
   required: ['summary', 'decisions', 'actionItems', 'openQuestions'],
@@ -1246,11 +1316,35 @@ export async function flagMessageAsTask(
 
 // Cached-only analysis fetch — never calls the API. Used to include an existing
 // AI summary when printing and to surface a stored summary when a message opens.
+/**
+ * Read a cached analysis body, upgrading the shape if it predates action-item
+ * owners.
+ *
+ * Analyses written before owners existed stored `actionItems` as bare strings,
+ * and the prompt that produced them emitted *only* the user's actions — so
+ * "You" is the correct owner for every one of them, not a guess. Without this
+ * the cached rows would render as blank bullets: the renderer reads `.action`
+ * and `.owner` off what is actually a string. Cheaper and less destructive
+ * than invalidating every cached analysis, which would silently re-bill the
+ * user for work they had already paid for the moment they reopened a message.
+ */
+export function normalizeCachedAnalysis(
+  parsed: Record<string, unknown>
+): Omit<AiAnalysis, 'generatedAt' | 'cached'> {
+  const items = Array.isArray(parsed.actionItems) ? parsed.actionItems : []
+  return {
+    ...(parsed as unknown as Omit<AiAnalysis, 'generatedAt' | 'cached'>),
+    actionItems: items.map((item) =>
+      typeof item === 'string' ? { action: item, owner: 'You' } : (item as ActionItem)
+    )
+  }
+}
+
 export function getCachedAnalysis(messageId: string): AiAnalysis | null {
   const cached = getMessageAiAnalysis(messageId)
   if (!cached) return null
   try {
-    const parsed = JSON.parse(cached.json) as Omit<AiAnalysis, 'generatedAt' | 'cached'>
+    const parsed = normalizeCachedAnalysis(JSON.parse(cached.json) as Record<string, unknown>)
     return { ...parsed, generatedAt: cached.at, cached: true }
   } catch {
     return null
