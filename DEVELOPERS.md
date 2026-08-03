@@ -127,7 +127,50 @@ MICROSOFT_TENANT_ID=common
 The AI features — per-message **Analyze**, **Draft reply**, the conversation
 **Summarize**, and the folder **Tasks** sweep — are off unless the user supplies an Anthropic API key. Unlike the OAuth credentials above, this key is **not** read from `.env`: it's entered in-app (✦ toolbar button → AI settings), encrypted with Electron `safeStorage`, and stored in the `app_preferences` table under `ai_api_key`. So there is nothing to configure at build time for AI.
 
-`electron/services/ai-service.ts` uses `@anthropic-ai/sdk` with structured output (`messages.parse` against a JSON schema, one per feature). Message content is sent to Anthropic only when the user triggers a feature. On **Analyze**, the user can opt to include a message's attachments for extra context (text extracted inline; images and PDFs sent as native content blocks) — the UI prompts first because attachments increase token usage.
+`electron/services/ai-service.ts` uses `@anthropic-ai/sdk` with structured output (`messages.parse` against a JSON schema, one per feature). Message content is sent to Anthropic only when the user triggers a feature. On **Analyze**, the user can opt to include a message's attachments for extra context — the UI prompts first because attachments increase token usage.
+
+### What "include attachments" can actually read
+
+`buildAttachmentBlocks` decides this, and the decision is constrained by the
+API, not by us: a `document` content block accepts **PDF or plain text and
+nothing else**, and the Files API maps every other type to the code-execution
+sandbox. So anything that is not a PDF, an image, or already text has to reach
+the model as text *we* extracted.
+
+| Attachment | How it is sent |
+|---|---|
+| PDF | native `document` block |
+| PNG / JPEG / GIF / WebP | native `image` block |
+| `text/*`, JSON, XML, YAML, CSV, Markdown, HTML | read as UTF-8, inlined |
+| `.docx` / `.xlsx` / `.pptx` | unzipped and flattened to text locally by `office-text.ts` |
+| everything else | **not sent** — named in `skippedAttachments` |
+
+`electron/services/office-text.ts` is a ~250-line ZIP reader (central directory
++ `zlib.inflateRawSync`) plus a tag strip. No dependency, and the file never
+leaves the machine — the alternative, uploading it for the code-execution
+sandbox, would send users' attachments to Anthropic wholesale.
+
+Two details that are load-bearing rather than incidental:
+
+- **Text comes from run elements (`w:t`, `a:t`) only, never from stripping tags
+  across the part.** OOXML stores numbers as element text too, so a blanket
+  strip prefixed one real agenda with `34817056216650` — a floating image's
+  coordinates. Matching runs also excludes field instructions (`w:instrText`)
+  and tracked-change deletions (`w:delText`) for free.
+- **Spreadsheet cells are resolved through `xl/sharedStrings.xml` and emitted
+  row by row.** A sheet stores string cells as indices, so without the table it
+  reads as a column of integers, and without rows nothing pairs a label with
+  its figure.
+
+**Not handled, deliberately:** the legacy OLE formats (`.doc`/`.xls`/`.ppt`,
+which are not ZIPs), OpenDocument (`.odt`/`.ods`/`.odp`), encrypted documents,
+ZIP64 archives, and images embedded *inside* a document. Each returns null and
+lands in `skippedAttachments`, which is cached with the analysis and rendered
+under it — a body-only answer looks exactly like a complete one, so the caveat
+has to outlive the toast that used to be the only signal. That is the bug this
+existed to fix: an "Include attachments" run on a meeting agenda silently sent
+the body alone and produced a summary telling the user to go and read the
+agenda.
 
 ### Reading a long conversation
 
