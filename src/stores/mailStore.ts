@@ -17,7 +17,13 @@ import type {
   DraftTone,
   PlatformCapabilities
 } from '../../shared/types'
-import { DEFAULT_AI_EFFORT, DEFAULT_AI_MODEL, type AiEffort } from '../../shared/ai-models'
+import {
+  DEFAULT_AI_DETAIL,
+  DEFAULT_AI_EFFORT,
+  DEFAULT_AI_MODEL,
+  type AiDetail,
+  type AiEffort
+} from '../../shared/ai-models'
 import {
   loadPersistedPreferences,
   scheduleSaveUiPreferences
@@ -43,6 +49,7 @@ export interface GlobalPreferences {
   handleMailtoLinks: boolean
   aiModel: string
   aiEffort: AiEffort
+  aiDetail: AiDetail
 }
 
 interface MailState {
@@ -115,6 +122,8 @@ interface MailState {
   // than being told, so an AI request never depends on the renderer.
   aiModel: string
   aiEffort: AiEffort
+  /** How much the summaries say. See `shared/ai-models.ts`. */
+  aiDetail: AiDetail
   // What this desktop can actually do; null until asked. Settings disables a
   // control rather than offering one that would do nothing.
   platformCapabilities: PlatformCapabilities | null
@@ -274,6 +283,7 @@ export const useMailStore = create<MailState>((set) => ({
   handleMailtoLinks: false,
   aiModel: DEFAULT_AI_MODEL,
   aiEffort: DEFAULT_AI_EFFORT,
+  aiDetail: DEFAULT_AI_DETAIL,
   platformCapabilities: null,
   showTasks: false,
   sweeping: false,

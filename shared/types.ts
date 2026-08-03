@@ -1,4 +1,4 @@
-import type { AiEffort } from './ai-models'
+import type { AiDetail, AiEffort } from './ai-models'
 
 export type Provider = 'gmail' | 'o365' | 'imap' | 'pop3'
 
@@ -305,6 +305,8 @@ export interface PersistedAppState {
    */
   aiModel?: string
   aiEffort?: AiEffort
+  /** How much the summaries say. Absent means the fuller default. */
+  aiDetail?: AiDetail
   window?: WindowPreferences
 }
 

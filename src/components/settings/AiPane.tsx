@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react'
 import {
+  AI_DETAILS,
   AI_EFFORTS,
   AI_MODELS,
+  resolveAiDetail,
   resolveAiEffort,
   resolveAiModel,
+  type AiDetail,
   type AiEffort
 } from '../../../shared/ai-models'
 import { useMailStore, setGlobalPreference } from '../../stores/mailStore'
@@ -14,6 +17,7 @@ export function AiPane() {
   const setToast = useMailStore((s) => s.setToast)
   const aiModel = useMailStore((s) => s.aiModel)
   const aiEffort = useMailStore((s) => s.aiEffort)
+  const aiDetail = useMailStore((s) => s.aiDetail)
   const [configured, setConfigured] = useState<boolean | null>(null)
   const [key, setKey] = useState('')
   const [saving, setSaving] = useState(false)
@@ -63,6 +67,7 @@ export function AiPane() {
 
   const modelHint = AI_MODELS.find((m) => m.id === resolveAiModel(aiModel))?.hint
   const effortHint = AI_EFFORTS.find((e) => e.value === resolveAiEffort(aiEffort))?.hint
+  const detailHint = AI_DETAILS.find((d) => d.value === resolveAiDetail(aiDetail))?.hint
 
   return (
     <>
@@ -119,9 +124,10 @@ export function AiPane() {
     <section className="settings-section">
       <h3>Model</h3>
       <p className="account-hint">
-        Which Claude model the AI features call, and how long it may think before answering.
-        Both affect what you are billed by Anthropic — a more capable model and a higher effort
-        cost more per message.
+        Which Claude model the AI features call, how long it may think before answering, and
+        how much the summaries say. All three affect what you are billed by Anthropic — a more
+        capable model and a higher effort cost more per message, and a fuller summary is more
+        of the output you pay for.
       </p>
 
       <label className="account-field">
@@ -155,6 +161,23 @@ export function AiPane() {
         </select>
       </label>
       {effortHint && <p className="account-hint">{effortHint}</p>}
+
+      <label className="account-field">
+        <span>Detail</span>
+        <select
+          value={resolveAiDetail(aiDetail)}
+          onChange={(event) =>
+            void setGlobalPreference('aiDetail', event.target.value as AiDetail)
+          }
+        >
+          {AI_DETAILS.map((detail) => (
+            <option key={detail.value} value={detail.value}>
+              {detail.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      {detailHint && <p className="account-hint">{detailHint}</p>}
 
       <p className="account-hint">
         A change applies to the next analysis, draft or sweep. Results already saved are kept —

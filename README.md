@@ -111,6 +111,9 @@ Off by default. Nothing is sent anywhere until you add an
   invitations and plain text. Older formats (`.doc`, `.xls`), Apple iWork files
   and password-protected documents it cannot read — it names those under the
   summary rather than quietly leaving them out.
+  Summaries come in **Full** or **Brief** — set it in Settings → AI. Brief is a
+  sentence or two and only what you need to act on, which also costs less per
+  message.
 - **Summarize** turns a long conversation into what it is about, what was
   decided, what is still outstanding and who owes it, and what nobody has
   answered. It reads the mail already on this computer, and says so when a
