@@ -3231,6 +3231,165 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Attached emails: read one level, name the rest')
+  // -------------------------------------------------------------------------
+  {
+    // A forwarded-as-attachment message is what "see below, what do you think?"
+    // arrives as, and what Orbit's own Forward as Attachment sends. The
+    // extraction is small; the bounds are the point.
+    const { isEmailAttachment, extractEmailText } = await import('../electron/services/eml-text')
+
+    const emlDir = mkdtempSync(join(tmpdir(), 'orbit-eml-'))
+    const writeEml = (name: string, body: string): string => {
+      const path = join(emlDir, name)
+      writeFileSync(path, body)
+      return path
+    }
+
+    try {
+      ok('message/rfc822 is recognised', isEmailAttachment('message/rfc822', 'whatever'))
+      ok('so is a .eml by extension',
+        isEmailAttachment('application/octet-stream', 'Forwarded.EML'))
+      ok('an ordinary attachment is not',
+        !isEmailAttachment('application/pdf', 'a.pdf') && !isEmailAttachment('text/plain', 'a.txt'))
+
+      const simple = writeEml('fwd.eml', [
+        'From: Jerry Cook <jerry.cook@folkestonerotary.org>',
+        'To: Rob Cowell <rob@example.com>',
+        'Subject: Club Council August 4th',
+        'Date: Thu, 30 Jul 2026 12:48:42 +0100',
+        'Content-Type: text/plain; charset=utf-8',
+        '',
+        'A reminder that the next meeting is at 6.30pm on Tuesday.'
+      ].join('\r\n'))
+      const text = (await extractEmailText(simple)) ?? ''
+      ok('the attached message yields its body',
+        text.includes('next meeting is at 6.30pm'), JSON.stringify(text))
+      // Matched on the addresses, not the display-name formatting: mailparser
+      // normalises `Jerry Cook` to `"Jerry Cook"`, and pinning its quoting
+      // style would make this fail on a dependency bump rather than a bug.
+      ok('and the four headers that say whose message it is',
+        /^From: .*jerry\.cook@folkestonerotary\.org/m.test(text) &&
+          /^To: .*rob@example\.com/m.test(text) &&
+          /^Subject: Club Council August 4th$/m.test(text) &&
+          /^Date: 2026-07-30T/m.test(text),
+        JSON.stringify(text))
+
+      // Routing headers are noise in a summary and cost tokens; only four are
+      // carried, so a header the sender adds cannot pad the prompt.
+      const noisy = writeEml('noisy.eml', [
+        'Received: from evil.example by mx.example; Thu, 30 Jul 2026 12:00:00 +0100',
+        'X-Mailer: something',
+        'From: Someone <someone@example.com>',
+        'Subject: Hello',
+        '',
+        'Body here.'
+      ].join('\r\n'))
+      const noisyText = (await extractEmailText(noisy)) ?? ''
+      // Asserted as an invariant over *every* line before the blank, not as a
+      // list of header names: naming two and matching them case-sensitively
+      // passed happily while `received:` and `x-mailer:` leaked through in the
+      // lower case mailparser actually produces.
+      const headerBlock = noisyText.split('\n\n')[0].split('\n')
+      ok('only the four chosen headers are emitted, whatever case they arrive in',
+        headerBlock.every((l) => /^(From|To|Date|Subject): /.test(l)),
+        JSON.stringify(headerBlock))
+
+      // An HTML-only message still has to reach the model as text.
+      const htmlOnly = writeEml('html.eml', [
+        'From: Sender <s@example.com>',
+        'Subject: HTML only',
+        'Content-Type: text/html; charset=utf-8',
+        '',
+        '<html><head><style>p{color:red}</style></head><body><p>Real content here.</p></body></html>'
+      ].join('\r\n'))
+      const htmlText = (await extractEmailText(htmlOnly)) ?? ''
+      ok('an HTML-only attached message is flattened to text',
+        htmlText.includes('Real content here') && !/<p>|color:red/.test(htmlText),
+        JSON.stringify(htmlText))
+
+      // The bound that matters: an attached message's own attachments are named
+      // and not read. Following them is unbounded — depth is chosen by whoever
+      // sent the mail — and each level multiplies what one analysis can cost.
+      const withAttachment = writeEml('carrier.eml', [
+        'From: Sender <s@example.com>',
+        'Subject: With a document',
+        'Content-Type: multipart/mixed; boundary="b1"',
+        '',
+        '--b1',
+        'Content-Type: text/plain',
+        '',
+        'See the attached agenda.',
+        '--b1',
+        'Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'Content-Disposition: attachment; filename="Agenda.docx"',
+        'Content-Transfer-Encoding: base64',
+        '',
+        'UEsDBBQAAAAIAA==',
+        '--b1--'
+      ].join('\r\n'))
+      const carrierText = (await extractEmailText(withAttachment)) ?? ''
+      ok('a nested attachment is named', carrierText.includes('Agenda.docx'), JSON.stringify(carrierText))
+      ok('and explicitly reported as not read',
+        /not read/i.test(carrierText), JSON.stringify(carrierText))
+      ok('the carrier message body still comes through',
+        carrierText.includes('See the attached agenda'), JSON.stringify(carrierText))
+
+      // An .eml inside an .eml must stop at one level rather than recursing.
+      const inner = [
+        'From: Inner <inner@example.com>',
+        'Subject: Inner subject',
+        '',
+        'INNER-BODY-MARKER'
+      ].join('\r\n')
+      const nestedEml = writeEml('nested.eml', [
+        'From: Outer <outer@example.com>',
+        'Subject: Outer subject',
+        'Content-Type: multipart/mixed; boundary="b2"',
+        '',
+        '--b2',
+        'Content-Type: text/plain',
+        '',
+        'Outer body.',
+        '--b2',
+        'Content-Type: message/rfc822',
+        'Content-Disposition: attachment; filename="inner.eml"',
+        '',
+        inner,
+        '--b2--'
+      ].join('\r\n'))
+      const nestedText = (await extractEmailText(nestedEml)) ?? ''
+      ok('an attached message inside an attached message is not followed',
+        !nestedText.includes('INNER-BODY-MARKER'), JSON.stringify(nestedText))
+      ok('the outer message is still read',
+        nestedText.includes('Outer body') && /Subject: Outer subject/.test(nestedText),
+        JSON.stringify(nestedText))
+
+      ok('a file that is not a message yields null',
+        (await extractEmailText(writeEml('junk.eml', 'not an email at all'))) === null)
+      ok('a missing file yields null',
+        (await extractEmailText(join(emlDir, 'nope.eml'))) === null)
+
+      // Headers are ours to write; a value carrying newlines must not be able
+      // to add lines that read like more of our label block.
+      const injected = writeEml('injected.eml', [
+        'From: "Real Sender"  <a@example.com>',
+        'Subject: Line one',
+        '',
+        'Body.'
+      ].join('\r\n'))
+      const injectedText = (await extractEmailText(injected)) ?? ''
+      const injectedBlock = injectedText.split('\n\n')[0].split('\n')
+      ok('exactly the headers we wrote appear, no more',
+        injectedBlock.length === 2 &&
+          injectedBlock.every((l) => /^(From|Subject): /.test(l)),
+        injectedBlock.join(' | '))
+    } finally {
+      rmSync(emlDir, { recursive: true, force: true })
+    }
+  }
+
+  // -------------------------------------------------------------------------
   section('Attachment text is as untrusted as the body')
   // -------------------------------------------------------------------------
   {
