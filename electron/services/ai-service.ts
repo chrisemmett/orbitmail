@@ -17,6 +17,8 @@ import { getRawSqlite } from '../db'
 import { ensureAttachmentLocal } from './attachment-fetch'
 import { extractOfficeText, officeKind } from './office-text'
 import { extractRtfText, isRtf } from './rtf-text'
+import { extractEmailText, isEmailAttachment } from './eml-text'
+import { stripHtml } from './html-text'
 import {
   getMessage,
   listAccounts,
@@ -336,19 +338,6 @@ Do not invent deadlines or facts that aren't in the email or its attachments, an
 ${UNTRUSTED_CONTENT_RULE}`
 
 
-function stripHtml(html: string): string {
-  return html
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
 function friendlyError(err: unknown): string {
   if (err instanceof Anthropic.AuthenticationError) {
     return 'Authentication failed. Check your Anthropic API key in AI settings.'
@@ -420,8 +409,9 @@ async function buildAttachmentBlocks(
     const isText = isTextualAttachment(mime, att.filename)
     const office = officeKind(mime, att.filename)
     const rtf = isRtf(mime, att.filename)
+    const email = isEmailAttachment(mime, att.filename)
 
-    if (!isImage && !isPdf && !isText && !office && !rtf) {
+    if (!isImage && !isPdf && !isText && !office && !rtf && !email) {
       skipped.push(att.filename)
       continue
     }
@@ -433,13 +423,14 @@ async function buildAttachmentBlocks(
         continue
       }
 
-      if (isText || office || rtf) {
+      if (isText || office || rtf || email) {
         // A document that can't be decoded (encrypted, ZIP64, a legacy .doc
         // misnamed .docx, an .rtf that isn't one) reports as skipped rather
         // than sending the model nothing under an attachment heading.
         let text: string | null
         if (office) text = extractOfficeText(localPath, office)
         else if (rtf) text = extractRtfText(readFileSync(localPath, 'utf8'))
+        else if (email) text = await extractEmailText(localPath)
         else {
           const raw = readFileSync(localPath, 'utf8')
           // An HTML attachment is markup around its text; sending the markup

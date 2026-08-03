@@ -108,9 +108,10 @@ Off by default. Nothing is sent anywhere until you add an
   difference between what you owe someone and what you asked of them.
   If the email has attachments you can include them, and it will read Word,
   Excel, PowerPoint and OpenDocument files, RTF, PDFs, images, calendar
-  invitations and plain text. Older formats (`.doc`, `.xls`), Apple iWork files
-  and password-protected documents it cannot read — it names those under the
-  summary rather than quietly leaving them out.
+  invitations, plain text, and an email forwarded to you as an attachment.
+  Older formats (`.doc`, `.xls`), Apple iWork files and password-protected
+  documents it cannot read — it names those under the summary rather than
+  quietly leaving them out.
   Summaries come in **Full** or **Brief** — set it in Settings → AI. Brief is a
   sentence or two and only what you need to act on, which also costs less per
   message.

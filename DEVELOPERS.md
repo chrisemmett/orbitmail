@@ -220,6 +220,7 @@ the model as text *we* extracted.
 | `.docx` / `.xlsx` / `.pptx` | unzipped and flattened to text by `office-text.ts` |
 | `.odt` / `.ods` / `.odp` | same reader, ODF vocabulary |
 | `.rtf` | decoded by `rtf-text.ts` |
+| `.eml` / `message/rfc822` | parsed by `eml-text.ts` — one level, see below |
 | everything else | **not sent** — named in `skippedAttachments` |
 
 `electron/services/office-text.ts` is a ZIP reader (central directory +
@@ -254,6 +255,31 @@ it: the *non-text* parts are what matter. `\fonttbl`, `\colortbl`, `\info`, any
 stripping control words naively yields a document that opens with
 "Times New Roman;Arial;" and several thousand hex digits. `\bin` ends the
 extraction outright rather than risk emitting binary as text.
+
+### An attached email is read one level deep
+
+A forwarded-as-attachment message is what "see below, what do you think?"
+arrives as, and what Orbit's own **Forward as Attachment** sends. `mailparser`
+was already a dependency, so the extraction is small — the bounds are the part
+worth stating, and all three were deferred until they could be decided rather
+than defaulted:
+
+- **It does not recurse.** An attached message can attach another. Depth is
+  chosen by whoever sent the mail, so following it is unbounded by construction,
+  and each level multiplies what a single analysis can cost. One level; the
+  nested message's own attachments are **named and not read** — the same bargain
+  `skippedAttachments` strikes, rather than letting an absence pass for nothing.
+- **Four headers, not the block.** From, To, Date, Subject. The rest is routing:
+  `Received` chains name intermediate hosts and `X-` headers carry whatever a
+  provider felt like, none of which helps a summary and all of which costs
+  tokens. `test:imap` asserts this as an invariant over *every* line of the
+  header block — the first version named two headers and matched them
+  case-sensitively, which passed while `received:` and `x-mailer:` leaked
+  through in the lower case mailparser actually produces.
+- **One fence, around the whole thing.** Fencing the parts separately would mean
+  writing our own labels *between* fenced regions from strings the sender
+  controls — and a `From:` line the sender chose is no more trustworthy than the
+  body beneath it. It is one block of sender-written data, so it gets one fence.
 
 **Not handled, deliberately:** the legacy OLE formats (`.doc`/`.xls`/`.ppt`,
 which are not ZIPs), iWork (`.pages`/`.numbers`/`.key` — ZIPs, but the payload

@@ -7,6 +7,15 @@ which keeps decisions rather than just tasks.
 Versions follow [semantic versioning](https://semver.org/). Before 1.0 the minor
 number moves for anything substantial.
 
+## Unreleased
+
+### Added
+
+- **An email forwarded to you as an attachment can now be summarised.** Analyze
+  reads the attached message — who it was from, when, and what it says — rather
+  than noting that a `.eml` arrived. If that message carried attachments of its
+  own they are named but not opened.
+
 ## 0.6.0 — 2026-08-03
 
 The AI features get a lot more useful, and there is a zoom. Attachments are now
