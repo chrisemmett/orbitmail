@@ -3231,6 +3231,74 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Text-only analysis must not pass for a complete one')
+  // -------------------------------------------------------------------------
+  {
+    // The other half of the skipped-attachment caveat. An analysis run
+    // "Text only" on a message that *has* readable attachments used to render
+    // identically to one that read them — the same illusion the caveat exists
+    // to break, from the other direction.
+    const kinds = await import('../shared/attachment-kinds')
+    const ai = await import('../electron/services/ai-service')
+
+    ok('a document we can read counts',
+      kinds.isReadableDocument(
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'Agenda.docx'
+      ) &&
+        kinds.isReadableDocument('application/pdf', 'notes.pdf') &&
+        kinds.isReadableDocument('message/rfc822', 'fwd.eml') &&
+        kinds.isReadableDocument('text/calendar', 'invite.ics'))
+
+    // The narrow question is the point: not "is there an attachment" but "is
+    // there one we could have read". Offering to include a .doc would be a lie.
+    ok('a format we cannot open does not count',
+      !kinds.isReadableDocument('application/msword', 'old.doc') &&
+        !kinds.isReadableDocument('application/vnd.ms-excel', 'old.xls'))
+    // 27% of messages with attachments in a real mailbox carry nothing but
+    // small images, and an attachment row has no disposition — so a logo and a
+    // screenshot are the same thing here. Prompting on those would make the
+    // caveat noise, which is what it was added to avoid.
+    ok('an image does not count, so a signature logo cannot nag',
+      !kinds.isReadableDocument('image/png', 'logo.png') &&
+        !kinds.isReadableDocument('image/jpeg', 'screenshot.jpg'))
+
+    // The flag has to be recorded either way: "ran without attachments" is a
+    // different claim from "there were none", and only the run knows which.
+    const source = readFileSync('electron/services/ai-service.ts', 'utf8')
+    ok('the analysis records whether attachments were included',
+      /attachmentsIncluded: options\.includeAttachments === true/.test(source))
+
+    // Absent means unknown, and unknown must stay silent — an analysis cached
+    // before the flag existed cannot say which way it ran.
+    const legacy = ai.normalizeCachedAnalysis({
+      summary: 'Old analysis',
+      actionItems: [],
+      questions: [],
+      keyContext: []
+    })
+    ok('a legacy analysis leaves the flag absent rather than guessing',
+      legacy.attachmentsIncluded === undefined, JSON.stringify(legacy.attachmentsIncluded))
+
+    const view = readFileSync('src/components/reader/MessageView.tsx', 'utf8')
+    ok('the reader stays silent unless the run explicitly declined them',
+      /analysis\.attachmentsIncluded !== false/.test(view))
+    ok('and only counts attachments it could actually have read',
+      /isReadableDocument\(a\.mimeType/.test(view))
+    ok('the caveat offers to re-run including them',
+      /analyzeMessage\(message\.id, true, true\)/.test(view))
+
+    // With the preference on there is nothing left to choose, so the menu goes.
+    ok('the always-include preference drives the button directly',
+      /!alwaysInclude/.test(view) && /run\(alwaysInclude\)/.test(view))
+    const prefs = readFileSync('electron/services/preferences-service.ts', 'utf8')
+    ok('and defaults to off, since attachments cost extra tokens',
+      /alwaysIncludeAttachments:\s*\n?\s*patch\.alwaysIncludeAttachments \?\? current\.alwaysIncludeAttachments \?\? false/.test(
+        prefs
+      ))
+  }
+
+  // -------------------------------------------------------------------------
   section('Attached emails: read one level, name the rest')
   // -------------------------------------------------------------------------
   {

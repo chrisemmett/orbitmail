@@ -5,6 +5,7 @@ import type {
   MessageDetail,
   ActionItem
 } from '../../../shared/types'
+import { isReadableDocument } from '../../../shared/attachment-kinds'
 import { sanitizeEmailHtml } from '../../utils/sanitizeEmailHtml'
 import { assumesLightBackground } from '../../utils/emailColorScheme'
 import { RemoteContentBar, useRemoteImageBlocking } from './RemoteContentBar'
@@ -153,7 +154,11 @@ function AnalyzeButton({ message, iconSize = 16 }: { message: MessageDetail; ico
   const aiAnalysis = useMailStore((s) => s.aiAnalysisById[message.id])
   const aiAnalyzingId = useMailStore((s) => s.aiAnalyzingId)
   const isAnalyzing = aiAnalyzingId === message.id
-  const hasAttachments = message.attachments.length > 0
+  const alwaysInclude = useMailStore((s) => s.alwaysIncludeAttachments)
+  // With the preference on there is nothing to choose, so the menu goes away
+  // and the button does the thing directly — a two-item menu whose answer is
+  // already settled is just an extra click.
+  const hasAttachments = message.attachments.length > 0 && !alwaysInclude
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
@@ -181,7 +186,7 @@ function AnalyzeButton({ message, iconSize = 16 }: { message: MessageDetail; ico
         className="reader-ai-btn"
         title={title}
         disabled={isAnalyzing}
-        onClick={() => run(false)}
+        onClick={() => run(alwaysInclude)}
       >
         <Sparkle size={iconSize} weight={aiAnalysis ? 'fill' : 'duotone'} />
         {label}
@@ -592,6 +597,7 @@ export function MessageView() {
               <AiSection title="Questions" items={aiAnalysis.questions} />
               <AiSection title="Key Context" items={aiAnalysis.keyContext} />
               <AiSkippedAttachments files={aiAnalysis.skippedAttachments} />
+              <AiDeclinedAttachments analysis={aiAnalysis} message={selectedMessage} />
             </div>
           ) : null}
         </div>
@@ -627,6 +633,51 @@ export function MessageView() {
           onClose={() => setContextMenu(null)}
         />
       )}
+    </div>
+  )
+}
+
+/**
+ * The other half of the skipped-attachment caveat: attachments that *could*
+ * have been read and were not, because the analysis was run text-only.
+ *
+ * Shown narrowly on purpose. The test is not "does this message have
+ * attachments" but "does it have one we could actually have read"
+ * (`isReadableDocument`), because on a real mailbox 27% of messages with
+ * attachments carry nothing but signature logos — and an attachment row has no
+ * disposition, so a logo and a screenshot are indistinguishable here. A nag on
+ * every corporate footer would be worse than the ambiguity it fixes.
+ *
+ * Silent when the flag is absent: analyses cached before it existed cannot say
+ * which way they ran, and guessing would be the same illusion again.
+ */
+function AiDeclinedAttachments({
+  analysis,
+  message
+}: {
+  analysis: AiAnalysis
+  message: MessageDetail
+}) {
+  if (analysis.attachmentsIncluded !== false) return null
+  const readable = message.attachments.filter((a) =>
+    isReadableDocument(a.mimeType || '', a.filename)
+  )
+  if (readable.length === 0) return null
+
+  return (
+    <div className="reader-ai-skipped">
+      {readable.length === 1
+        ? `${readable[0].filename} was not included in this analysis.`
+        : `${readable.length} attachments were not included in this analysis: ${readable
+            .map((a) => a.filename)
+            .join(', ')}.`}{' '}
+      <button
+        type="button"
+        className="reader-ai-inline-action"
+        onClick={() => void analyzeMessage(message.id, true, true)}
+      >
+        Include {readable.length === 1 ? 'it' : 'them'}
+      </button>
     </div>
   )
 }
@@ -1118,6 +1169,7 @@ const ThreadMessage = memo(function ThreadMessage({
               <AiSection title="Questions" items={aiAnalysis.questions} />
               <AiSection title="Key Context" items={aiAnalysis.keyContext} />
               <AiSkippedAttachments files={aiAnalysis.skippedAttachments} />
+              <AiDeclinedAttachments analysis={aiAnalysis} message={message} />
             </div>
           ) : null}
         </div>

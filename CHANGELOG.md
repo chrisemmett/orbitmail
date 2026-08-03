@@ -11,6 +11,13 @@ number moves for anything substantial.
 
 ### Added
 
+- **An analysis that skipped your attachments now says so**, and offers to
+  include them in a click. Previously a summary written from the covering note
+  alone looked exactly like one that had read the document. It only speaks up
+  when there is something it could actually have read, so a signature logo will
+  not prompt you.
+- **Always include attachments**, a new switch in Settings → AI, for anyone who
+  would rather never be asked. Off by default — attachments cost extra tokens.
 - **An email forwarded to you as an attachment can now be summarised.** Analyze
   reads the attached message — who it was from, when, and what it says — rather
   than noting that a `.eml` arrived. If that message carried attachments of its

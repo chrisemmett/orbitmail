@@ -111,7 +111,10 @@ Off by default. Nothing is sent anywhere until you add an
   invitations, plain text, and an email forwarded to you as an attachment.
   Older formats (`.doc`, `.xls`), Apple iWork files and password-protected
   documents it cannot read — it names those under the summary rather than
-  quietly leaving them out.
+  quietly leaving them out. If you analyse without attachments, it says so and
+  offers to include them, so a summary written from the covering note alone
+  never passes for one that read the document. Settings → AI has an **Always
+  include attachments** switch if you would rather it never asked.
   Summaries come in **Full** or **Brief** — set it in Settings → AI. Brief is a
   sentence or two and only what you need to act on, which also costs less per
   message.
@@ -192,8 +195,8 @@ The gear, or `Ctrl` + `,`. What you can change today:
   not work are not saved. Changing the address itself means removing the account
   and adding it again.
 - **AI** — your Anthropic API key, which Claude model the AI features use, how
-  long it may think before answering, and how much the summaries say (**Full**
-  or **Brief**). All three cost you more or less per message on your Anthropic
+  long it may think before answering, how much the summaries say (**Full** or
+  **Brief**), and whether attachments are always included without asking. All three cost you more or less per message on your Anthropic
   bill — a more capable model, a higher effort, and a fuller summary each add to
   it. A change applies to the next thing you ask for; results already saved are
   kept.

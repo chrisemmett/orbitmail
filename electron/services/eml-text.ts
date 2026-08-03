@@ -33,15 +33,12 @@
 import { readFile } from 'fs/promises'
 import { simpleParser, type AddressObject } from 'mailparser'
 import { stripHtml } from './html-text'
+import { isEmailAttachment } from '../../shared/attachment-kinds'
+
+export { isEmailAttachment }
 
 /** Attached messages this size are not parsed at all. */
 const MAX_EML_BYTES = 4 * 1024 * 1024
-
-/** Whether this attachment is an email in its own right. */
-export function isEmailAttachment(mime: string, filename: string): boolean {
-  if (mime === 'message/rfc822') return true
-  return /\.eml$/i.test(filename)
-}
 
 /** `to`/`cc` arrive as an object, or an array of them, or nothing. */
 function addressText(value: AddressObject | AddressObject[] | undefined): string {

@@ -47,6 +47,7 @@ export interface GlobalPreferences {
   desktopNotifications: boolean
   alwaysLoadRemoteImages: boolean
   handleMailtoLinks: boolean
+  alwaysIncludeAttachments: boolean
   aiModel: string
   aiEffort: AiEffort
   aiDetail: AiDetail
@@ -117,6 +118,7 @@ interface MailState {
   desktopNotifications: boolean
   alwaysLoadRemoteImages: boolean
   handleMailtoLinks: boolean
+  alwaysIncludeAttachments: boolean
   // Which model the AI features call, and how hard it thinks. Held here for the
   // settings pane; the main process reads the persisted values itself rather
   // than being told, so an AI request never depends on the renderer.
@@ -281,6 +283,7 @@ export const useMailStore = create<MailState>((set) => ({
   desktopNotifications: true,
   alwaysLoadRemoteImages: false,
   handleMailtoLinks: false,
+  alwaysIncludeAttachments: false,
   aiModel: DEFAULT_AI_MODEL,
   aiEffort: DEFAULT_AI_EFFORT,
   aiDetail: DEFAULT_AI_DETAIL,

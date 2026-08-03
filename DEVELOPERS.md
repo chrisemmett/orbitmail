@@ -292,6 +292,46 @@ existed to fix: an "Include attachments" run on a meeting agenda silently sent
 the body alone and produced a summary telling the user to go and read the
 agenda.
 
+### Three states, not two
+
+An analysis of a message with attachments can be in one of three states, and
+until recently only two of them were distinguishable:
+
+| State | Shown as |
+|---|---|
+| No attachments, or none we could read | nothing — the analysis is complete |
+| Ran with attachments | nothing, unless one could not be read (`skippedAttachments`) |
+| Ran **text-only** on a message with a readable attachment | *"Agenda.docx was not included — Include it"* |
+
+`attachmentsIncluded` is stored with the cached analysis for both outcomes,
+because "ran without attachments" is a different claim from "there were none"
+and only the run itself knows which. **Absent means unknown** — an analysis
+cached before the flag existed says nothing, since guessing either way would be
+the same illusion the caveat exists to break.
+
+**The trigger is `isReadableDocument`, not "has attachments"**, and the
+difference is the whole feature. On a real mailbox, 607 messages carry
+attachments and **161 of them (27%) carry nothing but small images** — signature
+logos. An attachment row has no `disposition` or `content_id`, so a logo and a
+screenshot are indistinguishable here. Firing on every attachment would put a
+caveat under a quarter of all analyses for no reason, and a nag on every
+corporate footer is worse than the ambiguity it fixes. Images are therefore
+excluded, and so is anything we cannot open (`.doc`, iWork): offering to include
+a file the extractor would skip anyway would be a lie. The cost is a screenshot
+never prompting — a miss rather than a false positive, which is the right
+direction for this.
+
+`shared/attachment-kinds.ts` holds the classification because **both processes
+need the same answer**: main decides what to extract, the renderer decides
+whether to mention what it didn't. If those drifted, the reader would offer to
+include a file that cannot be read.
+
+**Settings → AI → Always include attachments** removes the decision for anyone
+who wants it — off by default, since attachments cost extra tokens and the
+prompt-first behaviour is the one you get by omission. With it on, the split
+menu collapses: a two-item menu whose answer is already settled is just an
+extra click.
+
 **Attachment text is fenced with `fenceUntrusted`, like a message body**, and
 the filename in the heading above it — which sits *outside* the fence, because
 it is a label we write — is stripped of newlines and marker lookalikes first.
