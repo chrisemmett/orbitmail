@@ -7,7 +7,13 @@ which keeps decisions rather than just tasks.
 Versions follow [semantic versioning](https://semver.org/). Before 1.0 the minor
 number moves for anything substantial.
 
-## Unreleased
+## 0.6.0 — 2026-08-03
+
+The AI features get a lot more useful, and there is a zoom. Attachments are now
+read rather than merely noticed — a meeting agenda is summarised, not pointed
+at — and every action says who owes it, so you can see what is yours at a
+glance. Summaries say more by default, with a Brief setting if you preferred the
+shorter kind. Plus the shortcuts every browser has for making the text bigger.
 
 ### Added
 
@@ -38,7 +44,6 @@ number moves for anything substantial.
   offers **Reload** instead of leaving you to quit and reopen, and what went
   wrong is written to `renderer-errors.log` in your settings folder — which is
   the useful thing to attach if you report it.
-
 - **Buttons and menu items now respond when you hover them.** Several controls —
   the formatting buttons in the composer, the account menu, the status bar
   actions — were meant to highlight under the pointer and never did. Attachment
