@@ -3217,7 +3217,9 @@ async function main(): Promise<void> {
     ok('a filename embedded in content cannot close the fence',
       (fenced.match(/<<<END-EMAIL-CONTENT>>>/g) ?? []).length === 1,
       `${(fenced.match(/<<<END-EMAIL-CONTENT>>>/g) ?? []).length} closing markers`)
+  }
 
+  // -------------------------------------------------------------------------
   section('Zoom: the browser shortcuts, on the keys a layout actually produces')
   // -------------------------------------------------------------------------
   {
