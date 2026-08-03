@@ -1377,7 +1377,7 @@ orbit-mail/
 ├── src/                # Renderer: React UI
 ├── shared/             # Types shared between main and renderer
 ├── build/              # Icons and .desktop template
-├── scripts/            # Icon generation, dev launcher install
+├── scripts/            # Icon generation, dev launcher install, test suites
 └── release/            # electron-builder output (after dist)
 ```
 
@@ -1391,9 +1391,13 @@ orbit-mail/
 | `electron/services/db-service.ts` | SQLite CRUD, scope-aware search, unread recalculation |
 | `electron/services/contacts.ts` | Addresses collected from mail for compose autocomplete: harvest, ranking, backfill |
 | `electron/services/ai-service.ts` | Optional AI: message analysis, incremental inbox task sweep (unread/all scope, persisted + cached tasks), encrypted Anthropic key storage |
+| `electron/services/office-text.ts` | Text out of ZIP-based document attachments (OOXML, OpenDocument) so the model can read them — the API takes only PDF or plain text |
+| `electron/services/rtf-text.ts` | The same job for RTF, which is not a container |
+| `electron/zoom.ts` | Page zoom: which keypress means what, bounds, and clamping a stored level |
 | `electron/preload.ts` | Typed `window.orbitMail` IPC bridge |
+| `src/components/ErrorBoundary.tsx` | Catches a render error so it does not blank the window, and reports it |
 | `shared/types.ts` | Shared types and `OrbitMailAPI` contract |
-| `shared/ai-models.ts` | The selectable Claude models and effort levels, and the resolvers that validate a stored choice |
+| `shared/ai-models.ts` | The selectable Claude models, effort and detail levels, and the resolvers that validate a stored choice |
 | `src/stores/mailStore.ts` | Renderer state, message list refresh |
 | `src/stores/persistence.ts` | UI preference persistence |
 
@@ -1723,7 +1727,7 @@ their own. Approval is cleared when the compose window closes.
 | `npm run install:desktop` | Install a dev `.desktop` launcher |
 | `npm run test:imap` | Integration suite against a real IMAP/SMTP server (see below) |
 | `npm run test:store` | Renderer-store checks under plain node (see below) — no Docker, no Electron |
-| `npm run test:e2e` | End-to-end suites through real windows — send path, window lifecycle (see below). Needs Docker *and* a display, so it is not in CI |
+| `npm run test:e2e` | End-to-end suites through real windows — send path, signatures, window lifecycle, zoom (see below). Needs Docker *and* a display, so it is not in CI |
 | `npm run ui:preview` | Serve the built renderer to a browser with the IPC bridge stubbed, for looking at the UI where Electron cannot run (see below) |
 | `npm run dist` | Build icons, compile, and package (.deb + AppImage) |
 | `npm run dist:deb` | Debian package only |
@@ -1766,6 +1770,11 @@ reimplementing them, so it exercises the shipping code paths:
 | Responsiveness | A mark-read issued while a flag reconcile is in flight is not stuck behind the whole pass — `imap-pool` serializes per account, so anything holding the lane across every folder blocks user actions. |
 | Send | SMTP submission succeeds; the message is filed in `Sent` exactly once and shares its Message-ID with the delivered copy; the **delivered** copy carries no `Bcc` header, while the **filed** copy does. |
 | Attachments | Two parts sharing a filename get distinct cache paths **and** distinct content — the second used to overwrite the first on disk *and* resolve to the first MIME part, so it was never downloaded. Also that executable extensions are classified for the open-warning, and ordinary documents are not. |
+| Attachment text | The document formats the AI features can read: a `.docx`/`.xlsx`/`.pptx`/`.odt`/`.ods`/`.odp` yields its text with paragraph and row structure intact, text comes from run elements only (so a floating image's coordinates do not appear as content), spreadsheet cells resolve through the shared-string table, a self-closing empty cell does not swallow its neighbour, and an unreadable container (non-ZIP, missing part, iWork, no text) returns null so the caller names it as skipped. RTF drops the font and colour tables, decodes `\'hh` and `\u`, and stops at a `\bin` run rather than emitting binary. |
+| Attachment untrustedness | Extracted attachment text is fenced like a message body, and no attachment heading interpolates a raw filename — the label sits outside the fence, so a filename cannot open a line of its own or forge a marker. |
+| Analysis detail | Brief and full ask for exactly the same fields and differ only in description, so the levels cannot drift apart; both keep the anti-invention rule, the owner requirement and the carry-the-specifics rule; an unknown stored value falls back rather than reaching the API. An analysis cached before action items had owners is upgraded to `{action, owner: 'You'}` rather than dropped or re-billed. |
+| Blank-window recovery | The renderer-error log is timestamped and keeps the stack and component stack, stays under its cap by dropping whole entries (never half a stack), keeps the newest, and keeps an oversized entry rather than discarding what it was just told about. Both windows are watched, the composer is deliberately *not* reloaded, a clean exit is not treated as a crash, and the app is wrapped in an error boundary that reports before it renders. |
+| Zoom | The browser shortcuts on the characters a layout actually produces — `+ = Add` in, `- _ Subtract` out — since an accelerator matches a key, not the character. Modifierless keys are typing, Alt is a different shortcut, key-up does not repeat; the level is bounded both ways and a stored one is clamped, so a corrupted blob cannot open the app at an unreadable size. |
 | OAuth config | Credentials resolve environment-first, fall back to values entered in the app, and the status payload never carries a value back to the renderer. Plus the rule-5 guards: no OAuth constants in the build config, no placeholders in the bundle, and no `.env` value present in `out/main/index.js`. |
 | Tray icon | The count→icon mapping: nothing unread shows the plain icon, single digits show that number, ten or more collapses to `9+`, a fractional count floors instead of naming a file that does not exist, and junk (negative, `NaN`) falls back to the plain icon. Every file the mapping can name is checked to exist in `build/icons/tray/`, and the tooltip keeps the exact number past nine, singular at one. |
 | Launcher badge | The Unity `LauncherEntry` signal is a valid D-Bus object path (a percent-encoded app URI is not, and every emit silently failed), the count is typed `int64`, and zero hides the badge. |
@@ -1985,6 +1994,25 @@ therefore unlookable, which is why a white toolbar in dark mode survived there
 unnoticed. `SUBSCRIBERS` in the stub maps a channel to one payload, delivered in
 a later task so the subscribing effect has run first. Add an entry when a pane
 only renders in response to an event.
+
+**A fixture that already satisfies the assertion proves nothing.** The reader
+lists the user's own action items first, so a fixture whose first item is already
+`owner: "You"` renders correctly whether or not the sorting exists. The AI
+fixtures deliberately put the user's action *last*, and give one message
+attachments — including a format the extractor cannot read — because otherwise
+neither the split **Analyze** button nor the skipped-attachment caveat is
+reachable in the preview at all. Ask what the fixture would look like if the code
+under test were deleted.
+
+**Rebuilt but unchanged on screen? It is the HTTP cache.** The server sends the
+built bundle under a hashed name, but the browser can hold `index.html`, so a
+reload after `npm run build` may replay the previous bundle entirely — which
+during this work meant a page still showing a crash screen from an experiment
+several builds earlier, read at first as a bug in the new code. Load
+`http://localhost:4321/?nocache=1` (or hard-reload) when the screen disagrees
+with the source, and restart the server after editing `ui-preview.mjs` itself —
+the stub is embedded in the running process, so fixture edits do not take effect
+until it restarts.
 
 **A fixture that is too clean hides bugs.** The thread fixture's three messages
 originally had `bodyHtml: null`, so every body rendered as plain text through the

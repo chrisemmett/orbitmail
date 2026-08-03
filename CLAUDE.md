@@ -115,7 +115,7 @@ renderer logic, which is why that classifier is string work and not a DOM walk.
 Run it after touching `src/stores/`, either of those, or the reader's body
 rendering. Details in DEVELOPERS.md → Store tests.
 
-The larger one is `npm run test:imap` — a growing suite of checks against a real GreenMail server in Docker, inside a windowless Electron main process (the DB needs `app.getPath`, and `better-sqlite3` is built for Electron's ABI). It covers the sync layer (STARTTLS, sync, UIDVALIDITY rebuild, IDLE reconnect, send, lane contention), the security controls (OAuth loopback `state`, credential handling, attachment classification), account-data hygiene (removal deletes AI tasks; freelist reclaim), and pure-logic invariants (launcher badge signal, IPC contract, docs-match-code). It runs in CI on every push. Run it locally after touching anything in `electron/services/`. Details in DEVELOPERS.md → Integration tests.
+The larger one is `npm run test:imap` — a growing suite of checks against a real GreenMail server in Docker, inside a windowless Electron main process (the DB needs `app.getPath`, and `better-sqlite3` is built for Electron's ABI). It covers the sync layer (STARTTLS, sync, UIDVALIDITY rebuild, IDLE reconnect, send, lane contention), the security controls (OAuth loopback `state`, credential handling, attachment classification), account-data hygiene (removal deletes AI tasks; freelist reclaim), the attachment text extraction the AI features depend on (OOXML, OpenDocument, RTF), and pure-logic invariants (launcher badge signal, zoom key matching, renderer-error log, IPC contract, docs-match-code). It runs in CI on every push. Run it locally after touching anything in `electron/services/`. Details in DEVELOPERS.md → Integration tests.
 
 `npm run test:e2e` — end-to-end **through real windows**, the one thing
 `test:imap` structurally cannot reach: it is windowless, so a `close` handler, the
@@ -128,10 +128,14 @@ and switches the From account across three accounts, checking the signature bloc
 is swapped, removed and re-appended without eating what was typed. **window** closes the main window
 with a composer open and asserts nothing throws — the `liveMainWindow()`
 regression, where the composer is a child, so closing the parent destroys both and
-the child's `closed` handler fires at a window that has gone. All three also assert
-**nothing threw**. Needs Docker *and* a display (headless Ozone segfaults on the
+the child's `closed` handler fires at a window that has gone. **zoom** sends real
+`Ctrl` `=` / `_` / `-` / `0` keystrokes and reads `getZoomLevel()` back — the key
+matching is pure and covered by `test:imap`, but whether the key reaches the
+handler, whether the frame is actually zoomed, and whether the level survives a
+reload need a window to send a key to. All four also assert **nothing threw**.
+Needs Docker *and* a display (headless Ozone segfaults on the
 first window), so it is **not in CI** — run it after touching the compose/send
-path, signatures, or anything window-lifecycle. Windows appear on screen for a few seconds.
+path, signatures, zoom, or anything window-lifecycle. Windows appear on screen for a few seconds.
 Read the traps in DEVELOPERS.md → End-to-end first: the send suite has twice
 passed while proving nothing, once from picking windows by index and once from a
 composer that never loaded its draft. When you report a check, say which of the
@@ -202,9 +206,9 @@ did not**, because "verified" with no list has meant `build` alone more than onc
 3. `npm run test:imap` — if you touched `electron/`, the IPC contract, the schema,
    or any doc it checks. Also the honest default when you are unsure: it is what
    CI will run anyway, so finding out now is cheaper.
-4. `npm run test:e2e` — if you touched the **compose or send path**, or anything
-   **window-lifecycle** (a `close` handler, a parent/child relationship, a
-   `BrowserWindow` reference held across time). This is the only check that drives
+4. `npm run test:e2e` — if you touched the **compose or send path**, **zoom**, or
+   anything **window-lifecycle** (a `close` handler, a parent/child relationship,
+   a `BrowserWindow` reference held across time, a `webContents` listener). This is the only check that drives
    real windows, and CI *cannot* run it — so if you skip it there, nothing catches
    it later. Needs a display and opens windows for a few seconds.
 5. Docs in the same commit (rule 6), and grep for the claim you are replacing.
