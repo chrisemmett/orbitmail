@@ -15,6 +15,7 @@ import type {
 import { getRawSqlite } from '../db'
 import { ensureAttachmentLocal } from './attachment-fetch'
 import { extractOfficeText, officeKind } from './office-text'
+import { extractRtfText, isRtf } from './rtf-text'
 import {
   getMessage,
   listAccounts,
@@ -266,9 +267,36 @@ function friendlyError(err: unknown): string {
 }
 
 function isTextualAttachment(mime: string, filename: string): boolean {
+  // RTF is `text/rtf` at some senders, but it is markup that needs decoding
+  // rather than text to inline — it has its own branch.
+  if (isRtf(mime, filename)) return false
   if (mime.startsWith('text/')) return true
-  if (/^application\/(json|xml|x-yaml|yaml|csv)$/i.test(mime)) return true
-  return /\.(txt|md|markdown|csv|tsv|json|xml|log|ya?ml|html?)$/i.test(filename)
+  if (/^application\/(json|xml|x-yaml|yaml|csv|toml|sql)$/i.test(mime)) return true
+  // Calendar invitations and contact cards are plain text and are among the
+  // most useful things a mail attachment can contain — a meeting invite says
+  // when the meeting is.
+  if (/^text\/(calendar|vcard|x-vcard)$/i.test(mime)) return true
+  return /\.(txt|md|markdown|csv|tsv|json|xml|log|ya?ml|html?|ics|vcf|ini|conf|cfg|toml|rst|sql|diff|patch)$/i.test(
+    filename
+  )
+}
+
+/** Whether an attachment's text is HTML that should be flattened before sending. */
+function isHtmlAttachment(mime: string, filename: string): boolean {
+  return mime === 'text/html' || /\.html?$/i.test(filename)
+}
+
+/**
+ * A filename for the heading above an attachment's content. The name is chosen
+ * by the sender and sits *outside* the fence — it is a label we are writing —
+ * so it must not be able to introduce lines of its own or forge a fence marker.
+ */
+function safeAttachmentLabel(filename: string): string {
+  return filename
+    .replace(/[\r\n]+/g, ' ')
+    .split(UNTRUSTED_OPEN).join('<<<email-content>>>')
+    .split(UNTRUSTED_CLOSE).join('<<<end-email-content>>>')
+    .slice(0, 200)
 }
 
 // Build Anthropic content blocks for a message's attachments. Text-like files
@@ -289,8 +317,9 @@ async function buildAttachmentBlocks(
     const isPdf = mime === 'application/pdf'
     const isText = isTextualAttachment(mime, att.filename)
     const office = officeKind(mime, att.filename)
+    const rtf = isRtf(mime, att.filename)
 
-    if (!isImage && !isPdf && !isText && !office) {
+    if (!isImage && !isPdf && !isText && !office && !rtf) {
       skipped.push(att.filename)
       continue
     }
@@ -302,21 +331,39 @@ async function buildAttachmentBlocks(
         continue
       }
 
-      if (isText || office) {
-        // An Office document that can't be unzipped (encrypted, ZIP64, or a
-        // legacy .doc misnamed .docx) reports as skipped rather than sending
-        // the model nothing under an attachment heading.
-        let text = office ? extractOfficeText(localPath, office) : readFileSync(localPath, 'utf8')
-        if (text === null) {
+      if (isText || office || rtf) {
+        // A document that can't be decoded (encrypted, ZIP64, a legacy .doc
+        // misnamed .docx, an .rtf that isn't one) reports as skipped rather
+        // than sending the model nothing under an attachment heading.
+        let text: string | null
+        if (office) text = extractOfficeText(localPath, office)
+        else if (rtf) text = extractRtfText(readFileSync(localPath, 'utf8'))
+        else {
+          const raw = readFileSync(localPath, 'utf8')
+          // An HTML attachment is markup around its text; sending the markup
+          // spends the budget on tags and buries what the page says.
+          text = isHtmlAttachment(mime, att.filename) ? stripHtml(raw) : raw
+        }
+        if (text === null || text.trim().length === 0) {
           skipped.push(att.filename)
           continue
         }
         if (text.length > MAX_ATTACHMENT_TEXT_CHARS) {
           text = text.slice(0, MAX_ATTACHMENT_TEXT_CHARS) + '\n... [truncated]'
         }
-        blocks.push({ type: 'text', text: `Attachment "${att.filename}" (${mime}):\n${text}` })
+        // Fenced like the message body. An attachment is written by whoever
+        // sent the mail, so it is exactly as untrusted — and a document is a
+        // *better* place to hide an instruction than the body, because the
+        // user is less likely to have read it.
+        blocks.push({
+          type: 'text',
+          text: `Attachment "${safeAttachmentLabel(att.filename)}" (${mime}):\n${fenceUntrusted(text)}`
+        })
       } else if (isImage) {
-        blocks.push({ type: 'text', text: `Attachment "${att.filename}" (image):` })
+        blocks.push({
+          type: 'text',
+          text: `Attachment "${safeAttachmentLabel(att.filename)}" (image):`
+        })
         blocks.push({
           type: 'image',
           source: {
@@ -326,7 +373,10 @@ async function buildAttachmentBlocks(
           }
         })
       } else {
-        blocks.push({ type: 'text', text: `Attachment "${att.filename}" (PDF):` })
+        blocks.push({
+          type: 'text',
+          text: `Attachment "${safeAttachmentLabel(att.filename)}" (PDF):`
+        })
         blocks.push({
           type: 'document',
           source: {

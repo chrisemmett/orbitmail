@@ -102,10 +102,10 @@ Off by default. Nothing is sent anywhere until you add an
 - **Analyze** turns the open email into action items, open questions and key
   context — and knows the difference between what you owe someone and what you
   asked of them. If the email has attachments you can include them, and it will
-  read Word, Excel and PowerPoint files, PDFs, images and plain text. Older
-  formats (`.doc`, `.xls`), OpenDocument files and password-protected documents
-  it cannot read — it names those under the summary rather than quietly leaving
-  them out.
+  read Word, Excel, PowerPoint and OpenDocument files, RTF, PDFs, images,
+  calendar invitations and plain text. Older formats (`.doc`, `.xls`), Apple
+  iWork files and password-protected documents it cannot read — it names those
+  under the summary rather than quietly leaving them out.
 - **Summarize** turns a long conversation into what it is about, what was
   decided, what is still outstanding and who owes it, and what nobody has
   answered. It reads the mail already on this computer, and says so when a
