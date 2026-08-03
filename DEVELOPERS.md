@@ -159,12 +159,28 @@ because the renderer reads `.action` off what is actually a string.
 
 ### Detail level
 
-The schema field descriptions are where "how much detail" is set, and they say
-it in sentences rather than token counts: a message summary is *"a short
-paragraph — usually three to six sentences"*, a thread summary *"usually four to
-eight"*, and both list the specifics worth carrying (dates, amounts, names, what
-changed). `keyContext` and `decisions` ask for facts stated in full rather than
-alluded to.
+**Settings → AI → Detail**, `brief` or `full`, stored as `aiDetail` and resolved
+through `shared/ai-models.ts` like model and effort. It is a separate axis from
+effort on purpose: **effort buys thinking, detail buys output**, and the two are
+billed differently — a fuller summary costs output tokens whether or not the
+model thought hard to produce it.
+
+Full is the default because it is what the app already did. A setting that
+silently shortened existing summaries on upgrade would be a change nobody asked
+for, dressed up as a preference.
+
+Only the *descriptions* vary between the two levels — never the shape.
+`analysisSchema(detail)` and `threadAnalysisSchema(detail)` rebuild the same
+schema with a different `summary` (and `keyContext`) description, so the parsed
+type, the cache and the renderer cannot tell the levels apart. Duplicating the
+schemas would let them drift, and a field present at one level and absent at the
+other is a bug the type system would not catch — `test:imap` asserts the two
+produce identical field sets.
+
+The descriptions say it in sentences rather than token counts: full is *"a short
+paragraph — usually three to six sentences"* for a message and *"four to eight"*
+for a thread; brief is *"one or two sentences"* and *"two or three"*. `keyContext`
+narrows to "only the facts the reader would otherwise have to go back for".
 
 The prompt draws the line that matters — **more detail means saying more about
 what is there, never inventing more**:
@@ -178,6 +194,14 @@ speculate, and a padded action list is worse than a short one — it costs the
 user time and can put a deadline in their head that nobody set. `test:imap`
 asserts both halves are present, so a future prompt edit cannot drop the
 constraint while keeping the instruction.
+
+**Brief has the mirror-image risk**, and the prompt names it: *"Brevity is about
+leaving things out, never about being vague: what you do say must be as specific
+as it would be at any length."* Shortening a summary by dropping the date out of
+it produces something that reads fine and is useless. The suite asserts that
+both levels keep the anti-invention rule, the owner requirement, and the
+carry-the-specifics rule — the only thing detail is allowed to change is how
+much is said.
 
 ### What "include attachments" can actually read
 

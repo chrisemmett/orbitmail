@@ -3098,15 +3098,15 @@ async function main(): Promise<void> {
     ok('the shared item schema requires both action and owner',
       /required: \['action', 'owner'\]/.test(source))
     ok('the prompt asks for other people\'s actions too, not only the user\'s',
-      /whoever owes it/i.test(ai.ANALYSIS_SYSTEM_PROMPT) &&
-        !/Only put things the USER needs to do/i.test(ai.ANALYSIS_SYSTEM_PROMPT))
+      /whoever owes it/i.test(ai.analysisSystemPrompt('full')) &&
+        !/Only put things the USER needs to do/i.test(ai.analysisSystemPrompt('full')))
     ok('the prompt still refuses to invent detail',
-      /do not invent/i.test(ai.ANALYSIS_SYSTEM_PROMPT) &&
-        /never inventing more/i.test(ai.ANALYSIS_SYSTEM_PROMPT))
+      /do not invent/i.test(ai.analysisSystemPrompt('full')) &&
+        /never inventing more/i.test(ai.analysisSystemPrompt('full')))
     // Detail must not become an instruction to pad: a longer list of invented
     // items is worse than a short true one.
     ok('the prompt separates saying more from making more up',
-      /prefer a full account/i.test(ai.ANALYSIS_SYSTEM_PROMPT))
+      /prefer a full account/i.test(ai.analysisSystemPrompt('full')))
 
     // An analysis cached before owners existed holds bare strings. The
     // renderer reads .action/.owner, so without an upgrade every cached row
@@ -3128,6 +3128,47 @@ async function main(): Promise<void> {
       JSON.stringify(legacy.actionItems))
     ok('the rest of a legacy analysis survives the upgrade',
       legacy.summary === 'Old analysis', JSON.stringify(legacy.summary))
+
+    // Brief and full are two ways of describing the same fields, never two
+    // shapes: a field that exists at one level and not the other would be a bug
+    // the parsed type could not catch.
+    const shape = (schema: { properties: Record<string, unknown> }) =>
+      Object.keys(schema.properties).sort().join(',')
+    ok('brief and full ask for exactly the same fields',
+      shape(ai.analysisSchema('brief')) === shape(ai.analysisSchema('full')) &&
+        shape(ai.threadAnalysisSchema('brief')) === shape(ai.threadAnalysisSchema('full')),
+      shape(ai.analysisSchema('brief')))
+    ok('but describe the summary differently',
+      ai.analysisSchema('brief').properties.summary.description !==
+        ai.analysisSchema('full').properties.summary.description)
+    ok('brief asks for one or two sentences, full for a paragraph',
+      /one or two sentences/i.test(ai.analysisSchema('brief').properties.summary.description) &&
+        /three to six sentences/i.test(ai.analysisSchema('full').properties.summary.description))
+
+    // Brief must be shorter, not vaguer, and must not become licence to guess:
+    // the anti-invention rule is the one thing that cannot vary with detail.
+    for (const level of ['brief', 'full'] as const) {
+      const prompt = ai.analysisSystemPrompt(level)
+      ok(`${level} still refuses to invent facts`,
+        /do not invent/i.test(prompt) && /never inventing more/i.test(prompt))
+      ok(`${level} still asks who owes each action`,
+        /whoever owes it/i.test(prompt))
+      ok(`${level} still says specifics must be carried, not referred to`,
+        /rather than referring to them/i.test(prompt))
+    }
+    ok('brief tells the model to be short',
+      /be short/i.test(ai.analysisSystemPrompt('brief')) &&
+        !/prefer a full account/i.test(ai.analysisSystemPrompt('brief')))
+    ok('and says brevity is about omission, not vagueness',
+      /never about being vague/i.test(ai.analysisSystemPrompt('brief')))
+
+    // An unrecognised value in the preferences blob must not reach the prompt.
+    const models = await import('../shared/ai-models')
+    ok('an unknown detail falls back to the default rather than the API',
+      models.resolveAiDetail('enormous') === models.DEFAULT_AI_DETAIL &&
+        models.resolveAiDetail(undefined) === 'full')
+    ok('and the default is what the app already did',
+      models.DEFAULT_AI_DETAIL === 'full')
 
     const current = ai.normalizeCachedAnalysis({
       summary: 'New analysis',
@@ -4040,7 +4081,7 @@ async function main(): Promise<void> {
       !ai.buildThreadAnalysisPrompt(spoof, 'Rob', ['me@example.com']).prompt.includes('FROM YOU'))
 
     ok('the system prompt carries the untrusted-content rule',
-      ai.THREAD_ANALYSIS_SYSTEM_PROMPT.includes(ai.UNTRUSTED_CONTENT_RULE))
+      ai.threadAnalysisSystemPrompt('full').includes(ai.UNTRUSTED_CONTENT_RULE))
   }
 
   // -------------------------------------------------------------------------

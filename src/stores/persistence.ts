@@ -1,5 +1,5 @@
 import type { UiPreferences } from '../../shared/types'
-import { resolveAiEffort, resolveAiModel } from '../../shared/ai-models'
+import { resolveAiDetail, resolveAiEffort, resolveAiModel } from '../../shared/ai-models'
 import { useThemeStore } from './themeStore'
 import { useMailStore } from './mailStore'
 
@@ -51,7 +51,8 @@ export async function loadPersistedPreferences(): Promise<void> {
     // will actually be called, and main falls back the same way for a value it
     // does not recognise.
     aiModel: resolveAiModel(state.aiModel),
-    aiEffort: resolveAiEffort(state.aiEffort)
+    aiEffort: resolveAiEffort(state.aiEffort),
+    aiDetail: resolveAiDetail(state.aiDetail)
   })
 }
 

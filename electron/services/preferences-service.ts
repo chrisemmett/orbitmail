@@ -150,7 +150,8 @@ export function patchAppState(patch: Partial<PersistedAppState>): PersistedAppSt
     blockedSenders: patch.blockedSenders ?? current.blockedSenders ?? [],
     imageAllowedSenders: patch.imageAllowedSenders ?? current.imageAllowedSenders ?? [],
     aiModel: patch.aiModel ?? current.aiModel,
-    aiEffort: patch.aiEffort ?? current.aiEffort
+    aiEffort: patch.aiEffort ?? current.aiEffort,
+    aiDetail: patch.aiDetail ?? current.aiDetail
   }
   saveAppState(next)
   return next

@@ -44,7 +44,13 @@ import {
   type ThreadFingerprint
 } from './db-service'
 import { extractAddress, splitAddressList } from '../../shared/addresses'
-import { resolveAiEffort, resolveAiModel, type AiEffort } from '../../shared/ai-models'
+import {
+  resolveAiDetail,
+  resolveAiEffort,
+  resolveAiModel,
+  type AiDetail,
+  type AiEffort
+} from '../../shared/ai-models'
 import { getAppState } from './preferences-service'
 
 const AI_KEY_PREF = 'ai_api_key'
@@ -81,11 +87,79 @@ const FLAG_TASK_MAX_TOKENS = 4096
  * naming a model this build does not offer falls back to the default instead of
  * turning every AI feature into a 404.
  */
-function modelConfig(): { model: string; effort: AiEffort } {
+function modelConfig(): { model: string; effort: AiEffort; detail: AiDetail } {
   const state = getAppState()
   return {
     model: resolveAiModel(state.aiModel),
-    effort: resolveAiEffort(state.aiEffort)
+    effort: resolveAiEffort(state.aiEffort),
+    detail: resolveAiDetail(state.aiDetail)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Detail level.
+//
+// Only the *descriptions* change between brief and full — never the shape. The
+// two levels are two ways of describing the same fields, so a schema built for
+// one is structurally identical to the other, and the renderer, the cache and
+// the parsed type cannot tell them apart. Duplicating the schemas instead would
+// let them drift, and a field that exists at one detail level and not the other
+// is a bug the type system would not catch.
+//
+// What does *not* vary: the rule that detail means saying more about what is
+// there, never inventing more. Brief is shorter, not vaguer.
+// ---------------------------------------------------------------------------
+
+const SUMMARY_DESCRIPTION: Record<AiDetail, string> = {
+  full: 'What the email says and what it amounts to, in a short paragraph — usually three to six sentences. Cover what it is about, what is being asked or told, and the specifics that matter: dates, times, places, amounts, names, and anything that has changed since a previous message. Attachments that were provided are part of the email: summarize what they contain rather than noting that they exist. Long enough that the reader does not need to open the email to know where they stand; not a restatement of every line.',
+  brief: 'What the email says and what it amounts to, in one or two sentences. Keep the specifics that decide what the reader does — a date, a deadline, an amount, a name — and drop the rest. Attachments that were provided are part of the email: say what they contain, briefly, rather than noting that they exist.'
+}
+
+const THREAD_SUMMARY_DESCRIPTION: Record<AiDetail, string> = {
+  full: 'What this conversation is about and where it now stands, in a short paragraph — usually four to eight sentences. Cover how it started, what has happened since, what is currently blocking or awaiting whom, and the specifics that matter: dates, amounts, names and any position a participant has taken. Long enough that the reader does not need to open the thread to know where it stands.',
+  brief: 'What this conversation is about and where it now stands, in two or three sentences: the point of it, and what is currently outstanding or awaiting whom.'
+}
+
+const KEY_CONTEXT_DESCRIPTION: Record<AiDetail, string> = {
+  full: 'Decisions, deadlines, figures, arrangements and other facts worth remembering, stated in full rather than alluded to — a reader should not have to open the email to use them.',
+  brief: 'Only the facts the reader would otherwise have to go back to the email for — a date, a figure, a decision. Omit anything the summary already carries.'
+}
+
+/** The detail-specific half of the system prompt. */
+const DETAIL_GUIDANCE: Record<AiDetail, string> = {
+  full: 'Be specific and substantial: prefer a full account to a terse one, and carry the details — dates, times, places, amounts, names — into the text rather than referring to them.',
+  brief: 'Be short. Give the reader what they need to decide what to do and nothing else, and carry the details that decide it — dates, amounts, names — rather than referring to them. Brevity is about leaving things out, never about being vague: what you do say must be as specific as it would be at any length.'
+}
+
+/**
+ * The analysis schema at a given detail level. Rebuilt per request rather than
+ * captured once, because the setting can change between one analysis and the
+ * next — the same reason `modelConfig` is read fresh.
+ */
+export function analysisSchema(detail: AiDetail) {
+  return {
+    ...ANALYSIS_SCHEMA,
+    properties: {
+      ...ANALYSIS_SCHEMA.properties,
+      summary: { ...ANALYSIS_SCHEMA.properties.summary, description: SUMMARY_DESCRIPTION[detail] },
+      keyContext: {
+        ...ANALYSIS_SCHEMA.properties.keyContext,
+        description: KEY_CONTEXT_DESCRIPTION[detail]
+      }
+    }
+  }
+}
+
+export function threadAnalysisSchema(detail: AiDetail) {
+  return {
+    ...THREAD_ANALYSIS_SCHEMA,
+    properties: {
+      ...THREAD_ANALYSIS_SCHEMA.properties,
+      summary: {
+        ...THREAD_ANALYSIS_SCHEMA.properties.summary,
+        description: THREAD_SUMMARY_DESCRIPTION[detail]
+      }
+    }
   }
 }
 
@@ -247,7 +321,7 @@ export function isMessageFromUser(from: string, userEmails: readonly string[]): 
   return userEmails.some((email) => email.length > 0 && email.toLowerCase() === sender)
 }
 
-export const ANALYSIS_SYSTEM_PROMPT = `You are an expert assistant that analyzes a single email and tells the user what they need to do about it.
+export const analysisSystemPrompt = (detail: AiDetail): string => `You are an expert assistant that analyzes a single email and tells the user what they need to do about it.
 
 CRITICAL: Pay close attention to who sent the message, because it decides who owes what.
 - If the email is FROM the user, the user is the one making a request — what they asked for is owed by the recipient, not by the user.
@@ -255,7 +329,7 @@ CRITICAL: Pay close attention to who sent the message, because it decides who ow
 
 List every outstanding action, whoever owes it, and name the owner on each: "You" for the user, otherwise the person as the email names them, or "Unassigned" when it genuinely does not say. Do not silently drop other people's actions — the user needs to see what they are waiting on as well as what they owe. Never assign an action to the user just because the email arrived in their inbox.
 
-Be specific and substantial: prefer a full account to a terse one, and carry the details — dates, times, places, amounts, names — into the text rather than referring to them. If attachments are provided, treat their contents as part of the email and summarize what they say; do not merely note that they exist or tell the user to read them.
+${DETAIL_GUIDANCE[detail]} If attachments are provided, treat their contents as part of the email and summarize what they say; do not merely note that they exist or tell the user to read them.
 
 Do not invent deadlines or facts that aren't in the email or its attachments, and do not pad a list with filler to make it longer — detail means saying more about what is there, never inventing more. Leave a list empty rather than padding it.
 
@@ -491,7 +565,7 @@ ${body || '(no body content)'}`)}`
   }
 
   const client = new Anthropic({ apiKey })
-  const { model, effort } = modelConfig()
+  const { model, effort, detail } = modelConfig()
 
   try {
     const response = await client.messages.parse({
@@ -499,9 +573,9 @@ ${body || '(no body content)'}`)}`
       max_tokens: ANALYSIS_MAX_TOKENS,
       output_config: {
         effort,
-        format: jsonSchemaOutputFormat(ANALYSIS_SCHEMA)
+        format: jsonSchemaOutputFormat(analysisSchema(detail))
       },
-      system: ANALYSIS_SYSTEM_PROMPT,
+      system: analysisSystemPrompt(detail),
       messages: [{ role: 'user', content }]
     })
 
@@ -750,7 +824,7 @@ const THREAD_ANALYSIS_SCHEMA = {
   additionalProperties: false
 } as const
 
-export const THREAD_ANALYSIS_SYSTEM_PROMPT = `You summarize an email conversation for one of its participants and tell them where it stands.
+export const threadAnalysisSystemPrompt = (detail: AiDetail): string => `You summarize an email conversation for one of its participants and tell them where it stands.
 
 Messages are given oldest to newest, each labelled FROM YOU (the user) or FROM SOMEONE ELSE.
 
@@ -761,6 +835,7 @@ Rules:
 - Do not invent facts, dates, numbers, names or commitments that are not in the conversation.
 - If the conversation is marked as having earlier messages omitted, do not describe or speculate about what they contained.
 - Leave a list empty rather than padding it with filler.
+- ${DETAIL_GUIDANCE[detail]}
 
 ${UNTRUSTED_CONTENT_RULE}`
 
@@ -913,7 +988,7 @@ export async function analyzeThread(
   const userName = account?.displayName || account?.email || 'the user'
   const { prompt, analyzedCount } = buildThreadAnalysisPrompt(messages, userName, userEmails)
 
-  const { model, effort } = modelConfig()
+  const { model, effort, detail } = modelConfig()
 
   try {
     const response = await client.messages.parse({
@@ -921,9 +996,9 @@ export async function analyzeThread(
       max_tokens: THREAD_ANALYSIS_MAX_TOKENS,
       output_config: {
         effort,
-        format: jsonSchemaOutputFormat(THREAD_ANALYSIS_SCHEMA)
+        format: jsonSchemaOutputFormat(threadAnalysisSchema(detail))
       },
-      system: THREAD_ANALYSIS_SYSTEM_PROMPT,
+      system: threadAnalysisSystemPrompt(detail),
       messages: [{ role: 'user', content: prompt }]
     })
 
