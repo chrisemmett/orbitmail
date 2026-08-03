@@ -8,7 +8,7 @@
 // GreenMail's plain IMAP port does not advertise STARTTLS, which makes it an
 // accurate stand-in for the downgrade case the TLS check cares about.
 import { app } from 'electron'
-import { mkdtempSync, rmSync, writeFileSync, unlinkSync } from 'fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, unlinkSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { execFileSync } from 'child_process'
@@ -2866,6 +2866,76 @@ async function main(): Promise<void> {
     } finally {
       rmSync(officeDir, { recursive: true, force: true })
     }
+  }
+
+  // -------------------------------------------------------------------------
+  section('Zoom: the browser shortcuts, on the keys a layout actually produces')
+  // -------------------------------------------------------------------------
+  {
+    // Electron's default menu already has Zoom In / Out / Actual Size, which is
+    // why this looks free. It is not: those roles bind to the accelerators
+    // `CommandOrControl+Plus` and `CommandOrControl+-`, and an accelerator
+    // matches a key rather than the character a layout puts on it. Reported as
+    // "CTRL- seems to be CTRL_ on my machine" — so the match is on the produced
+    // character, every spelling of it.
+    const zoom = await import('../electron/zoom')
+    const key = (k: string, over: Record<string, unknown> = {}) => ({
+      type: 'keyDown' as const, key: k, control: true, meta: false, alt: false, ...over
+    })
+
+    ok('Ctrl and the shifted plus zooms in', zoom.zoomActionForInput(key('+')) === 'in')
+    ok('so does Ctrl and the unshifted key it lives on',
+      zoom.zoomActionForInput(key('=')) === 'in')
+    ok('and the numpad', zoom.zoomActionForInput(key('Add')) === 'in')
+    ok('Ctrl and minus zooms out', zoom.zoomActionForInput(key('-')) === 'out')
+    // The reported case: the shifted spelling of the same physical key.
+    ok('and so does the underscore that some layouts send instead',
+      zoom.zoomActionForInput(key('_')) === 'out')
+    ok('and the numpad', zoom.zoomActionForInput(key('Subtract')) === 'out')
+    ok('Ctrl and zero resets', zoom.zoomActionForInput(key('0')) === 'reset')
+
+    ok('the same keys without Ctrl are just typing',
+      zoom.zoomActionForInput(key('-', { control: false })) === null)
+    ok('Cmd works too, for anyone on a Mac keyboard',
+      zoom.zoomActionForInput(key('-', { control: false, meta: true })) === 'out')
+    // Alt+Ctrl+- is somebody else's shortcut, not a sloppier spelling of this.
+    ok('Alt makes it a different shortcut, not this one',
+      zoom.zoomActionForInput(key('-', { alt: true })) === null)
+    ok('key-up does not zoom a second time',
+      zoom.zoomActionForInput(key('-', { type: 'keyUp' })) === null)
+    ok('an unrelated key is ignored', zoom.zoomActionForInput(key('a')) === null)
+
+    // Bounds exist so a mis-keyed shortcut cannot leave the app at a size the
+    // user can no longer read well enough to undo it.
+    let level = 0
+    for (let i = 0; i < 50; i++) level = zoom.nextZoomLevel(level, 'in')
+    ok('zooming in stops at a readable maximum', level === zoom.MAX_ZOOM_LEVEL, `${level}`)
+    for (let i = 0; i < 100; i++) level = zoom.nextZoomLevel(level, 'out')
+    ok('and out at a readable minimum', level === zoom.MIN_ZOOM_LEVEL, `${level}`)
+    ok('reset always lands on 100%',
+      zoom.nextZoomLevel(level, 'reset') === 0 && zoom.zoomPercentage(0) === 100)
+    ok('one step in is about 120%, as a browser would',
+      zoom.zoomPercentage(1) === 120, `${zoom.zoomPercentage(1)}%`)
+
+    // A corrupted or hand-edited preferences blob must not be able to open the
+    // app at a size it cannot be fixed from.
+    ok('a stored level is clamped on the way back in',
+      zoom.sanitizeZoomLevel(99) === zoom.MAX_ZOOM_LEVEL &&
+        zoom.sanitizeZoomLevel(-99) === zoom.MIN_ZOOM_LEVEL)
+    ok('and nonsense resolves to 100%',
+      zoom.sanitizeZoomLevel(undefined) === 0 && zoom.sanitizeZoomLevel(Number.NaN) === 0 &&
+        zoom.sanitizeZoomLevel('big') === 0)
+
+    // Zoom is a property of the loaded frame, so it resets on every navigation
+    // — including the reload that recovers a dead renderer. Re-applying on load
+    // is what stops a crash recovery silently undoing the user's setting.
+    const mainSource = readFileSync('electron/main.ts', 'utf8')
+    ok('zoom is re-applied on load, not only at window creation',
+      /webContents\.on\('did-finish-load', apply\)/.test(mainSource))
+    ok('both the main and compose windows follow the zoom level',
+      /attachZoom\(mainWindow\)/.test(mainSource) && /attachZoom\(composeWindow\)/.test(mainSource))
+    ok('the level is persisted, so it survives a restart',
+      /setZoomLevel\(level\)/.test(mainSource))
   }
 
   // -------------------------------------------------------------------------

@@ -28,6 +28,13 @@ import { initTray, destroyTray, isTrayActive } from './tray'
 import { cleanupExportDir, sweepStaleExportDirs } from './services/temp-export'
 import { restrictExistingAttachments } from './services/attachment-permissions'
 import { isBenignSocketError, describeUnexpectedError } from './services/crash-report'
+import {
+  applyZoom,
+  nextZoomLevel,
+  sanitizeZoomLevel,
+  zoomActionForInput,
+  zoomPercentage
+} from './zoom'
 import { updateAppBadge } from './app-badge'
 import {
   listAccounts,
@@ -127,6 +134,8 @@ import {
   patchUiPreferences,
   setWindowPreferences,
   getWindowPreferences,
+  setZoomLevel,
+  getZoomLevel,
   muteSender,
   blockSender,
   allowSenderImages,
@@ -488,6 +497,47 @@ function configureMailtoProtocolClient(enabled: boolean): void {
   }
 }
 
+/**
+ * Windows that follow the zoom level. Tracked explicitly rather than asking for
+ * every open window, because the print window is a `BrowserWindow` too and
+ * zooming that would change what comes out of the printer.
+ */
+const zoomedWindows = new Set<BrowserWindow>()
+
+/**
+ * Make a window follow the app's zoom level, and let the browser shortcuts
+ * change it.
+ *
+ * Zoom is applied on every load, not just at creation: the level belongs to the
+ * loaded frame, so a navigation or a reload resets it to 100% — including the
+ * reload that recovers from a dead renderer, which would otherwise silently
+ * undo the user's setting at the worst possible moment.
+ */
+function attachZoom(window: BrowserWindow): void {
+  zoomedWindows.add(window)
+  window.on('closed', () => zoomedWindows.delete(window))
+
+  const apply = (): void => applyZoom(window, sanitizeZoomLevel(getZoomLevel()))
+  apply()
+  window.webContents.on('did-finish-load', apply)
+
+  window.webContents.on('before-input-event', (event, input) => {
+    const action = zoomActionForInput(input)
+    if (!action) return
+    event.preventDefault()
+
+    const level = nextZoomLevel(sanitizeZoomLevel(getZoomLevel()), action)
+    setZoomLevel(level)
+    // Every window moves together. A composer left at a different size from the
+    // window it was opened from reads as a bug, not a feature.
+    for (const target of zoomedWindows) applyZoom(target, level)
+
+    if (!window.isDestroyed()) {
+      window.webContents.send('app:toast', `Zoom ${zoomPercentage(level)}%`)
+    }
+  })
+}
+
 function createMainWindow(): void {
   const windowPrefs = getWindowPreferences()
   const icon = getWindowIcon()
@@ -510,6 +560,8 @@ function createMainWindow(): void {
       sandbox: false
     }
   })
+
+  attachZoom(mainWindow)
 
   mainWindow.on('ready-to-show', () => {
     mainWindow?.show()
@@ -604,6 +656,8 @@ async function createComposeWindow(payload?: Partial<ComposePayload>): Promise<v
       sandbox: false
     }
   })
+
+  attachZoom(composeWindow)
 
   composeWindow.on('ready-to-show', () => {
     composeWindow?.show()

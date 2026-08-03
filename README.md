@@ -84,7 +84,9 @@ your address.
 
 ### Living on your desktop
 
-Light and dark mode. Desktop notifications for new mail. Your unread count in the
+Light and dark mode, and a zoom for when the text is too small — `Ctrl` and
+`+` or `-`, `Ctrl` `0` to reset, exactly as in a browser. It applies to every
+window and is remembered between runs. Desktop notifications for new mail. Your unread count in the
 window title and on a tray icon. Links open in your browser. It remembers where
 you were — folder, message, window size — between runs.
 
@@ -146,6 +148,8 @@ plus the OAuth setup for Gmail and Microsoft, are in **[INSTALL.md](INSTALL.md)*
 | `Delete` / `Backspace` | Move to Trash (or delete for good, if already in Trash). You land on the next message down |
 | `Ctrl` + `Enter` | Send, in the compose window |
 | `Ctrl` + `,` | Settings |
+| `Ctrl` + `+` / `-` | Make everything bigger or smaller, as in a browser |
+| `Ctrl` + `0` | Back to normal size |
 
 ### The toolbar
 

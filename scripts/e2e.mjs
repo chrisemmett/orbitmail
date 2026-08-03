@@ -10,6 +10,9 @@
 //
 // - `e2e-send.suite.ts` — the send path: draft, composer, real Send button,
 //   GreenMail, Sent, no save-as-draft prompt. Needs the mail server.
+// - `e2e-zoom.suite.ts` — zoom, through real keystrokes: the pure helpers are
+//   covered by test:imap, but whether the key reaches the handler and the frame
+//   is actually zoomed needs a window to send a key to.
 // - `e2e-window.suite.ts` — window lifecycle: closing the main window with a
 //   composer open must not use the window after it is gone. Ends with every
 //   window destroyed, which is why it cannot share a process with the above.
@@ -44,7 +47,8 @@ const PORTS = { imap: 3243, imaps: 4093, smtp: 3225 }
 const SUITES = [
   { name: 'send', entry: 'e2e-send.suite.ts' },
   { name: 'signature', entry: 'e2e-signature.suite.ts' },
-  { name: 'window', entry: 'e2e-window.suite.ts' }
+  { name: 'window', entry: 'e2e-window.suite.ts' },
+  { name: 'zoom', entry: 'e2e-zoom.suite.ts' }
 ]
 
 const keep = process.argv.includes('--keep')
