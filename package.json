@@ -1,6 +1,6 @@
 {
   "name": "orbit-mail",
-  "version": "0.5.4",
+  "version": "0.6.0",
   "desktopName": "orbit-mail.desktop",
   "description": "Orbit Mail — a polished desktop email client for Linux",
   "main": "out/main/index.js",
@@ -87,7 +87,7 @@
       ],
       "category": "Network;Email",
       "executableName": "orbit-mail",
-    "syncDesktopName": true,
+      "syncDesktopName": true,
       "synopsis": "Desktop email client for Linux",
       "description": "Orbit Mail is a desktop email client with IMAP, SMTP, POP3, and OAuth support.",
       "artifactName": "${name}-${version}-${os}-${arch}.${ext}",
