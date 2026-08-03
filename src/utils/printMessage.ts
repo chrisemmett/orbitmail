@@ -40,9 +40,14 @@ function attachmentsSection(message: MessageDetail): string {
 // The AI summary block (summary + action items). Rendered only when the caller
 // opts in and an analysis exists for the message.
 function aiSummarySection(analysis: AiAnalysis): string {
+  // Owner first, as in the reader — a printed list of actions is useless if it
+  // does not say which of them are the reader's.
   const actionItems = analysis.actionItems.length
     ? `<div class="ai-subhead">Action Items</div><ul class="ai-actions">${analysis.actionItems
-        .map((item) => `<li>${escapeHtml(item)}</li>`)
+        .map(
+          (item) =>
+            `<li><strong>${escapeHtml(item.owner)}</strong> — ${escapeHtml(item.action)}</li>`
+        )
         .join('')}</ul>`
     : ''
   return `<section class="ai-summary">

@@ -101,13 +101,16 @@ hidden window back.)
 Off by default. Nothing is sent anywhere until you add an
 [Anthropic API key](https://console.anthropic.com/) via the ✦ button.
 
-- **Analyze** turns the open email into action items, open questions and key
-  context — and knows the difference between what you owe someone and what you
-  asked of them. If the email has attachments you can include them, and it will
-  read Word, Excel and PowerPoint files, PDFs, images and plain text. Older
-  formats (`.doc`, `.xls`), OpenDocument files and password-protected documents
-  it cannot read — it names those under the summary rather than quietly leaving
-  them out.
+- **Analyze** turns the open email into a plain-language account of what it
+  says, plus action items, open questions and key context. Every action names
+  who owes it — yours are marked and listed first, so you can see at a glance
+  what is on you and what you are waiting on someone else for. It knows the
+  difference between what you owe someone and what you asked of them.
+  If the email has attachments you can include them, and it will read Word,
+  Excel, PowerPoint and OpenDocument files, RTF, PDFs, images, calendar
+  invitations and plain text. Older formats (`.doc`, `.xls`), Apple iWork files
+  and password-protected documents it cannot read — it names those under the
+  summary rather than quietly leaving them out.
 - **Summarize** turns a long conversation into what it is about, what was
   decided, what is still outstanding and who owes it, and what nobody has
   answered. It reads the mail already on this computer, and says so when a
@@ -271,6 +274,13 @@ cannot read your mail. See [INSTALL.md](INSTALL.md#two-google-screens-that-are-e
 **Microsoft sign-in fails**  
 Your organisation may block OAuth access to IMAP and SMTP; that setting is your
 administrator's.
+
+**The window has gone blank**  
+Click **Reload** on the panel that appears. If the window is blank with no
+panel, close and reopen Orbit Mail — your mail is stored on this computer, so
+nothing is lost either way. It writes what happened to `renderer-errors.log` in
+your settings folder (`~/.config/orbit-mail/`), which is the useful thing to
+attach if you report it.
 
 **Sync errors in the status bar**  
 Click **Retry**, or **Re-authenticate** if it is an account problem.

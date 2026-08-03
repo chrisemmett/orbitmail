@@ -314,6 +314,17 @@ export interface PersistedAppState {
  * without a StatusNotifier host), and `setAsDefaultProtocolClient` silently
  * no-ops without an installed .desktop file — which is every `npm run dev` run.
  */
+/** What the renderer reports when it has fallen over. See `app.reportRendererError`. */
+export interface RendererErrorReport {
+  source: 'render' | 'window'
+  message: string
+  stack?: string
+  /** React's component stack, when an error boundary supplied one. */
+  componentStack?: string
+  /** Which window it came from, so a composer failure is distinguishable. */
+  window?: string
+}
+
 export interface PlatformCapabilities {
   trayActive: boolean
   notificationsSupported: boolean
@@ -322,7 +333,13 @@ export interface PlatformCapabilities {
 
 export interface AiAnalysis {
   summary: string
-  actionItems: string[]
+  /**
+   * Every outstanding action the message implies, each with its owner — not
+   * only the user's. Dropping other people's left the user unable to tell "you
+   * owe nothing here" from "the model found nothing", and a message often
+   * turns on what someone *else* has undertaken to do.
+   */
+  actionItems: ActionItem[]
   questions: string[]
   keyContext: string[]
   generatedAt: number
@@ -334,8 +351,8 @@ export interface AiAnalysis {
   skippedAttachments?: string[]
 }
 
-/** One outstanding commitment from a conversation, and who owes it. */
-export interface ThreadActionItem {
+/** One outstanding commitment, and who owes it. */
+export interface ActionItem {
   action: string
   /**
    * "You" for the user, otherwise the participant as the conversation names
@@ -349,14 +366,15 @@ export interface ThreadActionItem {
 /**
  * A conversation summarized as a whole, rather than message by message.
  *
- * Separate from `AiAnalysis` rather than a widening of it: that shape's
- * `actionItems` are plain strings, and a thread's need an owner. Changing it
- * would alter the per-message payload for no reason.
+ * Separate from `AiAnalysis` because a thread carries its own extras
+ * (decisions, staleness, how much of it was read), not because the action
+ * items differ — both now use `ActionItem`, so "who owes this" reads the same
+ * whether you are looking at one message or the whole conversation.
  */
 export interface AiThreadAnalysis {
   summary: string
   decisions: string[]
-  actionItems: ThreadActionItem[]
+  actionItems: ActionItem[]
   openQuestions: string[]
   generatedAt: number
   cached: boolean
@@ -585,6 +603,13 @@ export interface OrbitMailAPI {
      */
     onToast: (callback: (message: string) => void) => () => void
     onUnexpectedError: (callback: (message: string) => void) => () => void
+    /**
+     * The renderer fell over. Written to `renderer-errors.log` in the profile
+     * directory, because a render error blanks the window while leaving the
+     * process alive — nothing crashes, so without this nothing is recorded and
+     * the only evidence is a console the user never opened.
+     */
+    reportRendererError: (report: RendererErrorReport) => Promise<void>
     /** Whether OS-level encryption (safeStorage) is available for stored secrets. */
     getSecureStorageStatus: () => Promise<{ available: boolean }>
     /**
