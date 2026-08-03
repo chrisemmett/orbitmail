@@ -284,6 +284,12 @@ export interface PersistedAppState {
   /** Desktop notification on new mail. Absent means true. */
   desktopNotifications?: boolean
   /**
+   * Page zoom, as an Electron zoom level (factor = 1.2 ^ level, so 0 is 100%).
+   * Applies to every window. Absent means 0 — an install predating this key
+   * opens at the size it always did.
+   */
+  zoomLevel?: number
+  /**
    * Load remote images in every message, skipping the per-sender prompt. Absent
    * means false — the privacy-preserving default is the one you get by omission.
    */

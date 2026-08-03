@@ -179,6 +179,14 @@ export function getWindowPreferences(): WindowPreferences | undefined {
   return getAppState().window
 }
 
+export function setZoomLevel(zoomLevel: number): void {
+  patchAppState({ zoomLevel })
+}
+
+export function getZoomLevel(): number {
+  return getAppState().zoomLevel ?? 0
+}
+
 function normalizeEmail(email: string): string {
   const match = email.match(/<([^>]+)>/)
   return (match ? match[1] : email).trim().toLowerCase()

@@ -1427,6 +1427,41 @@ and replacing it because one async call rejected would be worse than the bug.
 **Root cause of the reported incident is still unknown.** What is fixed is that
 it is now recoverable and, next time, diagnosable.
 
+## Zoom
+
+`Ctrl` `+` / `-` / `0`, persisted across restarts and shared by every window.
+
+**Electron's default menu already has Zoom In / Zoom Out / Actual Size**, which
+makes this look like something that should already work. It does not, and the
+reason is worth writing down because the obvious fix — adding menu items — would
+have reproduced the bug. Those roles bind to the *accelerators*
+`CommandOrControl+Plus` and `CommandOrControl+-`, and **an accelerator matches a
+key, not the character the layout puts on it**. On a UK layout `Ctrl` with the
+`-` key can arrive as `_`, and `+` needs `Shift` at all, so neither role fires
+reliably. Reported as: *"CTRL- seems to be CTRL_ on my machine"*.
+
+So `electron/zoom.ts` matches on `input.key` — the character actually produced —
+and accepts every spelling of each: `+ = Add` for in, `- _ Subtract` for out,
+`0 Insert` for reset. `before-input-event` on each window's `webContents` sees
+the key before the page does.
+
+Three things that are not obvious from the feature description:
+
+- **Zoom is re-applied on `did-finish-load`, not just at window creation.** The
+  level is a property of the *loaded frame*, so any navigation or reload resets
+  it to 100% — including the reload that recovers a dead renderer, which would
+  otherwise silently undo the user's setting at the worst possible moment.
+- **Windows share one level.** A composer left at a different size from the
+  window it was opened from reads as a bug, not a feature, so a change from
+  either applies to all of them and is persisted once.
+- **The print window is deliberately excluded.** It is a `BrowserWindow` too,
+  and zooming it would change what comes out of the printer. Zoomed windows are
+  tracked in an explicit set rather than by asking for every open window.
+
+Bounds are `-3` to `+6` (about 58% to 300%), and a stored level is clamped on
+the way back in: a corrupted or hand-edited preferences blob must not be able to
+open the app at a size the user cannot read well enough to fix.
+
 ## Security posture
 
 What the app defends against, and the tests that keep it that way. All of this
@@ -1781,6 +1816,15 @@ These close that gap. `scripts/e2e.mjs` starts GreenMail on its own ports
 `electron/main.ts` **whole** — the handlers, windows and close paths are the app's
 own, not a re-implementation — with `userData` redirected to a throwaway directory
 before any app module loads, so a real database is never opened.
+
+**`e2e-zoom.suite.ts` — zoom, through real keystrokes.** `sendInputEvent`
+delivers `Ctrl` `=`, `_`, `-` and `0` the way Chromium would, and the suite reads
+`webContents.getZoomLevel()` back. The pure key-matching lives in
+`electron/zoom.ts` and is covered by `test:imap`; what needs a window is
+everything around it — that `before-input-event` is registered at all, that the
+key reaches it, that the frame is actually zoomed rather than the level merely
+stored, that the level survives the reload used to recover a dead renderer, and
+that a composer opens at the same size as the window that spawned it.
 
 **`e2e-send.suite.ts` — the send path.** `drafts.open` → the composer loads the
 draft → a click on the real **Send** button → `handleSend` → preload →
