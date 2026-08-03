@@ -142,8 +142,35 @@ const OVERRIDES = {
     // light text lands on the sender's white table), and message 2 sets no
     // colour at all, so in dark mode it must stay dark like the app around it.
     bodyHtml: BODY_HTML[i],
-    attachments: []
+    // The last message carries attachments, one of them a format the analysis
+    // cannot read. That is what makes the split "Analyze" button (with its
+    // "Include attachments" option) and the skipped-attachment caveat
+    // reachable here at all — with no attachments anywhere, neither renders.
+    attachments: i === 2
+      ? [
+          { id: 'att-1', messageId: id, filename: 'Q3 launch plan.docx',
+            mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            size: 38112, localPath: null },
+          { id: 'att-2', messageId: id, filename: 'Membership list.ods',
+            mimeType: 'application/vnd.oasis.opendocument.spreadsheet',
+            size: 21044, localPath: null }
+        ]
+      : []
   })),
+  // What an analysis that had to leave an attachment out looks like. The
+  // caveat is the point of the fixture: a summary written without the plan
+  // reads exactly like one written with it, so the panel has to name the file
+  // the model never saw.
+  'ai.analyze': {
+    summary:
+      'Jan confirms the launch moves to the 14th and will tell the printers; Priya still needs to confirm the pricing page copy.',
+    actionItems: ['Confirm the pricing page copy date with Priya'],
+    questions: ['Is the pricing page copy ready by the 14th?'],
+    keyContext: ['Launch date: the 14th', 'Printers get a week of slack'],
+    generatedAt: Date.now(),
+    cached: false,
+    skippedAttachments: ['Membership list.ods']
+  },
   // A stored summary, so the panel renders without an API key. Shaped as
   // AiThreadAnalysis: the counts drive the "new messages since" note, so this
   // one is deliberately stale to show that state too.
@@ -162,6 +189,20 @@ const OVERRIDES = {
     analyzedCount: 2,
     currentMessageCount: 3,
     stale: true
+  },
+  // A single-message analysis that had to leave an attachment out. The caveat
+  // is the whole point of the fixture: a summary written without the agenda
+  // looks exactly like one written with it, so the panel has to say which
+  // files the model never saw.
+  'ai.getCachedAnalysis': {
+    summary:
+      'Jerry reminds club members that the Club Council meeting is at 6.30pm on Tuesday 4th August at the Burlington Hotel.',
+    actionItems: ['Attend the Club Council meeting at 6.30pm on Tuesday 4th August'],
+    questions: [],
+    keyContext: ['Meeting: Tuesday 4 August, 6.30pm, Burlington Hotel'],
+    generatedAt: Date.now() - 600000,
+    cached: true,
+    skippedAttachments: ['Membership list.ods', 'Scan of the venue map.tiff']
   },
   'sync.getStatus': { syncing: false, lastSyncAt: Date.now() - 120000, error: null, syncCurrent: 0, syncTotal: 0 },
   'ai.getStatus': { configured: true },

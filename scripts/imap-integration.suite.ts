@@ -2671,6 +2671,204 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Office attachments: analysis must read them, not name them')
+  // -------------------------------------------------------------------------
+  {
+    // The API takes PDF or plain text in a `document` block and nothing else,
+    // so a .docx only reaches the model as text we extracted. Before this,
+    // "Include attachments" on a meeting agenda skipped both attachments and
+    // summarised the body alone — an answer that told the user to go and read
+    // the agenda, indistinguishable from one that had read it.
+    //
+    // Fixtures are built here rather than committed: a hand-written ZIP proves
+    // the reader parses the container, not that it can read one file someone
+    // checked in. The writer below is deliberately independent of the reader.
+    const { deflateRawSync, crc32 } = await import('zlib')
+    const { officeKind, extractOfficeText } = await import('../electron/services/office-text')
+
+    /** Minimal ZIP writer. `store: true` exercises the uncompressed path. */
+    function zip(files: Array<{ name: string; body: string; store?: boolean }>): Buffer {
+      const locals: Buffer[] = []
+      const central: Buffer[] = []
+      let offset = 0
+
+      for (const file of files) {
+        const name = Buffer.from(file.name, 'utf8')
+        const raw = Buffer.from(file.body, 'utf8')
+        const data = file.store ? raw : deflateRawSync(raw)
+        const method = file.store ? 0 : 8
+
+        const local = Buffer.alloc(30)
+        local.writeUInt32LE(0x04034b50, 0)
+        local.writeUInt16LE(20, 4) // version needed
+        local.writeUInt16LE(method, 8)
+        local.writeUInt32LE(crc32(raw), 14)
+        local.writeUInt32LE(data.length, 18)
+        local.writeUInt32LE(raw.length, 22)
+        local.writeUInt16LE(name.length, 26)
+        locals.push(local, name, data)
+
+        const dir = Buffer.alloc(46)
+        dir.writeUInt32LE(0x02014b50, 0)
+        dir.writeUInt16LE(20, 6)
+        dir.writeUInt16LE(method, 10)
+        dir.writeUInt32LE(crc32(raw), 16)
+        dir.writeUInt32LE(data.length, 20)
+        dir.writeUInt32LE(raw.length, 24)
+        dir.writeUInt16LE(name.length, 28)
+        dir.writeUInt32LE(offset, 42)
+        central.push(dir, name)
+
+        offset += 30 + name.length + data.length
+      }
+
+      const dirBuf = Buffer.concat(central)
+      const eocd = Buffer.alloc(22)
+      eocd.writeUInt32LE(0x06054b50, 0)
+      eocd.writeUInt16LE(files.length, 8)
+      eocd.writeUInt16LE(files.length, 10)
+      eocd.writeUInt32LE(dirBuf.length, 12)
+      eocd.writeUInt32LE(offset, 16)
+      return Buffer.concat([Buffer.concat(locals), dirBuf, eocd])
+    }
+
+    const officeDir = mkdtempSync(join(tmpdir(), 'orbit-office-'))
+    const writeFixture = (name: string, buf: Buffer): string => {
+      const path = join(officeDir, name)
+      writeFileSync(path, buf)
+      return path
+    }
+
+    try {
+      // -- type detection ---------------------------------------------------
+      const DOCX_MIME =
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      ok('a .docx is recognised by MIME type',
+        officeKind(DOCX_MIME, '2026-08-04 - Agenda.docx') === 'word')
+      ok('a .docx mislabelled octet-stream is recognised by extension',
+        officeKind('application/octet-stream', 'Minutes.DOCX') === 'word')
+      ok('.xlsx and .pptx are recognised',
+        officeKind('application/octet-stream', 'budget.xlsx') === 'excel' &&
+          officeKind('application/octet-stream', 'deck.pptx') === 'powerpoint')
+      // Legacy OLE formats are not ZIPs. They must stay unrecognised so they
+      // are reported as skipped rather than failing deeper in.
+      ok('legacy .doc/.xls are not treated as OOXML',
+        officeKind('application/msword', 'old.doc') === null &&
+          officeKind('application/vnd.ms-excel', 'old.xls') === null)
+      ok('a PDF is left to the native document block',
+        officeKind('application/pdf', 'agenda.pdf') === null)
+
+      // -- Word -------------------------------------------------------------
+      const docx = writeFixture('agenda.docx', zip([
+        { name: '[Content_Types].xml', body: '<Types/>', store: true },
+        {
+          name: 'word/document.xml',
+          body:
+            '<?xml version="1.0"?><w:document><w:body>' +
+            '<w:p><w:r><w:t>Club Council Agenda</w:t></w:r></w:p>' +
+            '<w:p><w:r><w:t>1. Apologies</w:t></w:r></w:p>' +
+            '<w:p><w:r><w:t>2. Treasurer </w:t></w:r><w:r><w:t>&amp; accounts</w:t></w:r></w:p>' +
+            '<w:p/>' +
+            '<w:p><w:r><w:t>Venue:</w:t></w:r><w:tab/><w:r><w:t>Burlington Hotel</w:t></w:r></w:p>' +
+            '</w:body></w:document>'
+        }
+      ]))
+      const wordText = extractOfficeText(docx, 'word') ?? ''
+      ok('a .docx yields its body text', wordText.includes('Club Council Agenda'), wordText.slice(0, 60))
+      ok('paragraphs become separate lines',
+        /1\. Apologies\n2\. Treasurer/.test(wordText), JSON.stringify(wordText))
+      ok('runs within a paragraph are joined and entities decoded',
+        wordText.includes('2. Treasurer & accounts'))
+      ok('tabs are preserved', wordText.includes('Venue:\tBurlington Hotel'))
+
+      // Found on a real Word document, not on a fixture: OOXML stores numbers
+      // as element *text* too, so stripping tags across the part prefixed the
+      // agenda with "34817056216650" — a floating image's coordinates. Text
+      // must come from run elements only.
+      const decorated = writeFixture('decorated.docx', zip([
+        {
+          name: 'word/document.xml',
+          body:
+            '<w:document><w:body><w:p>' +
+            '<w:r><w:drawing><wp:anchor><wp:positionH><wp:posOffset>3481705</wp:posOffset>' +
+            '</wp:positionH><wp:positionV><wp:posOffset>6216650</wp:posOffset></wp:positionV>' +
+            '</wp:anchor></w:drawing></w:r>' +
+            '<w:r><w:instrText> HYPERLINK "http://example.com" </w:instrText></w:r>' +
+            '<w:del><w:r><w:delText>struck out</w:delText></w:r></w:del>' +
+            '<w:r><w:t>Real heading</w:t></w:r>' +
+            '</w:p></w:body></w:document>'
+        }
+      ]))
+      const decoratedText = extractOfficeText(decorated, 'word') ?? ''
+      ok('image coordinates do not leak in as text',
+        !/3481705|6216650/.test(decoratedText), JSON.stringify(decoratedText))
+      ok('field instructions and tracked-change deletions are excluded',
+        !decoratedText.includes('HYPERLINK') && !decoratedText.includes('struck out'),
+        JSON.stringify(decoratedText))
+      ok('the actual heading survives all of that', decoratedText.includes('Real heading'))
+
+      // -- Excel ------------------------------------------------------------
+      // A sheet stores strings by index into sharedStrings; without resolving
+      // them the model would be handed a column of integers.
+      const xlsx = writeFixture('budget.xlsx', zip([
+        {
+          name: 'xl/sharedStrings.xml',
+          body: '<sst><si><t>Item</t></si><si><t>Cost</t></si><si><t>Room hire</t></si></sst>'
+        },
+        {
+          name: 'xl/worksheets/sheet1.xml',
+          body:
+            '<worksheet><sheetData>' +
+            '<row><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>' +
+            '<row><c r="A2" t="s"><v>2</v></c><c r="B2"><v>120</v></c></row>' +
+            '</sheetData></worksheet>'
+        }
+      ]))
+      const excelText = extractOfficeText(xlsx, 'excel') ?? ''
+      ok('shared strings are resolved to their text',
+        excelText.includes('Room hire'), JSON.stringify(excelText))
+      ok('rows keep label and value on one line',
+        /Room hire\t120/.test(excelText), JSON.stringify(excelText))
+
+      // -- PowerPoint -------------------------------------------------------
+      // Ten slides so lexicographic ordering would put slide10 second.
+      const slides = Array.from({ length: 10 }, (_, i) => ({
+        name: `ppt/slides/slide${i + 1}.xml`,
+        body: `<p:sld><p:cSld><a:p><a:r><a:t>Point ${i + 1}</a:t></a:r></a:p></p:cSld></p:sld>`
+      }))
+      const pptx = writeFixture('deck.pptx', zip(slides))
+      const deckText = extractOfficeText(pptx, 'powerpoint') ?? ''
+      ok('every slide contributes text',
+        slides.every((_, i) => deckText.includes(`Point ${i + 1}`)))
+      ok('slides are ordered numerically, not lexicographically',
+        deckText.indexOf('Point 2') < deckText.indexOf('Point 10'),
+        JSON.stringify(deckText.replace(/\n/g, ' ')).slice(0, 80))
+
+      // -- unreadable containers -------------------------------------------
+      // These must return null so the caller names them as skipped, rather
+      // than sending the model an empty attachment heading.
+      ok('a non-ZIP file yields null',
+        extractOfficeText(writeFixture('fake.docx', Buffer.from('PK not really')), 'word') === null)
+      ok('a ZIP without the expected part yields null',
+        extractOfficeText(
+          writeFixture('empty.docx', zip([{ name: 'docProps/app.xml', body: '<x/>' }])),
+          'word'
+        ) === null)
+      ok('a document with no text yields null rather than an empty block',
+        extractOfficeText(
+          writeFixture('blank.docx', zip([
+            { name: 'word/document.xml', body: '<w:document><w:body><w:p/></w:body></w:document>' }
+          ])),
+          'word'
+        ) === null)
+      ok('a missing file yields null',
+        extractOfficeText(join(officeDir, 'nope.docx'), 'word') === null)
+    } finally {
+      rmSync(officeDir, { recursive: true, force: true })
+    }
+  }
+
+  // -------------------------------------------------------------------------
   section('Launcher badge: the Unity signal must be well-formed')
   // -------------------------------------------------------------------------
   {

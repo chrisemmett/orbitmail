@@ -591,6 +591,7 @@ export function MessageView() {
               <AiSection title="Action Items" items={aiAnalysis.actionItems} />
               <AiSection title="Questions" items={aiAnalysis.questions} />
               <AiSection title="Key Context" items={aiAnalysis.keyContext} />
+              <AiSkippedAttachments files={aiAnalysis.skippedAttachments} />
             </div>
           ) : null}
         </div>
@@ -626,6 +627,19 @@ export function MessageView() {
           onClose={() => setContextMenu(null)}
         />
       )}
+    </div>
+  )
+}
+
+// Names the attachments the model never saw. This is a caveat on the answer
+// above it, not a section of the answer: a summary produced without the agenda
+// reads exactly like one produced with it, and a toast that has already
+// vanished is no way to tell them apart.
+function AiSkippedAttachments({ files }: { files?: string[] }) {
+  if (!files || files.length === 0) return null
+  return (
+    <div className="reader-ai-skipped">
+      Not included in this analysis: {files.join(', ')}
     </div>
   )
 }
@@ -1089,6 +1103,7 @@ const ThreadMessage = memo(function ThreadMessage({
               <AiSection title="Action Items" items={aiAnalysis.actionItems} />
               <AiSection title="Questions" items={aiAnalysis.questions} />
               <AiSection title="Key Context" items={aiAnalysis.keyContext} />
+              <AiSkippedAttachments files={aiAnalysis.skippedAttachments} />
             </div>
           ) : null}
         </div>

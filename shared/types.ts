@@ -322,7 +322,9 @@ export interface AiAnalysis {
   generatedAt: number
   cached: boolean
   // Attachments that were requested but couldn't be sent to the model
-  // (unsupported type, too large, or un-fetchable). Transient — not persisted.
+  // (unsupported type, too large, or un-fetchable). Cached alongside the
+  // analysis and shown in the reader, so an answer that had to ignore an
+  // attachment still says so when the message is reopened.
   skippedAttachments?: string[]
 }
 

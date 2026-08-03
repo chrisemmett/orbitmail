@@ -2080,6 +2080,18 @@ textarea {
   color: var(--text-secondary, #6b7280);
 }
 
+/* The same caveat treatment, trailing the answer instead of leading it: which
+   attachments the model was never shown. Ruled off so it reads as a limit on
+   the analysis above rather than another of its sections. */
+.reader-ai-skipped {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-secondary, #6b7280);
+}
+
 .reader-ai-section {
   margin-top: 10px;
 }

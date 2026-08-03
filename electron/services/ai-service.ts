@@ -14,6 +14,7 @@ import type {
 } from '../../shared/types'
 import { getRawSqlite } from '../db'
 import { ensureAttachmentLocal } from './attachment-fetch'
+import { extractOfficeText, officeKind } from './office-text'
 import {
   getMessage,
   listAccounts,
@@ -271,8 +272,11 @@ function isTextualAttachment(mime: string, filename: string): boolean {
 }
 
 // Build Anthropic content blocks for a message's attachments. Text-like files
-// are extracted inline (truncated); images and PDFs are sent as native blocks.
-// Anything else, oversized, or un-fetchable is skipped and named in `skipped`.
+// are extracted inline (truncated); Office documents are unzipped to text
+// locally, because the API accepts only PDF or plain text in a `document`
+// block; images and PDFs are sent as native blocks. Anything else, oversized,
+// or un-fetchable is skipped and named in `skipped` — which the reader shows,
+// so a body-only answer is never mistaken for one that read the attachments.
 async function buildAttachmentBlocks(
   messageId: string
 ): Promise<{ blocks: Anthropic.ContentBlockParam[]; skipped: string[] }> {
@@ -284,8 +288,9 @@ async function buildAttachmentBlocks(
     const isImage = IMAGE_TYPES.has(mime)
     const isPdf = mime === 'application/pdf'
     const isText = isTextualAttachment(mime, att.filename)
+    const office = officeKind(mime, att.filename)
 
-    if (!isImage && !isPdf && !isText) {
+    if (!isImage && !isPdf && !isText && !office) {
       skipped.push(att.filename)
       continue
     }
@@ -297,8 +302,15 @@ async function buildAttachmentBlocks(
         continue
       }
 
-      if (isText) {
-        let text = readFileSync(localPath, 'utf8')
+      if (isText || office) {
+        // An Office document that can't be unzipped (encrypted, ZIP64, or a
+        // legacy .doc misnamed .docx) reports as skipped rather than sending
+        // the model nothing under an attachment heading.
+        let text = office ? extractOfficeText(localPath, office) : readFileSync(localPath, 'utf8')
+        if (text === null) {
+          skipped.push(att.filename)
+          continue
+        }
         if (text.length > MAX_ATTACHMENT_TEXT_CHARS) {
           text = text.slice(0, MAX_ATTACHMENT_TEXT_CHARS) + '\n... [truncated]'
         }
@@ -421,20 +433,19 @@ ${body || '(no body content)'}`)}`
     }
 
     const generatedAt = Date.now()
+    // `skippedAttachments` is cached with the analysis, not just toasted: the
+    // caveat has to outlive the toast, or reopening the message shows a
+    // body-only answer with nothing to say it was one.
     const stored = {
       summary: parsed.summary,
       actionItems: parsed.actionItems,
       questions: parsed.questions,
-      keyContext: parsed.keyContext
+      keyContext: parsed.keyContext,
+      ...(skippedAttachments.length > 0 ? { skippedAttachments } : {})
     }
     setMessageAiAnalysis(messageId, JSON.stringify(stored), generatedAt)
 
-    return {
-      ...stored,
-      generatedAt,
-      cached: false,
-      ...(skippedAttachments.length > 0 ? { skippedAttachments } : {})
-    }
+    return { ...stored, generatedAt, cached: false }
   } catch (err) {
     return { error: friendlyError(err) }
   }
