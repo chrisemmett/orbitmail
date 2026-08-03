@@ -284,6 +284,12 @@ export interface PersistedAppState {
   /** Desktop notification on new mail. Absent means true. */
   desktopNotifications?: boolean
   /**
+   * Analyze includes readable attachments without asking. Absent means false:
+   * attachments cost extra tokens, so the prompt-first behaviour is the one you
+   * get by omission.
+   */
+  alwaysIncludeAttachments?: boolean
+  /**
    * Page zoom, as an Electron zoom level (factor = 1.2 ^ level, so 0 is 100%).
    * Applies to every window. Absent means 0 — an install predating this key
    * opens at the size it always did.
@@ -346,6 +352,13 @@ export interface AiAnalysis {
   keyContext: string[]
   generatedAt: number
   cached: boolean
+  /**
+   * Whether this analysis was run *with* attachments. Absent on analyses
+   * cached before the flag existed — which is why the reader says nothing
+   * rather than guessing: unknown is a real state, and claiming either way
+   * would be the same illusion the caveat exists to break.
+   */
+  attachmentsIncluded?: boolean
   // Attachments that were requested but couldn't be sent to the model
   // (unsupported type, too large, or un-fetchable). Cached alongside the
   // analysis and shown in the reader, so an answer that had to ignore an

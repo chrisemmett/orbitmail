@@ -20,6 +20,11 @@ import { extractRtfText, isRtf } from './rtf-text'
 import { extractEmailText, isEmailAttachment } from './eml-text'
 import { stripHtml } from './html-text'
 import {
+  IMAGE_TYPES,
+  isHtmlAttachment,
+  isTextualAttachment
+} from '../../shared/attachment-kinds'
+import {
   getMessage,
   listAccounts,
   listMessageAttachments,
@@ -61,7 +66,6 @@ const MAX_BODY_CHARS = 8000
 // send: skip anything larger than this, and truncate extracted text.
 const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024
 const MAX_ATTACHMENT_TEXT_CHARS = 8000
-const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
 const SWEEP_MAX_MESSAGES = 40
 const SWEEP_BODY_CHARS = 1500
 // Completed tasks older than this are pruned and no longer fed back to the model.
@@ -357,26 +361,6 @@ function friendlyError(err: unknown): string {
   return `Analysis failed: ${err instanceof Error ? err.message : String(err)}`
 }
 
-function isTextualAttachment(mime: string, filename: string): boolean {
-  // RTF is `text/rtf` at some senders, but it is markup that needs decoding
-  // rather than text to inline — it has its own branch.
-  if (isRtf(mime, filename)) return false
-  if (mime.startsWith('text/')) return true
-  if (/^application\/(json|xml|x-yaml|yaml|csv|toml|sql)$/i.test(mime)) return true
-  // Calendar invitations and contact cards are plain text and are among the
-  // most useful things a mail attachment can contain — a meeting invite says
-  // when the meeting is.
-  if (/^text\/(calendar|vcard|x-vcard)$/i.test(mime)) return true
-  return /\.(txt|md|markdown|csv|tsv|json|xml|log|ya?ml|html?|ics|vcf|ini|conf|cfg|toml|rst|sql|diff|patch)$/i.test(
-    filename
-  )
-}
-
-/** Whether an attachment's text is HTML that should be flattened before sending. */
-function isHtmlAttachment(mime: string, filename: string): boolean {
-  return mime === 'text/html' || /\.html?$/i.test(filename)
-}
-
 /**
  * A filename for the heading above an attachment's content. The name is chosen
  * by the sender and sits *outside* the fence — it is a label we are writing —
@@ -588,6 +572,9 @@ ${body || '(no body content)'}`)}`
       actionItems: parsed.actionItems,
       questions: parsed.questions,
       keyContext: parsed.keyContext,
+      // Recorded either way. "Ran without attachments" is not the same claim as
+      // "there were none", and only the run itself knows which it was.
+      attachmentsIncluded: options.includeAttachments === true,
       ...(skippedAttachments.length > 0 ? { skippedAttachments } : {})
     }
     setMessageAiAnalysis(messageId, JSON.stringify(stored), generatedAt)

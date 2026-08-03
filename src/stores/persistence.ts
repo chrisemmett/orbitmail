@@ -47,6 +47,7 @@ export async function loadPersistedPreferences(): Promise<void> {
     desktopNotifications: state.desktopNotifications !== false,
     alwaysLoadRemoteImages: state.alwaysLoadRemoteImages === true,
     handleMailtoLinks: state.handleMailtoLinks === true,
+    alwaysIncludeAttachments: state.alwaysIncludeAttachments === true,
     // Resolved, not taken as read: the settings pane has to show the model that
     // will actually be called, and main falls back the same way for a value it
     // does not recognise.

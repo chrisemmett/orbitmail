@@ -22,6 +22,11 @@
 
 import { readFileSync } from 'fs'
 import { inflateRawSync } from 'zlib'
+// Detection is shared with the renderer, which needs the same answer to decide
+// whether an analysis that skipped attachments is worth mentioning.
+import { officeKind, type DocumentKind } from '../../shared/attachment-kinds'
+
+export { officeKind }
 
 // Signatures, little-endian, from the ZIP spec (APPNOTE.TXT §4.3).
 const SIG_EOCD = 0x06054b50
@@ -42,53 +47,11 @@ const MAX_EXTRACTED_CHARS = 200_000
 // are honoured only up to here — enough for a real run of repeated values.
 const MAX_ODF_CELL_REPEAT = 50
 
-const DOCUMENT_MIME_TYPES: Record<string, DocumentKind> = {
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'word',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'excel',
-  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'powerpoint',
-  'application/vnd.oasis.opendocument.text': 'odf-text',
-  'application/vnd.oasis.opendocument.spreadsheet': 'odf-sheet',
-  'application/vnd.oasis.opendocument.presentation': 'odf-presentation'
-}
-
-const DOCUMENT_EXTENSIONS: Array<[RegExp, DocumentKind]> = [
-  [/\.docx$/i, 'word'],
-  [/\.xlsx$/i, 'excel'],
-  [/\.pptx$/i, 'powerpoint'],
-  [/\.odt$/i, 'odf-text'],
-  [/\.ods$/i, 'odf-sheet'],
-  [/\.odp$/i, 'odf-presentation']
-]
-
-type DocumentKind =
-  | 'word'
-  | 'excel'
-  | 'powerpoint'
-  | 'odf-text'
-  | 'odf-sheet'
-  | 'odf-presentation'
-
 interface ZipEntry {
   name: string
   method: number
   compressedSize: number
   localHeaderOffset: number
-}
-
-/**
- * Which ZIP-based document flavour this attachment is, or null if it isn't
- * one. Senders (and some IMAP servers) label attachments
- * `application/octet-stream`, so the extension is consulted whenever the MIME
- * type doesn't settle it.
- */
-export function officeKind(mime: string, filename: string): DocumentKind | null {
-  const byMime = DOCUMENT_MIME_TYPES[mime]
-  if (byMime) return byMime
-
-  for (const [pattern, kind] of DOCUMENT_EXTENSIONS) {
-    if (pattern.test(filename)) return kind
-  }
-  return null
 }
 
 /**

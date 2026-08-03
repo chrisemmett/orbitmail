@@ -10,6 +10,7 @@ import {
   type AiEffort
 } from '../../../shared/ai-models'
 import { useMailStore, setGlobalPreference } from '../../stores/mailStore'
+import { SettingToggle } from './SettingToggle'
 
 // The body of what used to be AiSettingsDialog, minus its overlay and Close
 // button — the settings shell owns both now.
@@ -18,6 +19,7 @@ export function AiPane() {
   const aiModel = useMailStore((s) => s.aiModel)
   const aiEffort = useMailStore((s) => s.aiEffort)
   const aiDetail = useMailStore((s) => s.aiDetail)
+  const alwaysIncludeAttachments = useMailStore((s) => s.alwaysIncludeAttachments)
   const [configured, setConfigured] = useState<boolean | null>(null)
   const [key, setKey] = useState('')
   const [saving, setSaving] = useState(false)
@@ -178,6 +180,13 @@ export function AiPane() {
         </select>
       </label>
       {detailHint && <p className="account-hint">{detailHint}</p>}
+
+      <SettingToggle
+        label="Always include attachments"
+        description="Analyze reads Word, PDF, OpenDocument and other readable attachments without asking first. They cost extra tokens, which is why it asks by default."
+        checked={alwaysIncludeAttachments}
+        onChange={(next) => void setGlobalPreference('alwaysIncludeAttachments', next)}
+      />
 
       <p className="account-hint">
         A change applies to the next analysis, draft or sweep. Results already saved are kept —

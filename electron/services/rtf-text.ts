@@ -60,13 +60,11 @@ const BREAKS: Record<string, string> = {
   nestrow: '\n'
 }
 
-const MAX_EXTRACTED_CHARS = 200_000
+import { isRtf } from '../../shared/attachment-kinds'
 
-/** Whether this attachment looks like RTF, by MIME type or extension. */
-export function isRtf(mime: string, filename: string): boolean {
-  if (mime === 'application/rtf' || mime === 'text/rtf' || mime === 'text/richtext') return true
-  return /\.rtf$/i.test(filename)
-}
+export { isRtf }
+
+const MAX_EXTRACTED_CHARS = 200_000
 
 /**
  * Extract the readable text of an RTF document, or null if it isn't RTF or

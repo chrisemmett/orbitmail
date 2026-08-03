@@ -144,6 +144,8 @@ export function patchAppState(patch: Partial<PersistedAppState>): PersistedAppSt
     // would spring back to its previous contents.
     closeToTray: patch.closeToTray ?? current.closeToTray ?? true,
     desktopNotifications: patch.desktopNotifications ?? current.desktopNotifications ?? true,
+    alwaysIncludeAttachments:
+      patch.alwaysIncludeAttachments ?? current.alwaysIncludeAttachments ?? false,
     alwaysLoadRemoteImages:
       patch.alwaysLoadRemoteImages ?? current.alwaysLoadRemoteImages ?? false,
     mutedSenders: patch.mutedSenders ?? current.mutedSenders ?? [],

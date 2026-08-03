@@ -151,9 +151,10 @@ const OVERRIDES = {
           { id: 'att-1', messageId: id, filename: 'Q3 launch plan.docx',
             mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             size: 38112, localPath: null },
-          { id: 'att-2', messageId: id, filename: 'Membership list.ods',
-            mimeType: 'application/vnd.oasis.opendocument.spreadsheet',
-            size: 21044, localPath: null }
+          { id: 'att-2', messageId: id, filename: 'Minutes 2019.doc',
+            mimeType: 'application/msword', size: 21044, localPath: null },
+          { id: 'att-3', messageId: id, filename: 'Logo.png',
+            mimeType: 'image/png', size: 8123, localPath: null }
         ]
       : []
   })),
@@ -175,7 +176,10 @@ const OVERRIDES = {
     keyContext: ['Launch date: the 14th', 'Printers get a week of slack'],
     generatedAt: Date.now(),
     cached: false,
-    skippedAttachments: ['Membership list.ods']
+    // Text-only, on a message carrying a readable .docx: the state the
+    // "not included" caveat exists for. A fixture with this true would render
+    // identically whether the caveat works or not.
+    attachmentsIncluded: false
   },
   // A stored summary, so the panel renders without an API key. Shaped as
   // AiThreadAnalysis: the counts drive the "new messages since" note, so this
@@ -213,7 +217,8 @@ const OVERRIDES = {
     keyContext: ['Meeting: Tuesday 4 August, 6.30pm, Burlington Hotel'],
     generatedAt: Date.now() - 600000,
     cached: true,
-    skippedAttachments: ['Membership list.ods', 'Scan of the venue map.tiff']
+    attachmentsIncluded: true,
+    skippedAttachments: ['Minutes 2019.doc']
   },
   'sync.getStatus': { syncing: false, lastSyncAt: Date.now() - 120000, error: null, syncCurrent: 0, syncTotal: 0 },
   'ai.getStatus': { configured: true },
