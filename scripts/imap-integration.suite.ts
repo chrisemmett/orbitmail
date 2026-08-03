@@ -2975,6 +2975,69 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Analysis detail: actions must say who owes them')
+  // -------------------------------------------------------------------------
+  {
+    const ai = await import('../electron/services/ai-service')
+
+    // Every action carries an owner now, in both panels, from one schema — the
+    // per-message list used to be the user's actions only, which meant a
+    // message could show nothing at all and leave the user unable to tell
+    // "you owe nothing" from "the model found nothing".
+    const source = readFileSync('electron/services/ai-service.ts', 'utf8')
+    const analysisSchema = source.slice(
+      source.indexOf('const ANALYSIS_SCHEMA'),
+      source.indexOf('// ---', source.indexOf('const ANALYSIS_SCHEMA'))
+    )
+    ok('the message schema takes owner-bearing action items',
+      /items: ACTION_ITEM_SCHEMA/.test(analysisSchema), analysisSchema.slice(0, 40))
+    ok('the shared item schema requires both action and owner',
+      /required: \['action', 'owner'\]/.test(source))
+    ok('the prompt asks for other people\'s actions too, not only the user\'s',
+      /whoever owes it/i.test(ai.ANALYSIS_SYSTEM_PROMPT) &&
+        !/Only put things the USER needs to do/i.test(ai.ANALYSIS_SYSTEM_PROMPT))
+    ok('the prompt still refuses to invent detail',
+      /do not invent/i.test(ai.ANALYSIS_SYSTEM_PROMPT) &&
+        /never inventing more/i.test(ai.ANALYSIS_SYSTEM_PROMPT))
+    // Detail must not become an instruction to pad: a longer list of invented
+    // items is worse than a short true one.
+    ok('the prompt separates saying more from making more up',
+      /prefer a full account/i.test(ai.ANALYSIS_SYSTEM_PROMPT))
+
+    // An analysis cached before owners existed holds bare strings. The
+    // renderer reads .action/.owner, so without an upgrade every cached row
+    // renders as empty bullets — and invalidating them instead would re-bill
+    // the user for work already paid for.
+    const legacy = ai.normalizeCachedAnalysis({
+      summary: 'Old analysis',
+      actionItems: ['Reply to Jerry', 'Book the room'],
+      questions: [],
+      keyContext: []
+    })
+    ok('a legacy string action item is upgraded, not dropped',
+      legacy.actionItems.length === 2 && legacy.actionItems[0].action === 'Reply to Jerry',
+      JSON.stringify(legacy.actionItems))
+    // "You" is not a guess here: the prompt that produced those strings emitted
+    // only the user's own actions.
+    ok('legacy items are attributed to the user, which is what they were',
+      legacy.actionItems.every((item) => item.owner === 'You'),
+      JSON.stringify(legacy.actionItems))
+    ok('the rest of a legacy analysis survives the upgrade',
+      legacy.summary === 'Old analysis', JSON.stringify(legacy.summary))
+
+    const current = ai.normalizeCachedAnalysis({
+      summary: 'New analysis',
+      actionItems: [{ action: 'Send the agenda', owner: 'Jerry Cook' }],
+      questions: [],
+      keyContext: []
+    })
+    ok('an already-upgraded analysis is left alone',
+      current.actionItems[0].owner === 'Jerry Cook', JSON.stringify(current.actionItems))
+    ok('a malformed actionItems field does not throw',
+      ai.normalizeCachedAnalysis({ summary: 'x' }).actionItems.length === 0)
+  }
+
+  // -------------------------------------------------------------------------
   section('RTF attachments: markup must not reach the model as text')
   // -------------------------------------------------------------------------
   {

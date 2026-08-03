@@ -316,7 +316,13 @@ export interface PlatformCapabilities {
 
 export interface AiAnalysis {
   summary: string
-  actionItems: string[]
+  /**
+   * Every outstanding action the message implies, each with its owner — not
+   * only the user's. Dropping other people's left the user unable to tell "you
+   * owe nothing here" from "the model found nothing", and a message often
+   * turns on what someone *else* has undertaken to do.
+   */
+  actionItems: ActionItem[]
   questions: string[]
   keyContext: string[]
   generatedAt: number
@@ -328,8 +334,8 @@ export interface AiAnalysis {
   skippedAttachments?: string[]
 }
 
-/** One outstanding commitment from a conversation, and who owes it. */
-export interface ThreadActionItem {
+/** One outstanding commitment, and who owes it. */
+export interface ActionItem {
   action: string
   /**
    * "You" for the user, otherwise the participant as the conversation names
@@ -343,14 +349,15 @@ export interface ThreadActionItem {
 /**
  * A conversation summarized as a whole, rather than message by message.
  *
- * Separate from `AiAnalysis` rather than a widening of it: that shape's
- * `actionItems` are plain strings, and a thread's need an owner. Changing it
- * would alter the per-message payload for no reason.
+ * Separate from `AiAnalysis` because a thread carries its own extras
+ * (decisions, staleness, how much of it was read), not because the action
+ * items differ — both now use `ActionItem`, so "who owes this" reads the same
+ * whether you are looking at one message or the whole conversation.
  */
 export interface AiThreadAnalysis {
   summary: string
   decisions: string[]
-  actionItems: ThreadActionItem[]
+  actionItems: ActionItem[]
   openQuestions: string[]
   generatedAt: number
   cached: boolean

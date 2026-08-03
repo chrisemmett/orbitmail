@@ -163,8 +163,14 @@ const OVERRIDES = {
   // the model never saw.
   'ai.analyze': {
     summary:
-      'Jan confirms the launch moves to the 14th and will tell the printers; Priya still needs to confirm the pricing page copy.',
-    actionItems: ['Confirm the pricing page copy date with Priya'],
+      'Jan has confirmed that the launch moves from the 7th to the 14th, giving the printers a week of slack before the deadline. She will tell them directly, so nothing is needed from you on that side. The open point is the pricing page: Priya asked whether the copy can be ready by the 14th, and nobody has answered her. The attached launch plan sets out the remaining milestones and assumes sign-off two days before launch, which the new date leaves intact.',
+    // Mixed ownership on purpose: the user's own action must be findable
+    // among other people's, which is the whole point of showing both.
+    actionItems: [
+      { owner: 'Jan', action: 'Tell the printers the launch has moved to the 14th' },
+      { owner: 'You', action: 'Confirm the pricing page copy date with Priya' },
+      { owner: 'Unassigned', action: 'Update the launch checklist with the new date' }
+    ],
     questions: ['Is the pricing page copy ready by the 14th?'],
     keyContext: ['Launch date: the 14th', 'Printers get a week of slack'],
     generatedAt: Date.now(),
@@ -178,9 +184,12 @@ const OVERRIDES = {
     summary:
       'Jan proposed moving the launch to the 14th so the printers have a week of slack. You agreed, and Priya asked whether the pricing page copy can be ready by then.',
     decisions: ['Launch moves to the 14th', 'Printers get a week of slack'],
+    // The user's item is deliberately *last* here: the panel must lift it to
+    // the top, and a fixture that already has it first proves nothing.
     actionItems: [
-      { owner: 'You', action: 'Confirm the pricing page copy date with Priya' },
-      { owner: 'Jan', action: 'Tell the printers the new date' }
+      { owner: 'Jan', action: 'Tell the printers the new date' },
+      { owner: 'Priya', action: 'Confirm whether the pricing page copy can be ready' },
+      { owner: 'You', action: 'Confirm the pricing page copy date with Priya' }
     ],
     openQuestions: ['Is the pricing page copy ready by the 14th?'],
     generatedAt: Date.now() - 7200000,
@@ -197,7 +206,9 @@ const OVERRIDES = {
   'ai.getCachedAnalysis': {
     summary:
       'Jerry reminds club members that the Club Council meeting is at 6.30pm on Tuesday 4th August at the Burlington Hotel.',
-    actionItems: ['Attend the Club Council meeting at 6.30pm on Tuesday 4th August'],
+    actionItems: [
+      { owner: 'You', action: 'Attend the Club Council meeting at 6.30pm on Tuesday 4th August' }
+    ],
     questions: [],
     keyContext: ['Meeting: Tuesday 4 August, 6.30pm, Burlington Hotel'],
     generatedAt: Date.now() - 600000,
