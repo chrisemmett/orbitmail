@@ -190,10 +190,12 @@ The gear, or `Ctrl` + `,`. What you can change today:
   security and password, with a **Test connection** button — settings that do
   not work are not saved. Changing the address itself means removing the account
   and adding it again.
-- **AI** — your Anthropic API key, and which Claude model the AI features use
-  and how long it may think before answering. A more capable model, or a higher
-  effort, costs more per message on your Anthropic bill. A change applies to the
-  next thing you ask for; results already saved are kept.
+- **AI** — your Anthropic API key, which Claude model the AI features use, how
+  long it may think before answering, and how much the summaries say (**Full**
+  or **Brief**). All three cost you more or less per message on your Anthropic
+  bill — a more capable model, a higher effort, and a fuller summary each add to
+  it. A change applies to the next thing you ask for; results already saved are
+  kept.
 
 The gear beside an account in the sidebar, and right-clicking a folder, both
 open this screen on that account.
@@ -212,6 +214,7 @@ Everything Orbit Mail knows lives on your machine:
 |-------|------|
 | `~/.config/orbit-mail/data/orbit-mail.db` | Your accounts, folders, cached mail and settings |
 | `~/.config/orbit-mail/data/attachments/` | Downloaded attachments |
+| `~/.config/orbit-mail/renderer-errors.log` | Written only if the window fails to draw — what went wrong, so a report has something to attach |
 
 - **Nothing is sent anywhere except your mail servers** — no telemetry, no
   analytics, no accounts with us. There is no "us".
@@ -234,7 +237,9 @@ Everything Orbit Mail knows lives on your machine:
 - **Outgoing attachments are limited to files you chose** in the file dialog or
   dragged in, so nothing can quietly attach something else from your disk.
 - **AI is opt-in and per-message.** When you run Analyze, Draft reply or Tasks,
-  the relevant message text goes to Anthropic's API to produce that result;
+  the relevant message text goes to Anthropic's API to produce that result. If
+  you choose **Include attachments**, the text of those attachments goes too —
+  extracted on this computer, so the files themselves are never uploaded;
   results are cached locally so the same message is not sent twice. Your API key
   is stored encrypted and goes nowhere but Anthropic. Email text is fenced off in
   the prompt and the model is told to ignore instructions inside it — but that is
@@ -263,6 +268,8 @@ Everything Orbit Mail knows lives on your machine:
 - **POP3 is inbox-only** — no moving or archiving on the server.
 - **First sync fetches the most recent 200 messages per folder.** Use **Load
   more** for older mail, or **Search whole mailbox** to pull in older matches.
+- **A very long conversation is capped at 200 messages** — you see the most
+  recent 200, and the app does not currently tell you when there were more.
 - **Linux only** — no Windows or macOS builds.
 
 The full backlog, including known bugs, is in [TODO.md](TODO.md).

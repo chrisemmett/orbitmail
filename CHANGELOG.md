@@ -9,7 +9,35 @@ number moves for anything substantial.
 
 ## Unreleased
 
+### Added
+
+- **Zoom.** `Ctrl` and `+` or `-` makes everything bigger or smaller, `Ctrl` `0`
+  puts it back — the same keys a browser uses. It applies to every window and is
+  remembered between runs.
+- **The AI features can now read attachments properly.** Word, Excel,
+  PowerPoint, OpenDocument and RTF files, plus calendar invitations and contact
+  cards, are read and summarised alongside the message. Formats it still cannot
+  read — older `.doc` and `.xls`, Apple iWork files, password-protected
+  documents — are named under the summary instead of being quietly left out.
+- **Action items say who owes them.** Yours are marked and listed first, so you
+  can see at a glance what is on you and what you are waiting on someone else
+  for. Previously the list showed only your own actions, which meant an empty
+  list could equally mean "nothing for you" or "nothing found".
+- **A Brief / Full setting for summaries**, in Settings → AI. Brief is a
+  sentence or two and only what you need to act on, and costs less per message.
+
+### Changed
+
+- **Summaries say more by default** — a short paragraph rather than a sentence
+  or two, carrying the dates, amounts and names rather than alluding to them.
+  Set Detail to Brief in Settings → AI if you preferred the shorter kind.
+
 ### Fixed
+
+- **A blank window is recoverable.** If the window ever goes white, a panel now
+  offers **Reload** instead of leaving you to quit and reopen, and what went
+  wrong is written to `renderer-errors.log` in your settings folder — which is
+  the useful thing to attach if you report it.
 
 - **Buttons and menu items now respond when you hover them.** Several controls —
   the formatting buttons in the composer, the account menu, the status bar
