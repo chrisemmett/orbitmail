@@ -129,6 +129,56 @@ The AI features — per-message **Analyze**, **Draft reply**, the conversation
 
 `electron/services/ai-service.ts` uses `@anthropic-ai/sdk` with structured output (`messages.parse` against a JSON schema, one per feature). Message content is sent to Anthropic only when the user triggers a feature. On **Analyze**, the user can opt to include a message's attachments for extra context — the UI prompts first because attachments increase token usage.
 
+### Every action names an owner
+
+`AiAnalysis.actionItems` and `AiThreadAnalysis.actionItems` are both
+`ActionItem[]` (`{action, owner}`) and are generated from one shared
+`ACTION_ITEM_SCHEMA`, so "who owes this" reads the same whether you are looking
+at a single message or a whole conversation.
+
+The single-message list used to be plain strings, and the prompt said *"Only put
+things the USER needs to do in actionItems"*. That produced a list which was
+either the user's actions or empty — and an empty list is ambiguous in the way
+that matters: it cannot distinguish "nothing here is yours" from "the model
+found nothing". It also threw away the half of a message that is often the point
+of reading it, which is what somebody *else* has undertaken to do. Both lists now
+carry everyone's actions; the renderer sorts the user's first and emphasises
+them (`isOwnedByUser`, `.reader-ai-action-yours`).
+
+`owner` is model output about people, so it is a **presentation hint only** — it
+decides ordering and emphasis, never anything that acts on the user's behalf.
+Matching is on the literal string `"You"`, which the schema asks for explicitly.
+
+**Cached analyses written before this are upgraded on read**, not invalidated:
+`normalizeCachedAnalysis` maps a bare string to `{action, owner: 'You'}`. That
+is not a guess — the prompt that produced those strings emitted only the user's
+own actions, so `"You"` is what they meant. Invalidating instead would re-bill
+the user for analyses they had already paid for, the moment they reopened a
+message; leaving them alone would render every cached row as an empty bullet,
+because the renderer reads `.action` off what is actually a string.
+
+### Detail level
+
+The schema field descriptions are where "how much detail" is set, and they say
+it in sentences rather than token counts: a message summary is *"a short
+paragraph — usually three to six sentences"*, a thread summary *"usually four to
+eight"*, and both list the specifics worth carrying (dates, amounts, names, what
+changed). `keyContext` and `decisions` ask for facts stated in full rather than
+alluded to.
+
+The prompt draws the line that matters — **more detail means saying more about
+what is there, never inventing more**:
+
+> Be specific and substantial: prefer a full account to a terse one … Do not
+> invent deadlines or facts that aren't in the email or its attachments, and do
+> not pad a list with filler to make it longer.
+
+Without that sentence, "be more detailed" reads to a model as licence to
+speculate, and a padded action list is worse than a short one — it costs the
+user time and can put a deadline in their head that nobody set. `test:imap`
+asserts both halves are present, so a future prompt edit cannot drop the
+constraint while keeping the instruction.
+
 ### What "include attachments" can actually read
 
 `buildAttachmentBlocks` decides this, and the decision is constrained by the
