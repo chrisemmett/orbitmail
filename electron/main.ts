@@ -27,7 +27,13 @@ import {
 import { initTray, destroyTray, isTrayActive } from './tray'
 import { cleanupExportDir, sweepStaleExportDirs } from './services/temp-export'
 import { restrictExistingAttachments } from './services/attachment-permissions'
-import { isBenignSocketError, describeUnexpectedError } from './services/crash-report'
+import {
+  isBenignSocketError,
+  describeUnexpectedError,
+  formatErrorLogEntry,
+  appendToErrorLog,
+  type RendererErrorReport
+} from './services/crash-report'
 import { updateAppBadge } from './app-badge'
 import {
   listAccounts,
@@ -488,6 +494,65 @@ function configureMailtoProtocolClient(enabled: boolean): void {
   }
 }
 
+/**
+ * Write a renderer failure down, and tell the user their window is recoverable.
+ *
+ * The failure this exists for leaves no trace of its own: a render error blanks
+ * the window while the renderer process keeps running, so nothing crashes,
+ * nothing is logged, and the console holding the stack belongs to a window the
+ * user cannot open. The log file is the whole point — the next occurrence has
+ * to leave evidence behind or it stays unfixable.
+ */
+function recordRendererError(report: RendererErrorReport): void {
+  try {
+    const path = join(app.getPath('userData'), 'renderer-errors.log')
+    const existing = existsSync(path) ? readFileSync(path, 'utf8') : ''
+    writeFileSync(path, appendToErrorLog(existing, formatErrorLogEntry(report, Date.now())), {
+      mode: 0o600
+    })
+  } catch {
+    // Logging must never be the thing that breaks the app it is reporting on.
+  }
+  console.error(`[orbit-mail] renderer ${report.source} error: ${report.message}`)
+}
+
+/**
+ * The two ways a window can go blank, both of which used to be silent.
+ *
+ * `render-process-gone` is the process actually dying — the window survives as
+ * a white rectangle and every `mainWindow?.…` guard still passes, because a
+ * live BrowserWindow with a dead renderer is neither null nor destroyed. A
+ * reload is the correct recovery for a mail client: state lives in SQLite, not
+ * in the renderer, so nothing is lost by rebuilding the view.
+ *
+ * `unresponsive` is the renderer alive but wedged. That is *not* recovered
+ * automatically — a long synchronous render recovers on its own, and reloading
+ * out from under someone mid-compose would be worse than the freeze.
+ */
+function watchForRendererFailure(window: BrowserWindow, label: string, reload: boolean): void {
+  window.webContents.on('render-process-gone', (_event, details) => {
+    recordRendererError({
+      source: 'window',
+      message: `renderer process gone: ${details.reason}${
+        details.exitCode !== undefined ? ` (exit ${details.exitCode})` : ''
+      }`,
+      window: label
+    })
+    // 'clean-exit' is the window closing normally; there is nothing to recover.
+    if (!reload || details.reason === 'clean-exit' || window.isDestroyed()) return
+    window.webContents.reload()
+    window.webContents.once('did-finish-load', () => {
+      if (!window.isDestroyed()) {
+        window.webContents.send('app:toast', 'Orbit Mail recovered from a display error.')
+      }
+    })
+  })
+
+  window.webContents.on('unresponsive', () => {
+    recordRendererError({ source: 'window', message: 'renderer became unresponsive', window: label })
+  })
+}
+
 function createMainWindow(): void {
   const windowPrefs = getWindowPreferences()
   const icon = getWindowIcon()
@@ -510,6 +575,8 @@ function createMainWindow(): void {
       sandbox: false
     }
   })
+
+  watchForRendererFailure(mainWindow, 'main', true)
 
   mainWindow.on('ready-to-show', () => {
     mainWindow?.show()
@@ -604,6 +671,12 @@ async function createComposeWindow(payload?: Partial<ComposePayload>): Promise<v
       sandbox: false
     }
   })
+
+  // Reported, but deliberately not reloaded: a composer holds text the user is
+  // part-way through writing, and reloading restores only what autosave has
+  // already taken. Losing the last few sentences silently would be a worse
+  // outcome than the blank window, so this one is theirs to decide.
+  watchForRendererFailure(composeWindow, 'compose', false)
 
   composeWindow.on('ready-to-show', () => {
     composeWindow?.show()
@@ -1394,6 +1467,10 @@ function registerIpc(): void {
   ipcMain.handle('preferences:revokeSenderImages', (_, email: string) =>
     revokeSenderImages(email)
   )
+
+  ipcMain.handle('app:reportRendererError', (_event, report: RendererErrorReport) => {
+    recordRendererError(report)
+  })
 
   ipcMain.handle('app:getSecureStorageStatus', () => ({
     available: safeStorage.isEncryptionAvailable()

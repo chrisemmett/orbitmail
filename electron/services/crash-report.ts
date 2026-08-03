@@ -24,6 +24,61 @@ export function isBenignSocketError(err: unknown): boolean {
   return message === 'Socket timeout'
 }
 
+/**
+ * What the renderer sends when it has fallen over, and what gets written down.
+ *
+ * The reason this exists: a renderer that throws during render leaves a white
+ * window and a *live* process, so nothing crashes, nothing is logged, and the
+ * only evidence is a console the user cannot see. The next occurrence has to
+ * leave something behind or it is unfixable — hence a file, not a console line.
+ */
+export interface RendererErrorReport {
+  /** 'render' (an error boundary caught it) or 'window' (the process died). */
+  source: 'render' | 'window'
+  message: string
+  stack?: string
+  /** React's component stack, when an error boundary supplied one. */
+  componentStack?: string
+  /** Which window it came from, so a composer crash is distinguishable. */
+  window?: string
+}
+
+/** How much of the error log to keep. Old entries are dropped from the front. */
+export const ERROR_LOG_MAX_BYTES = 64 * 1024
+
+/** One entry, as it is written to the log. Timestamped so "when" is answerable. */
+export function formatErrorLogEntry(report: RendererErrorReport, at: number): string {
+  const lines = [
+    `[${new Date(at).toISOString()}] ${report.source}${report.window ? ` (${report.window})` : ''}: ${report.message}`
+  ]
+  if (report.stack) lines.push(report.stack.trim())
+  if (report.componentStack) lines.push(`component stack:${report.componentStack.trimEnd()}`)
+  return lines.join('\n') + '\n\n'
+}
+
+/**
+ * Append an entry, keeping the log bounded. Trimming drops whole entries from
+ * the front rather than cutting mid-line, because half a stack trace read as a
+ * different error the last time a log did this.
+ */
+export function appendToErrorLog(existing: string, entry: string): string {
+  const combined = existing + entry
+  if (combined.length <= ERROR_LOG_MAX_BYTES) return combined
+
+  const entries = combined.split('\n\n').filter((e) => e.trim().length > 0)
+  // Always keep the newest entry, even if it alone exceeds the budget: a log
+  // that discards the thing it was just told about is worse than an oversized one.
+  const kept: string[] = [entries[entries.length - 1]]
+  let size = kept[0].length + 2
+  for (let i = entries.length - 2; i >= 0; i--) {
+    const next = entries[i].length + 2
+    if (size + next > ERROR_LOG_MAX_BYTES) break
+    kept.unshift(entries[i])
+    size += next
+  }
+  return kept.join('\n\n') + '\n\n'
+}
+
 /** One line for the user: what happened, and what it means for them. */
 export function describeUnexpectedError(err: unknown): string {
   const message =
