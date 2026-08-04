@@ -621,19 +621,41 @@ the control, and the README says so.
   `liveMainWindow()`, which returns null once the window *or its webContents* has
   gone. Both halves are load-bearing: the webContents is destroyed **before** the
   window reports `isDestroyed()`, so a window-level check alone still let
-  `webContents.send` throw. What made this reachable is that a compose window is
-  created with `parent: mainWindow` — closing the main window destroys the
-  composer too, and the composer's own `closed` handler calls
+  `webContents.send` throw. What made this reachable was the compose window
+  being created with `parent: mainWindow` — closing the main window destroyed
+  the composer too, and the composer's own `closed` handler calls
   `notifyMessagesUpdated()`, i.e. badge, title and a send, all aimed at the
   window that has just gone. With close-to-tray off (or no tray at all) that
   threw `TypeError: Object has been destroyed` from `updateAppBadge`, twice, on
-  the way out. Nulling `mainWindow` in its own `closed` handler does **not** fix
-  it on its own — the child's `closed` runs first — though the reference is
-  nulled there anyway, so the `?? undefined` fallbacks elsewhere behave. The two
-  places that already hand-checked `isDestroyed()` (the quit flush,
-  `reportUnexpectedError`) were working around the same missing guard. Pinned by
-  `e2e-window.suite.ts` (`npm run test:e2e`), which reproduces it: before the
-  fix that suite exits non-zero with the throw named; after it, clean.
+  the way out. The two places that already hand-checked `isDestroyed()` (the
+  quit flush, `reportUnexpectedError`) were working around the same missing
+  guard.
+
+  **That route is gone and the guard stays.** The composer is no longer a child
+  window (see *The composer is deliberately not a child window* below), so
+  nothing destroys it out from under a live handler, and `mainWindow` is nulled
+  in its own `closed` handler before anything else can read it — a plain
+  `mainWindow?.` would now survive the e2e suite. The guard is kept because the
+  reason for it was never that one route: any sync or IDLE callback landing
+  during teardown reads a window that may be part-way destroyed. It is pinned by
+  **source-shape checks in `npm run test:imap`** — `liveMainWindow` must test the
+  window *and* its `webContents`, and `notifyMessagesUpdated` must read through
+  it rather than the raw reference — which is a CI check, unlike the e2e suite
+  that used to reproduce it.
+
+  **The composer is deliberately not a child window.** Electron's `parent`
+  option sets the X11 `WM_TRANSIENT_FOR` hint, and to Muffin (Cinnamon) and
+  Mutter (GNOME) a transient window is a *dialog*: the window manager clears its
+  maximize function, so `maximize()` was a silent no-op, there was no maximize
+  button, and the composer could not be tiled. **Electron reports none of this** —
+  `isMaximizable()`, `isMovable()` and `isResizable()` all returned `true`,
+  because those flags are the app's and the veto is the window manager's, which
+  is why the code looked correct. Writing a message deserves a full-size window,
+  so `createComposeWindow` makes an ordinary top-level one. Two accepted costs:
+  the composer no longer floats above the main window, and closing the main
+  window no longer destroys it — the second being a small gain in its own right,
+  since a half-written message now survives that close. The hidden print window
+  still uses `parent`, correctly: it exists only to host a modal print dialog.
 
   Attribution depends on `StartupWMClass` matching the window's real `WM_CLASS`,
   which Chromium derives from the name `main.ts` passes to `app.setName()` on
@@ -1943,16 +1965,26 @@ with the feature broken — and the two real defects this caught (the caret open
 *inside* the signature block, and the separator being left behind) were both
 invisible to everything else. No mail server needed.
 
-**`e2e-window.suite.ts` — window lifecycle.** Closes the main window with a
-composer open (`closeToTray` off, which is also how a desktop with no tray
-behaves) and asserts nothing throws. That is the `liveMainWindow()` regression:
-the composer is a *child* of the main window, so closing the parent destroys both,
-and the child's `closed` handler calls `notifyMessagesUpdated()` against a window
-that has gone. It needs no mail server. Two things it is deliberately shaped
-around, both learned by getting them wrong: nulling `mainWindow` in its own
-`closed` handler does not fix the bug (the child's `closed` runs first), and
-checking `window.isDestroyed()` alone does not either (the webContents dies
-first) — so the check is "does anything throw", not "is the reference null".
+**`e2e-window.suite.ts` — window lifecycle.** Two things, neither reachable
+without a real window manager, and no mail server needed.
+
+First, **the composer can actually be maximized**: it must have no parent window,
+and `maximize()` must move the bounds. Asking the WM rather than Electron is the
+whole point — `isMaximizable()` returned `true` the entire time the composer was
+a transient child that Muffin refused to maximize, so a flag assertion would have
+passed against the broken window. Three of this suite's checks fail against the
+`parent: mainWindow` version, the maximize one reporting `640x720 -> 640x720`.
+
+Second, **the close path throws nothing**: with `closeToTray` off (also how a
+tray-less desktop behaves) the main window is closed with a composer open, the
+composer must *outlive* it — unsaved text is not the main window's to destroy —
+and closing the composer afterwards runs `notifyMessagesUpdated()` with no main
+window to notify. It used to reproduce the `liveMainWindow()` bug directly,
+through the parent/child destroy order; removing the parent removed that
+ordering, so **`test:imap`'s source-shape checks are what pin that guard now**.
+Two shapes it is still deliberately built around: the assertion is "does anything
+throw", not "is the reference null", and a throw is reported the moment it is
+caught (see below).
 
 Things worth knowing before touching these:
 

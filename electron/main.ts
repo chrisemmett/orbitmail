@@ -177,11 +177,18 @@ let composeSentAndClosing = false
  *
  * `mainWindow?.` is not enough on its own: a destroyed BrowserWindow is not
  * null, so the optional chain passes and the call throws "Object has been
- * destroyed". Nulling the reference in `closed` does not cover it either,
- * because a compose window is created with `parent: mainWindow` and its own
- * `closed` handler runs *before* the parent's — so anything firing from a
- * window or sync callback has to ask whether the window is alive, not just
- * whether it exists.
+ * destroyed". Nulling the reference in `closed` is not a substitute either —
+ * that handler is not guaranteed to have run by the time a sync callback or
+ * another window's teardown fires, and the webContents dies before the window
+ * admits to being destroyed. Anything firing from a window or sync callback has
+ * to ask whether the window is alive, not just whether it exists.
+ *
+ * The route that originally exposed this was the compose window being created
+ * with `parent: mainWindow`: closing the main window destroyed the composer,
+ * whose `closed` handler ran *first* and called notifyMessagesUpdated() at a
+ * window that had gone. The composer is no longer a child (it has to be
+ * maximizable — see createComposeWindow), so that particular ordering is gone;
+ * the guard stays, because the reason for it never was that one route.
  */
 function liveMainWindow(): BrowserWindow | null {
   if (!mainWindow || mainWindow.isDestroyed()) return null
@@ -637,13 +644,11 @@ function createMainWindow(): void {
   // The reference has to go when the window does, the way composeWindow's does.
   // Every `mainWindow?.…` here guards against null, not against a *destroyed*
   // window — and a destroyed BrowserWindow is not null, so those guards passed
-  // and the call threw "Object has been destroyed". A compose window is created
-  // with `parent: mainWindow`, so closing the main window destroys the composer
-  // too, and the composer's own `closed` handler then calls
-  // notifyMessagesUpdated() — badge, title and a send to the renderer, all on
-  // the window that has just gone. The two places that already checked
-  // isDestroyed() by hand (the quit flush, reportUnexpectedError) were working
-  // around the missing null.
+  // and the call threw "Object has been destroyed" from a composer's `closed`
+  // handler, which called notifyMessagesUpdated() — badge, title and a send to
+  // the renderer — on the window that had just gone. Reads go through
+  // liveMainWindow() now; the two places that already checked isDestroyed() by
+  // hand (the quit flush, reportUnexpectedError) were working around this.
   mainWindow.on('closed', () => {
     mainWindow = null
   })
@@ -713,8 +718,17 @@ async function createComposeWindow(payload?: Partial<ComposePayload>): Promise<v
     title: 'New Message',
     icon: getWindowIcon(),
     autoHideMenuBar: true,
-    parent: mainWindow ?? undefined,
-    modal: false,
+    // Deliberately *not* `parent: mainWindow`. Electron's `parent` sets the X11
+    // WM_TRANSIENT_FOR hint, and a transient window is a dialog to the window
+    // manager: Muffin (Cinnamon) and Mutter (GNOME) clear its maximize function
+    // outright, so `maximize()` was a silent no-op, the maximize button was
+    // absent, and the composer could not be tiled. Nothing in Electron reported
+    // this — `isMaximizable()`, `isMovable()` and `isResizable()` all still
+    // returned true, because the flags are ours and the veto is the WM's.
+    // Writing a message deserves a full-size window, so the composer is an
+    // ordinary top-level one. The costs, both accepted: it no longer floats
+    // above the main window, and closing the main window no longer destroys it
+    // — which also means a half-written message survives that close.
     show: false,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
