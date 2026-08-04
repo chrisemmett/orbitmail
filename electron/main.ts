@@ -1,6 +1,6 @@
 import 'dotenv/config'
 import { parse as parseDotenv } from 'dotenv'
-import { app, BrowserWindow, ipcMain, shell, dialog, Notification, safeStorage } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, dialog, Notification, safeStorage, screen } from 'electron'
 import { join, basename } from 'path'
 import { statSync, writeFileSync, copyFileSync, existsSync, readFileSync } from 'fs'
 import type {
@@ -140,6 +140,10 @@ import {
   patchUiPreferences,
   setWindowPreferences,
   getWindowPreferences,
+  setComposeWindowPreferences,
+  getComposeWindowPreferences,
+  resolveComposeSize,
+  MIN_COMPOSE_SIZE,
   setZoomLevel,
   getZoomLevel,
   muteSender,
@@ -710,11 +714,17 @@ async function createComposeWindow(payload?: Partial<ComposePayload>): Promise<v
     return
   }
 
+  // Remembered from the last composer, resolved against the display this one is
+  // about to appear on — see resolveComposeSize for why a stored size is not
+  // trusted as given.
+  const storedSize = getComposeWindowPreferences()
+  const size = resolveComposeSize(storedSize, screen.getPrimaryDisplay().workAreaSize)
+
   composeWindow = new BrowserWindow({
-    width: 640,
-    height: 720,
-    minWidth: 480,
-    minHeight: 400,
+    width: size.width,
+    height: size.height,
+    minWidth: MIN_COMPOSE_SIZE.width,
+    minHeight: MIN_COMPOSE_SIZE.height,
     title: 'New Message',
     icon: getWindowIcon(),
     autoHideMenuBar: true,
@@ -742,6 +752,18 @@ async function createComposeWindow(payload?: Partial<ComposePayload>): Promise<v
   // part-way through writing, and reloading restores only what autosave has
   // already taken. Losing the last few sentences silently would be a worse
   // outcome than the blank window, so this one is theirs to decide.
+  // Before `show`, not in `ready-to-show`: maximizing a window the user can
+  // already see is a visible jump from small to full-screen on every composer.
+  // The known cost, measured rather than assumed: a window maximized before it
+  // is mapped has no normal geometry for the WM to restore *to*, so Muffin
+  // invents one (~90% of the screen) and the first "restore down" gives a size
+  // the user never chose. Re-imposing the remembered size from an `unmaximize`
+  // handler was tried and is **worse** — the WM finishes its own restore after
+  // that runs and snaps the window back to the maximized rectangle, so restore
+  // down appeared to do nothing at all. One unexpected size beats a control that
+  // looks broken, and neither is worth fighting the window manager over.
+  if (storedSize?.maximized) composeWindow.maximize()
+
   watchForRendererFailure(composeWindow, 'compose', false)
   attachZoom(composeWindow)
 
@@ -757,6 +779,17 @@ async function createComposeWindow(payload?: Partial<ComposePayload>): Promise<v
   // promise, close for real, and never let a wedged renderer trap the window.
   let closingAfterFlush = false
   composeWindow.on('close', (event) => {
+    // First thing in the handler, before any of the flush dance below can
+    // return early: whatever else this close does, the size is what the user
+    // last chose. `getNormalBounds` rather than `getBounds` when maximized —
+    // the latter reports the maximized rectangle, and storing that would make
+    // "restore down" on the next composer do nothing visible.
+    if (composeWindow && !composeWindow.isDestroyed()) {
+      const maximized = composeWindow.isMaximized()
+      const bounds = maximized ? composeWindow.getNormalBounds() : composeWindow.getBounds()
+      setComposeWindowPreferences({ width: bounds.width, height: bounds.height, maximized })
+    }
+
     // A close that follows a successful send has nothing left to save: the
     // draft id the renderer still holds names the row compose:send has already
     // deleted, so flushing would ask "save this as a draft?" about a message
