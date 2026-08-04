@@ -9,6 +9,16 @@ number moves for anything substantial.
 
 ## Unreleased
 
+### Fixed
+
+- **The compose window can be maximized.** It was created as a dialog belonging
+  to the main window, and Linux desktops do not let a dialog maximize — the
+  button was missing and the keyboard shortcut did nothing, so a long message had
+  to be written in a small box. It is now an ordinary window: maximize it, tile
+  it, move it to another workspace. One thing changes with it — closing the main
+  window no longer closes a composer, so a half-written message is no longer lost
+  that way.
+
 ### Added
 
 - **An analysis that skipped your attachments now says so**, and offers to

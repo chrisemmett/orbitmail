@@ -1,25 +1,29 @@
 /**
- * Window lifecycle: nothing may use a window after it has gone.
+ * Window lifecycle: the composer is an ordinary window, and nothing may use a
+ * window after it has gone.
  *
  * Run by `npm run test:e2e` (scripts/e2e.mjs). Needs a display; no Docker — it
- * never talks to a mail server.
+ * never talks to a mail server. A real window manager is the *point* of the
+ * maximize check: Electron cannot answer it, only the WM can.
  *
- * `mainWindow?.` guards against *null*, and a destroyed BrowserWindow is not
- * null, so the optional chain passes and the call throws "Object has been
- * destroyed". A compose window is created with `parent: mainWindow`, so closing
- * the main window destroys the composer too, and the composer's own `closed`
- * handler calls notifyMessagesUpdated() — badge, title, and a send to the
- * renderer, all aimed at the window that has just gone.
+ * **The composer must not be a child window.** It was created with
+ * `parent: mainWindow`, which sets WM_TRANSIENT_FOR, and to Muffin/Mutter a
+ * transient window is a dialog with no maximize function at all — so
+ * `maximize()` did nothing, and a message could not be written full-screen.
+ * Electron reported none of it: `isMaximizable()` stayed true, because the flag
+ * is ours and the veto is the window manager's. Hence the check here asks the
+ * WM — maximize, then read the bounds back — rather than trusting the flag.
  *
- * Two things this proved the hard way, and the reason it is a real check rather
- * than an isDestroyed() spot-fix:
- *
- * - Nulling `mainWindow` in its own `closed` handler does **not** fix it. The
- *   child's `closed` runs *first*, so the reference is still the destroyed
- *   window when the composer's handler fires.
- * - Checking `window.isDestroyed()` alone does **not** either. The webContents is
- *   destroyed *before* the window reports itself destroyed, so `webContents.send`
- *   still threw. `liveMainWindow()` checks both, and that is what this pins.
+ * That parent relationship used to be the deterministic reproduction of the
+ * `liveMainWindow()` bug (closing the main window destroyed the composer, whose
+ * `closed` handler then called notifyMessagesUpdated() against a window that had
+ * gone). Removing the parent removes that route: `mainWindow` is nulled in its
+ * own `closed` handler, which now runs first, so the plain `mainWindow?.` guard
+ * would survive this suite too. **`liveMainWindow()` is pinned by source-shape
+ * checks in `npm run test:imap` instead** — it must check the window *and* its
+ * webContents (the webContents dies first) and notifyMessagesUpdated must read
+ * through it. What is left here is the close path end to end: the composer
+ * outlives the main window, and neither close throws.
  */
 import { app, BrowserWindow } from 'electron'
 import { mkdtempSync } from 'fs'
@@ -79,17 +83,31 @@ async function main(): Promise<void> {
   const prefs = await import('../electron/services/preferences-service')
   prefs.patchAppState({ closeToTray: false })
 
-  // Opened through the real channel, so it is a genuine child of the main window.
+  // Opened through the real channel, so it is the window the app really makes.
   await mainWin.webContents.executeJavaScript(`window.orbitMail.compose.open({})`, true)
   const opened = await waitFor(() => BrowserWindow.getAllWindows().length > 1)
   ok('a compose window is open', opened)
   if (!opened) return
   const composeWin = BrowserWindow.getAllWindows().find((w) => w !== mainWin)!
-  ok('the composer is a child of the main window', composeWin.getParentWindow() === mainWin)
+
+  ok('the composer is a top-level window, not a child', composeWin.getParentWindow() === null,
+    composeWin.getParentWindow() ? 'has a parent — the WM will treat it as a dialog' : '')
+
+  // The assertion that actually failed before: ask the window manager, not
+  // Electron. `isMaximizable()` returned true throughout — a transient window
+  // simply had its maximize request ignored, leaving the bounds untouched.
+  const beforeMax = composeWin.getBounds()
+  composeWin.maximize()
+  const maximized = await waitFor(() => composeWin.isMaximized(), 5000)
+  const afterMax = composeWin.getBounds()
+  ok('the composer can actually be maximized', maximized && afterMax.width > beforeMax.width,
+    `${beforeMax.width}x${beforeMax.height} -> ${afterMax.width}x${afterMax.height}`)
+  composeWin.unmaximize()
+  await sleep(300)
 
   // Destroying every window would fire window-all-closed and quit the app before
-  // anything could be asserted. This one belongs to the harness, is not a child
-  // of the main window, and takes no part in what is being tested.
+  // anything could be asserted. This one belongs to the harness and takes no
+  // part in what is being tested.
   const keepAlive = new BrowserWindow({ show: false })
 
   let composeClosed = false
@@ -102,14 +120,23 @@ async function main(): Promise<void> {
   ok('the main window is really destroyed, not hidden to a tray', gone,
     gone ? '' : 'still alive — closeToTray took the close, so this proved nothing')
   if (!gone) return
-  ok('the composer is destroyed with its parent', await waitFor(() => composeClosed))
 
-  // The composer's `closed` handler has now run notifyMessagesUpdated() against
-  // a main window that no longer exists. Anything it threw has already been
-  // reported by the handler above, so only the clean case is announced here.
+  // The half-written message is the reason this is worth asserting rather than
+  // simply allowing: closing the main window must not take unsaved text with it.
+  await sleep(500)
+  ok('the composer outlives the main window', !composeClosed && !composeWin.isDestroyed())
+
+  // Now close the composer with no main window left. Its `closed` handler runs
+  // notifyMessagesUpdated() — badge, title and a send to the renderer — with
+  // nothing to send to. Anything thrown is reported by the handler above, so
+  // only the clean case is announced here. `destroy()` rather than `close()`
+  // deliberately: it reaches `closed` without going through the save-as-draft
+  // handler, which is the send suite's subject and would block on a prompt here.
+  composeWin.destroy()
+  await waitFor(() => composeClosed)
   await sleep(500)
   if (uncaught.length === 0) {
-    ok('closing the main window with a composer open throws nothing', true, 'none')
+    ok('closing both windows, main first, throws nothing', true, 'none')
   }
 
   keepAlive.destroy()

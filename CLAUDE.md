@@ -125,10 +125,11 @@ draft flush and parent/child destroy order are invisible to it. Each suite impor
 checks the draft is deleted, the message is in Sent, the recipient got it, and the
 window closed without a save-as-draft prompt. **signature** types into a composer
 and switches the From account across three accounts, checking the signature block
-is swapped, removed and re-appended without eating what was typed. **window** closes the main window
-with a composer open and asserts nothing throws — the `liveMainWindow()`
-regression, where the composer is a child, so closing the parent destroys both and
-the child's `closed` handler fires at a window that has gone. **zoom** sends real
+is swapped, removed and re-appended without eating what was typed. **window** maximizes
+the composer and reads the bounds back — Electron's `isMaximizable()` says `true`
+even when the WM has vetoed it, which it does for any window given a `parent` —
+then closes the main window with a composer open and asserts the composer outlives
+it and nothing throws. **zoom** sends real
 `Ctrl` `=` / `_` / `-` / `0` keystrokes and reads `getZoomLevel()` back — the key
 matching is pure and covered by `test:imap`, but whether the key reaches the
 handler, whether the frame is actually zoomed, and whether the level survives a
