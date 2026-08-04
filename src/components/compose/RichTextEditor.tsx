@@ -42,6 +42,32 @@ const BTN = { size: 16, weight: 'bold' as const }
  */
 const MAX_INLINE_IMAGE_BYTES = 5 * 1024 * 1024
 
+/**
+ * Every option is a full fallback stack, not a single name: the recipient
+ * renders this, and a face they do not have installed falls back to whatever
+ * their client picks unless the message says otherwise. The list is confined to
+ * the faces that ship with both Windows and macOS for the same reason — an
+ * elegant choice nobody else has is just a lottery for how the message looks.
+ */
+const FONT_FAMILIES: ReadonlyArray<{ label: string; stack: string }> = [
+  { label: 'Arial', stack: 'Arial, Helvetica, sans-serif' },
+  { label: 'Verdana', stack: 'Verdana, Geneva, sans-serif' },
+  { label: 'Tahoma', stack: 'Tahoma, Geneva, sans-serif' },
+  { label: 'Georgia', stack: 'Georgia, "Times New Roman", serif' },
+  { label: 'Times New Roman', stack: '"Times New Roman", Times, serif' },
+  { label: 'Courier New', stack: '"Courier New", Courier, monospace' }
+]
+
+/** px rather than pt: the editor is a browser, and pt only means px × 4/3 here. */
+const FONT_SIZES: ReadonlyArray<number> = [10, 12, 14, 16, 18, 24, 32]
+
+/**
+ * The marker size for the fontSize trick below. 7 is the top of HTML's legacy
+ * scale and the value `execCommand` is asked for, so it is what the elements it
+ * creates are tagged with.
+ */
+const SIZE_MARKER = '7'
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -163,6 +189,70 @@ export function RichTextEditor({
     emit()
   }
 
+  /**
+   * `fontName` emits `<font face="…">` unless styleWithCSS is on, and a `<font>`
+   * tag is the thing every guide to writing HTML mail tells you not to send.
+   *
+   * The flag is document-wide and sticky, so it goes on for this one command and
+   * straight back off: left on, **bold would stop producing `<b>`** and start
+   * producing `<span style="font-weight:bold">`, which is worse in exactly the
+   * old clients this is trying to accommodate.
+   */
+  const applyFontFamily = (stack: string) => {
+    restoreSelection()
+    document.execCommand('styleWithCSS', false, 'true')
+    document.execCommand('fontName', false, stack)
+    document.execCommand('styleWithCSS', false, 'false')
+    emit()
+  }
+
+  /**
+   * `fontSize` speaks only HTML's legacy 1–7 scale, and even with styleWithCSS
+   * on it yields keyword sizes (`large`, `x-large`) rather than the size asked
+   * for — so neither mode can express "18px" on its own.
+   *
+   * Size 7 is therefore used as a **marker**: `execCommand` does the part worth
+   * keeping, which is splitting the selection correctly across element
+   * boundaries and partially-selected nodes, and the elements it just tagged are
+   * then rewritten to carry the real size. Pasted mail can legitimately contain
+   * `<font size="7">` of its own, and resizing text the user never selected
+   * would be a silent corruption of their message, so the ones already present
+   * are recorded first and left alone.
+   */
+  const applyFontSize = (px: number) => {
+    const el = editorRef.current
+    if (!el) return
+    restoreSelection()
+    const preexisting = new Set(el.querySelectorAll(`font[size="${SIZE_MARKER}"]`))
+    document.execCommand('fontSize', false, SIZE_MARKER)
+
+    const created: HTMLSpanElement[] = []
+    for (const node of Array.from(el.querySelectorAll(`font[size="${SIZE_MARKER}"]`))) {
+      if (preexisting.has(node)) continue
+      const span = document.createElement('span')
+      span.style.fontSize = `${px}px`
+      // Moved rather than re-parsed through innerHTML: an inline image or a link
+      // inside the selection has to survive as the same node, and round-tripping
+      // it through a string is both lossy and a needless HTML-injection sink.
+      while (node.firstChild) span.appendChild(node.firstChild)
+      node.replaceWith(span)
+      created.push(span)
+    }
+
+    // Replacing the nodes collapses the selection, which would mean reselecting
+    // the same words to also set a font. Put it back across what was rewritten.
+    if (created.length > 0) {
+      const range = document.createRange()
+      range.setStartBefore(created[0])
+      range.setEndAfter(created[created.length - 1])
+      const sel = window.getSelection()
+      sel?.removeAllRanges()
+      sel?.addRange(range)
+      savedRange.current = range.cloneRange()
+    }
+    emit()
+  }
+
   const insertCode = () => {
     focusEditor()
     const selected = window.getSelection()?.toString() ?? ''
@@ -198,6 +288,48 @@ export function RichTextEditor({
           <option value="h1">Heading</option>
           <option value="h2">Subheading</option>
           <option value="h3">Small heading</option>
+        </select>
+
+        {/*
+          Both of these label themselves rather than showing the caret's current
+          font, and snap back to that label after use — the same shape as the
+          paragraph select beside them. Reflecting the selection means tracking
+          `selectionchange`, which none of the three do yet; a control that
+          claimed "Arial" while the caret sat in Georgia would be worse than one
+          that only ever offers.
+        */}
+        <select
+          className="rte-select"
+          aria-label="Font"
+          defaultValue=""
+          onMouseDown={saveSelection}
+          onChange={(e) => {
+            applyFontFamily(e.target.value)
+            e.currentTarget.value = ''
+          }}
+        >
+          <option value="" disabled>Font</option>
+          {FONT_FAMILIES.map((font) => (
+            <option key={font.label} value={font.stack} style={{ fontFamily: font.stack }}>
+              {font.label}
+            </option>
+          ))}
+        </select>
+
+        <select
+          className="rte-select"
+          aria-label="Font size"
+          defaultValue=""
+          onMouseDown={saveSelection}
+          onChange={(e) => {
+            applyFontSize(Number(e.target.value))
+            e.currentTarget.value = ''
+          }}
+        >
+          <option value="" disabled>Size</option>
+          {FONT_SIZES.map((size) => (
+            <option key={size} value={size}>{size}</option>
+          ))}
         </select>
 
         <span className="rte-sep" />

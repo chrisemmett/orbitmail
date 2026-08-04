@@ -10,6 +10,10 @@
 //
 // - `e2e-send.suite.ts` — the send path: draft, composer, real Send button,
 //   GreenMail, Sent, no save-as-draft prompt. Needs the mail server.
+// - `e2e-format.suite.ts` — the compose toolbar's font family and size, where
+//   `document.execCommand` *is* the implementation and there is nothing
+//   underneath it to unit-test. Ends by reopening the draft, because inline
+//   styles have to survive DOMPurify on every load.
 // - `e2e-zoom.suite.ts` — zoom, through real keystrokes: the pure helpers are
 //   covered by test:imap, but whether the key reaches the handler and the frame
 //   is actually zoomed needs a window to send a key to.
@@ -47,6 +51,7 @@ const PORTS = { imap: 3243, imaps: 4093, smtp: 3225 }
 const SUITES = [
   { name: 'send', entry: 'e2e-send.suite.ts' },
   { name: 'signature', entry: 'e2e-signature.suite.ts' },
+  { name: 'format', entry: 'e2e-format.suite.ts' },
   { name: 'window', entry: 'e2e-window.suite.ts' },
   { name: 'zoom', entry: 'e2e-zoom.suite.ts' }
 ]

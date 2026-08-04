@@ -21,6 +21,9 @@ number moves for anything substantial.
 
 ### Added
 
+- **Font and size in the compose toolbar.** Six typefaces that render the same
+  on Windows and macOS, and sizes from 10 to 32. Select some text and pick one;
+  both send as ordinary styling that other mail clients understand.
 - **An analysis that skipped your attachments now says so**, and offers to
   include them in a click. Previously a summary written from the covering note
   alone looked exactly like one that had read the document. It only speaks up
