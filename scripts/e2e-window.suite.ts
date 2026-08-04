@@ -105,13 +105,59 @@ async function main(): Promise<void> {
   composeWin.unmaximize()
   await sleep(300)
 
+  // ---------------------------------------------------------------------------
+  // The size is remembered for the next composer. Closed with `close()`, not
+  // `destroy()`: the size is recorded in the `close` handler, and destroy skips
+  // it — which is also the honest limit of the feature, so it is worth the test
+  // going the long way round rather than reaching for the shortcut.
+  // ---------------------------------------------------------------------------
+  composeWin.setSize(880, 560)
+  await sleep(300)
+  composeWin.close()
+  await waitFor(() => BrowserWindow.getAllWindows().length === 1)
+
+  await mainWin.webContents.executeJavaScript(`window.orbitMail.compose.open({})`, true)
+  await waitFor(() => BrowserWindow.getAllWindows().length > 1)
+  const second = BrowserWindow.getAllWindows().find((w) => w !== mainWin)!
+  const reopenedAt = second.getBounds()
+  ok('the next composer opens at the size the last one was left',
+    reopenedAt.width === 880 && reopenedAt.height === 560,
+    `${reopenedAt.width}x${reopenedAt.height}`)
+
+  // Maximized is the state the setting exists for — someone who writes maximized
+  // wants the next message maximized, and remembering only the pixel size would
+  // reopen a screen-filling window that is not actually maximized.
+  second.maximize()
+  await waitFor(() => second.isMaximized(), 5000)
+  second.close()
+  await waitFor(() => BrowserWindow.getAllWindows().length === 1)
+
+  await mainWin.webContents.executeJavaScript(`window.orbitMail.compose.open({})`, true)
+  await waitFor(() => BrowserWindow.getAllWindows().length > 1)
+  const third = BrowserWindow.getAllWindows().find((w) => w !== mainWin)!
+  ok('and a maximized composer reopens maximized', await waitFor(() => third.isMaximized(), 5000))
+
+  // Deliberately NOT asserted: what restoring that window down gives back. A
+  // window maximized before it is mapped has no normal geometry for the WM to
+  // restore to, so the first restore-down lands on a size Muffin invents. That
+  // is a documented limitation rather than a check, because the obvious fix
+  // makes it worse — see the comment in createComposeWindow. Pinning the
+  // WM's invented number here would only pin Muffin's version of it.
+  third.close()
+  await waitFor(() => BrowserWindow.getAllWindows().length === 1)
+
+  // Back to a composer for the lifecycle checks below.
+  await mainWin.webContents.executeJavaScript(`window.orbitMail.compose.open({})`, true)
+  await waitFor(() => BrowserWindow.getAllWindows().length > 1)
+  const composeWin2 = BrowserWindow.getAllWindows().find((w) => w !== mainWin)!
+
   // Destroying every window would fire window-all-closed and quit the app before
   // anything could be asserted. This one belongs to the harness and takes no
   // part in what is being tested.
   const keepAlive = new BrowserWindow({ show: false })
 
   let composeClosed = false
-  composeWin.on('closed', () => { composeClosed = true })
+  composeWin2.on('closed', () => { composeClosed = true })
   uncaught.length = 0
 
   // The user action: close the main window while a composer is open.
@@ -124,7 +170,7 @@ async function main(): Promise<void> {
   // The half-written message is the reason this is worth asserting rather than
   // simply allowing: closing the main window must not take unsaved text with it.
   await sleep(500)
-  ok('the composer outlives the main window', !composeClosed && !composeWin.isDestroyed())
+  ok('the composer outlives the main window', !composeClosed && !composeWin2.isDestroyed())
 
   // Now close the composer with no main window left. Its `closed` handler runs
   // notifyMessagesUpdated() — badge, title and a send to the renderer — with
@@ -132,7 +178,7 @@ async function main(): Promise<void> {
   // only the clean case is announced here. `destroy()` rather than `close()`
   // deliberately: it reaches `closed` without going through the save-as-draft
   // handler, which is the send suite's subject and would block on a prompt here.
-  composeWin.destroy()
+  composeWin2.destroy()
   await waitFor(() => composeClosed)
   await sleep(500)
   if (uncaught.length === 0) {

@@ -643,6 +643,37 @@ the control, and the README says so.
   it rather than the raw reference — which is a CI check, unlike the e2e suite
   that used to reproduce it.
 
+  **The composer remembers its size, and only its size.** `composeWindow` in the
+  persisted state holds `{ width, height, maximized }`, recorded first thing in
+  the `close` handler — before the draft-flush dance below it, which has several
+  early returns. **Position is deliberately not stored**: every composer is a new
+  window the WM is entitled to place, and pinning one to coordinates fights
+  tiling desktops and strands the window off-screen when a monitor goes away.
+  `maximized` is the point of the setting — someone who writes maximized wants
+  the next message maximized, and remembering only the pixel size would reopen a
+  screen-filling window that is not actually maximized. It is stored with
+  `getNormalBounds()` rather than `getBounds()`, or restoring down on the next
+  composer would do nothing visible.
+
+  A stored size is **resolved, not trusted** (`resolveComposeSize`): it outlives
+  the display that produced it, so a composer sized on a 4K monitor would open
+  wider than the laptop it is reopened on with its Send button past the edge. It
+  is clamped to the work area and up to the window's own minimums, and a
+  non-number falls back rather than reaching the window — a preferences blob is a
+  file a user can edit, and `NaN` fails every comparison, so a bare
+  `Math.max`/`Math.min` would pass it straight through.
+
+  **The known limitation, measured rather than assumed:** a window maximized
+  before it is mapped has no normal geometry for the WM to restore *to*, so the
+  first "restore down" on a composer that opened maximized lands on a size Muffin
+  invents (~90% of the screen). Re-imposing the remembered size from an
+  `unmaximize` handler was tried and is **worse** — the WM finishes its own
+  restore after that runs and snaps the window back to the maximized rectangle,
+  so restore-down appeared to do nothing at all. `e2e-window.suite.ts` therefore
+  asserts that a maximized composer reopens maximized and deliberately asserts
+  nothing about what restoring it down gives, which would only pin Muffin's
+  number.
+
   **The composer is deliberately not a child window.** Electron's `parent`
   option sets the X11 `WM_TRANSIENT_FOR` hint, and to Muffin (Cinnamon) and
   Mutter (GNOME) a transient window is a *dialog*: the window manager clears its
@@ -902,11 +933,22 @@ the two copies had already drifted (the sender arrays were required in one and
 optional in the other).
 
 Adding a field means three lines, not one: a default in `DEFAULT_APP_STATE`, a
-merge in `readRawState`, **and** a merge in `patchAppState`. The last is the one
-that bites — a patch that does not mention a key drops it on the next merge. Use
-`??` and never `||`: these are booleans and arrays whose falsy value is a real
-setting, and `false || true` is `true`, which would make every toggle impossible
-to turn off.
+merge in `readRawState`, **and** a merge in `patchAppState`. Use `??` and never
+`||`: these are booleans and arrays whose falsy value is a real setting, and
+`false || true` is `true`, which would make every toggle impossible to turn off.
+
+**`readRawState` is the one that bites, and it has already bitten.** It rebuilds
+the state as an object literal, so a key with no line in it is not defaulted —
+it is **dropped on read**, and the next `patchAppState` writes the blob back
+without it. Three keys went in without one: `zoomLevel`, `aiDetail` and
+`alwaysIncludeAttachments`. The result was silent, per-restart data loss in
+shipped features — zoom did not survive a restart, "Always include attachments"
+turned itself back off, and Brief reverted to Full — and none of it looked wrong
+at the call site, because within a session the cached state still held the value.
+`npm run test:imap` now fails if **any** optional key of `PersistedAppState` has
+no line in `readRawState`, and separately writes a blob, drops the cache via
+`resetPreferencesCacheForTests` and reads it back, since a line that mentions the
+key and does the wrong thing with it would satisfy the shape check alone.
 
 **Defaults are the upgrade path.** Every existing install has a blob written
 before these keys existed, so each default has to equal what the app already did:
@@ -2048,7 +2090,7 @@ instead of the styled span's). It ends by flushing the draft, closing the compos
 every load, and a stripped declaration would look like a working toolbar until
 the next time the draft was opened. No mail server needed.
 
-**`e2e-window.suite.ts` — window lifecycle.** Two things, neither reachable
+**`e2e-window.suite.ts` — window lifecycle.** Three things, none reachable
 without a real window manager, and no mail server needed.
 
 First, **the composer can actually be maximized**: it must have no parent window,
@@ -2058,7 +2100,14 @@ a transient child that Muffin refused to maximize, so a flag assertion would hav
 passed against the broken window. Three of this suite's checks fail against the
 `parent: mainWindow` version, the maximize one reporting `640x720 -> 640x720`.
 
-Second, **the close path throws nothing**: with `closeToTray` off (also how a
+Second, **the composer's size carries to the next one**: resized, closed, and the
+next composer must open at that size; maximized, closed, and the next must open
+maximized. Closed with `close()` and not `destroy()`, because the size is
+recorded in the `close` handler and destroy skips it — which is the honest limit
+of the feature, so the check goes the long way round rather than reaching for the
+shortcut.
+
+Third, **the close path throws nothing**: with `closeToTray` off (also how a
 tray-less desktop behaves) the main window is closed with a composer open, the
 composer must *outlive* it — unsaved text is not the main window's to destroy —
 and closing the composer afterwards runs `notifyMessagesUpdated()` with no main

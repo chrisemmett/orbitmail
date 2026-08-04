@@ -3,13 +3,14 @@
 // sender arrays were required in one and optional in the other, so main and the
 // renderer disagreed about whether they could be absent.
 import type {
+  ComposeWindowPreferences,
   PersistedAppState,
   UiPreferences,
   WindowPreferences
 } from '../../shared/types'
 import { getRawSqlite } from '../db'
 
-export type { PersistedAppState, UiPreferences, WindowPreferences }
+export type { ComposeWindowPreferences, PersistedAppState, UiPreferences, WindowPreferences }
 
 const PREFERENCES_KEY = 'app_state'
 
@@ -64,7 +65,19 @@ function readRawState(): PersistedAppState {
       // silently rewritten to the default behind the user's back.
       aiModel: parsed.aiModel,
       aiEffort: parsed.aiEffort,
-      window: parsed.window
+      aiDetail: parsed.aiDetail,
+      // These three were missing, and the omission is silent *data loss* rather
+      // than a stale default: this literal is the whole state, so a key with no
+      // line here is dropped on read, and the next patchAppState writes the blob
+      // back without it. Zoom did not survive a restart, "Always include
+      // attachments" turned itself back off, and Brief reverted to Full — all
+      // three shipped that way. `test:imap` now fails if any optional key of
+      // PersistedAppState has no line in this function, because the next one
+      // added would have gone the same way.
+      zoomLevel: parsed.zoomLevel,
+      alwaysIncludeAttachments: parsed.alwaysIncludeAttachments ?? false,
+      window: parsed.window,
+      composeWindow: parsed.composeWindow
     }
   } catch {
     return { ...DEFAULT_APP_STATE, ui: { ...DEFAULT_UI_PREFERENCES } }
@@ -180,6 +193,44 @@ export function setWindowPreferences(window: WindowPreferences | undefined): voi
 
 export function getWindowPreferences(): WindowPreferences | undefined {
   return getAppState().window
+}
+
+export function setComposeWindowPreferences(composeWindow: ComposeWindowPreferences): void {
+  patchAppState({ composeWindow })
+}
+
+export function getComposeWindowPreferences(): ComposeWindowPreferences | undefined {
+  return getAppState().composeWindow
+}
+
+/** What the composer opens at when nothing has been remembered yet. */
+export const DEFAULT_COMPOSE_SIZE = { width: 640, height: 720 } as const
+/** Matches the window's own minWidth/minHeight — see createComposeWindow. */
+export const MIN_COMPOSE_SIZE = { width: 480, height: 400 } as const
+
+/**
+ * Resolve a remembered compose size against the screen it is about to open on.
+ *
+ * Validated here rather than trusted, because the stored value outlives the
+ * display that produced it: a composer sized on a 4K monitor would otherwise
+ * open larger than the laptop screen it is reopened on, with its buttons past
+ * the edge and no way to reach them but a resize the user has to guess at. A
+ * corrupted or hand-edited preferences blob is the same problem arriving by a
+ * different route, which is why the numbers are checked for being numbers at
+ * all rather than only for being large.
+ */
+export function resolveComposeSize(
+  stored: ComposeWindowPreferences | undefined,
+  workArea: { width: number; height: number }
+): { width: number; height: number } {
+  const usable = (value: number | undefined, fallback: number, min: number, max: number): number => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
+    return Math.max(min, Math.min(Math.round(value), Math.max(min, max)))
+  }
+  return {
+    width: usable(stored?.width, DEFAULT_COMPOSE_SIZE.width, MIN_COMPOSE_SIZE.width, workArea.width),
+    height: usable(stored?.height, DEFAULT_COMPOSE_SIZE.height, MIN_COMPOSE_SIZE.height, workArea.height)
+  }
 }
 
 export function setZoomLevel(zoomLevel: number): void {

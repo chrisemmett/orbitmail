@@ -261,6 +261,24 @@ export interface WindowPreferences {
   y?: number
 }
 
+/**
+ * The compose window's remembered size. **Size only, deliberately no position:**
+ * every composer is a new window the window manager is entitled to place, and
+ * pinning one to coordinates fights tiling desktops and strands the window
+ * off-screen when a monitor goes away.
+ *
+ * `maximized` is what the setting is actually for — someone who writes maximized
+ * wants the next message maximized, and remembering only the pixel size would
+ * reopen a screen-filling window that is not maximized, which is worse than
+ * either. Stored alongside the *unmaximized* size so restoring down still gives
+ * a sensible window.
+ */
+export interface ComposeWindowPreferences {
+  width: number
+  height: number
+  maximized?: boolean
+}
+
 // The persisted app state. This is the single declaration — the main process
 // imports it from here rather than keeping its own copy, which is how the two
 // used to drift (the sender arrays were required in one and optional in the
@@ -314,6 +332,8 @@ export interface PersistedAppState {
   /** How much the summaries say. Absent means the fuller default. */
   aiDetail?: AiDetail
   window?: WindowPreferences
+  /** The compose window's size. Absent means the 640x720 it has always opened at. */
+  composeWindow?: ComposeWindowPreferences
 }
 
 /**

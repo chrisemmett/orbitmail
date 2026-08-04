@@ -2573,12 +2573,15 @@ async function main(): Promise<void> {
       /composeWindow\.on\('closed'[\s\S]*?composeSentAndClosing = false/.test(mainSource))
 
     // A destroyed BrowserWindow is not null, so `mainWindow?.` passes and the
-    // call throws. Closing the main window destroys the compose window with it
-    // (`parent: mainWindow`), and the composer's `closed` handler then aimed
-    // notifyMessagesUpdated() — badge, title, send — at the window that had just
-    // gone. Windows cannot be driven from this suite, so the guard is pinned
-    // here: it must exist, cover the webContents (destroyed *before* the window
-    // reports it), and be what notifyMessagesUpdated reads.
+    // call throws. The route that exposed it was `parent: mainWindow` on the
+    // composer — closing the main window destroyed it too, and its `closed`
+    // handler then aimed notifyMessagesUpdated() — badge, title, send — at the
+    // window that had just gone. The composer is no longer a child (it has to be
+    // maximizable), so that ordering is gone and the e2e suite no longer
+    // reproduces it; **this is now the only check on the guard**, which is why it
+    // is a shape check and not an afterthought. It must exist, cover the
+    // webContents (destroyed *before* the window reports it), and be what
+    // notifyMessagesUpdated reads.
     const live = mainSource.match(/function liveMainWindow\(\)[\s\S]*?\n\}/)?.[0] ?? ''
     ok('liveMainWindow checks the window and its webContents',
       /mainWindow\.isDestroyed\(\)/.test(live) &&
@@ -2588,6 +2591,131 @@ async function main(): Promise<void> {
     ok('notifyMessagesUpdated goes through it rather than the raw reference',
       /liveMainWindow\(\)/.test(notify) && !/\bmainWindow\b/.test(notify),
       notify.replace(/\s+/g, ' '))
+  }
+
+  // -------------------------------------------------------------------------
+  section('Persisted preferences: nothing may be dropped on read')
+  // -------------------------------------------------------------------------
+  {
+    // readRawState rebuilds the state as an object literal, so a key with no
+    // line in it is not merely defaulted — it is **dropped**, and the next
+    // patchAppState writes the blob back without it. Three had gone that way
+    // before anyone noticed: zoom did not survive a restart, "Always include
+    // attachments" turned itself back off, and Brief reverted to Full. All three
+    // shipped in 0.6.0, and none of them looked wrong at the call site.
+    //
+    // Checked as a class rather than one key at a time, because the failure is
+    // silent and the next key added would have gone the same way.
+    const prefsSource = readFileSync('electron/services/preferences-service.ts', 'utf8')
+    const typesSource = readFileSync('shared/types.ts', 'utf8')
+    const readRaw = prefsSource.match(/function readRawState\(\)[\s\S]*?\n\}/)?.[0] ?? ''
+    ok('readRawState was found to check', readRaw.length > 100, `${readRaw.length} chars`)
+
+    const stateBlock = typesSource.match(
+      /export interface PersistedAppState \{([\s\S]*?)\n\}/
+    )?.[1] ?? ''
+    // Property lines only: skip comments, and skip the nested shapes' own fields
+    // by taking just the two-space indentation the interface's own keys carry.
+    const declared = [...stateBlock.matchAll(/^ {2}(\w+)\??:/gm)].map((m) => m[1])
+    ok('PersistedAppState declares the keys to check', declared.length > 10,
+      `${declared.length} keys: ${declared.join(', ')}`)
+    const dropped = declared.filter((key) => !new RegExp(`\\b${key}\\b`).test(readRaw))
+    ok('every persisted key is carried through readRawState', dropped.length === 0,
+      dropped.length ? `dropped on read: ${dropped.join(', ')}` : `${declared.length} keys carried`)
+
+    // And the same thing behaviourally, for the three that were actually lost:
+    // write the blob, drop the cache, read it back. The shape check above would
+    // pass on a line that mentions the key and does the wrong thing with it.
+    const prefs = await import('../electron/services/preferences-service')
+    prefs.patchAppState({
+      zoomLevel: 2,
+      aiDetail: 'brief',
+      alwaysIncludeAttachments: true,
+      composeWindow: { width: 900, height: 800, maximized: true }
+    })
+    prefs.resetPreferencesCacheForTests()
+    const reread = prefs.getAppState()
+    ok('zoom survives a restart', reread.zoomLevel === 2, `zoomLevel=${reread.zoomLevel}`)
+    ok('the summary detail setting survives a restart', reread.aiDetail === 'brief',
+      `aiDetail=${reread.aiDetail}`)
+    ok('always-include-attachments survives a restart',
+      reread.alwaysIncludeAttachments === true,
+      `alwaysIncludeAttachments=${reread.alwaysIncludeAttachments}`)
+    ok('and so does the compose window size',
+      reread.composeWindow?.width === 900 && reread.composeWindow?.maximized === true,
+      JSON.stringify(reread.composeWindow))
+  }
+
+  // -------------------------------------------------------------------------
+  section('Compose window size is remembered, and validated on the way out')
+  // -------------------------------------------------------------------------
+  {
+    const prefs = await import('../electron/services/preferences-service')
+    const screen = { width: 1920, height: 1080 }
+
+    const fallback = prefs.resolveComposeSize(undefined, screen)
+    ok('nothing remembered opens at the size the composer always had',
+      fallback.width === 640 && fallback.height === 720, JSON.stringify(fallback))
+
+    const remembered = prefs.resolveComposeSize({ width: 900, height: 800 }, screen)
+    ok('a remembered size is used as given',
+      remembered.width === 900 && remembered.height === 800, JSON.stringify(remembered))
+
+    // The stored value outlives the display that produced it. Sized on a 4K
+    // monitor, reopened on a laptop: without this the composer opens wider than
+    // the screen with its Send button past the edge.
+    const huge = prefs.resolveComposeSize({ width: 3800, height: 2000 }, screen)
+    ok('a size larger than the screen is brought back to it',
+      huge.width === 1920 && huge.height === 1080, JSON.stringify(huge))
+
+    // Below the window's own minWidth/minHeight the composer is unusable, and a
+    // preferences blob is a file a user can edit.
+    const tiny = prefs.resolveComposeSize({ width: 10, height: 10 }, screen)
+    ok('and one below the minimum is brought up to it',
+      tiny.width === 480 && tiny.height === 400, JSON.stringify(tiny))
+
+    // A corrupted blob arrives as the wrong type, not as a small number. NaN
+    // fails every comparison, so a bare Math.max/min would pass it straight
+    // through to a window with NaN for a width.
+    const junk = prefs.resolveComposeSize(
+      { width: NaN, height: 'tall' as unknown as number }, screen
+    )
+    ok('garbage falls back rather than reaching the window',
+      junk.width === 640 && junk.height === 720, JSON.stringify(junk))
+
+    // Position is deliberately not remembered — see ComposeWindowPreferences.
+    ok('no position is stored with it',
+      !/x\?:|y\?:/.test(
+        readFileSync('shared/types.ts', 'utf8')
+          .match(/export interface ComposeWindowPreferences \{[\s\S]*?\n\}/)?.[0] ?? ''
+      ))
+
+    // The window is created from the resolved size, and records it on the way
+    // out. `getNormalBounds` when maximized: `getBounds` reports the maximized
+    // rectangle, and storing that would make "restore down" on the next
+    // composer do nothing visible.
+    const composeSource = readFileSync('electron/main.ts', 'utf8')
+    const composeCreate = composeSource.match(
+      /composeWindow = new BrowserWindow\(\{[\s\S]*?\n {2}\}\)/
+    )?.[0] ?? ''
+    ok('the composer is created at the resolved size',
+      /width: size\.width/.test(composeCreate) && /height: size\.height/.test(composeCreate),
+      composeCreate.slice(0, 120))
+    // Anchored on the *composer's* ready-to-show: the main window has one too,
+    // earlier in the file, and a bare indexOf finds that one and compares
+    // against the wrong handler — which is how this check first failed against
+    // correct code.
+    ok('and a remembered maximized state is applied before the window is shown',
+      /if \(storedSize\?\.maximized\) composeWindow\.maximize\(\)/.test(composeSource) &&
+        composeSource.indexOf('storedSize?.maximized') <
+          composeSource.indexOf("composeWindow.on('ready-to-show'"))
+    const composeClose = composeSource.match(
+      /composeWindow\.on\('close'[\s\S]*?\n {2}\}\)/
+    )?.[0] ?? ''
+    ok('the size is recorded on close, taking the unmaximized bounds when maximized',
+      /setComposeWindowPreferences/.test(composeClose) &&
+        /getNormalBounds\(\)/.test(composeClose),
+      `close handler ${composeClose.length} chars`)
   }
 
   // -------------------------------------------------------------------------

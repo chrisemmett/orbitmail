@@ -11,6 +11,16 @@ number moves for anything substantial.
 
 ### Fixed
 
+- **Three settings no longer forget themselves when you restart.** Zoom went
+  back to 100%, "Always include attachments" turned itself off, and Brief
+  summaries reverted to Full — each one looked like it had worked until the next
+  launch. All three now stay put.
+- **The compose window remembers how big you made it.** Resize it, or maximize
+  it, and the next message opens the same way rather than back at its small
+  default. Where the window appears is still left to your desktop, which is
+  better placed to decide. One rough edge: if a composer opens maximized,
+  restoring it down gives a size your desktop picks rather than the one you last
+  used — drag it once and it is remembered again.
 - **The compose window can be maximized.** It was created as a dialog belonging
   to the main window, and Linux desktops do not let a dialog maximize — the
   button was missing and the keyboard shortcut did nothing, so a long message had
