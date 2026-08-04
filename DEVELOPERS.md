@@ -1120,10 +1120,33 @@ The families are full fallback stacks confined to faces that ship on both Window
 and macOS — the recipient renders this, so a face they lack is a lottery. Sizes
 are px, not pt, because the editor is a browser and pt only means px × 4/3 here.
 
-**None of the three selects reflect the caret's current formatting**; each labels
-itself ("Font", "Size", and the paragraph one showing "Normal") and snaps back
-after use. Doing better means tracking `selectionchange`, and a control claiming
-"Arial" while the caret sits in Georgia would be worse than one that only offers.
+**All three selects report the formatting under the caret**, tracked from
+`selectionchange` — the only document-level event for it, so the handler's
+"is this selection inside *my* editor" check is load-bearing rather than tidy
+(the composer has a subject field and a quoted-text block, and Settings has a
+second instance of this editor). Four things that are not obvious:
+
+- **Read from `getComputedStyle`, not `queryCommandValue`.** The latter cannot
+  answer for size at all — it speaks the legacy 1–7 scale and has no idea what
+  the px value is — and the computed style gets inheritance right for free.
+- **A range starting on an element boundary reports the wrong element.**
+  Selecting a paragraph's contents makes the *paragraph* the `startContainer`,
+  not the styled span inside it, so reading the container directly said "14px, no
+  font" for text plainly set to 24px Georgia. The handler descends to
+  `childNodes[startOffset]` first. This was caught by the e2e check, not by
+  reading the code.
+- **Nothing on the menu shows as empty**, deliberately, and the empty option is
+  *not* `disabled`: a disabled option cannot be selected, so a value landing on
+  it would leave the control showing the previous font — the exact lie this is
+  meant to avoid. Choosing it back is treated as "no change", not "no font".
+- **`emit()` re-syncs.** Applying a command does not reliably move the selection,
+  so `selectionchange` may not fire after one; without that call, setting a font
+  left the select showing what was there before. And `selectionchange` fires on
+  every keystroke, so the state setter returns the previous object when nothing
+  changed rather than re-rendering the toolbar a few hundred times a minute.
+
+For a selection spanning several styles this reports the **start** of the range,
+which is what other mail clients do and is at least predictable.
 
 ### Signatures
 
@@ -2016,7 +2039,11 @@ mail being resized along with the selection (the draft is seeded with one,
 outside the selection, for exactly that). It drives the real `<select>` elements
 with real `mousedown`/`change` events, since `onMouseDown` saves the selection
 and `onChange` applies it, and calling the handlers directly would not notice
-that pairing breaking. It ends by flushing the draft, closing the composer and
+that pairing breaking. **The selection tracking is checked by moving the caret**,
+not by applying something and reading it back — echoing the last command is the
+failure a weaker check would pass, and this one found a real defect on its first
+run (a range starting on an element boundary reported the paragraph's font
+instead of the styled span's). It ends by flushing the draft, closing the composer and
 **reopening it**: the styling is inline `style=`, DOMPurify runs over the body on
 every load, and a stripped declaration would look like a working toolbar until
 the next time the draft was opened. No mail server needed.

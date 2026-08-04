@@ -68,6 +68,49 @@ const FONT_SIZES: ReadonlyArray<number> = [10, 12, 14, 16, 18, 24, 32]
  */
 const SIZE_MARKER = '7'
 
+/** Block styles the paragraph select offers, innermost-first when nested. */
+const BLOCK_TAGS = ['h1', 'h2', 'h3', 'p']
+
+/**
+ * The first family in a computed `font-family` list, unquoted and folded for
+ * comparison. `getComputedStyle` returns the whole stack, and it re-quotes as it
+ * pleases — `"Times New Roman", Times, serif` here, `Times New Roman` there — so
+ * comparing the stacks as strings does not work.
+ */
+function primaryFamily(fontFamily: string): string {
+  return (fontFamily.split(',')[0] ?? '').trim().replace(/^["']|["']$/g, '').toLowerCase()
+}
+
+/** The stack whose face is in effect, or '' for anything not on the menu. */
+function matchFamily(fontFamily: string): string {
+  const primary = primaryFamily(fontFamily)
+  return FONT_FAMILIES.find((font) => primaryFamily(font.stack) === primary)?.stack ?? ''
+}
+
+/**
+ * The size in effect, or '' for anything not on the menu — a heading, or mail
+ * written elsewhere at a size we do not offer. Saying nothing is the honest
+ * answer there; the alternative is rounding to a neighbour and claiming a size
+ * the text is not.
+ */
+function matchSize(fontSize: string): string {
+  const px = Math.round(parseFloat(fontSize))
+  return FONT_SIZES.includes(px) ? String(px) : ''
+}
+
+/** The nearest enclosing block style, stopping at the editor itself. */
+function matchBlock(from: Element | null, editor: Element): string {
+  let node: Element | null = from
+  while (node && node !== editor) {
+    const tag = node.tagName.toLowerCase()
+    if (BLOCK_TAGS.includes(tag)) return tag
+    node = node.parentElement
+  }
+  // Text typed straight into the editor with no wrapper is a paragraph in
+  // everything but markup, and `formatBlock` treats it as one.
+  return 'p'
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -93,6 +136,8 @@ export function RichTextEditor({
   const [linkOpen, setLinkOpen] = useState(false)
   const [linkUrl, setLinkUrl] = useState('')
   const [empty, setEmpty] = useState(true)
+  /** What the three style selects show — the formatting under the caret. */
+  const [current, setCurrent] = useState({ block: 'p', family: '', size: '' })
 
   useEffect(() => {
     const el = editorRef.current
@@ -106,12 +151,76 @@ export function RichTextEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  /**
+   * Point the style selects at whatever the caret is now in.
+   *
+   * Read from `getComputedStyle` rather than `queryCommandValue`, which cannot
+   * answer for size: it speaks the legacy 1–7 scale and has no idea what the px
+   * value is. The computed style also gets inheritance right for free — text
+   * inside a `<span style="font-family:…">` reports that family whether or not
+   * the caret sits on the span itself.
+   *
+   * For a selection that spans several styles this reports the *start* of the
+   * range, which is what every mail client does and is at least predictable.
+   */
+  const syncFromSelection = () => {
+    const el = editorRef.current
+    if (!el) return
+    const sel = window.getSelection()
+    if (!sel || sel.rangeCount === 0) return
+    const range = sel.getRangeAt(0)
+    // The listener is on `document`, so it hears every caret move in the window
+    // — the subject line, the quoted-text block, the other editor in Settings.
+    // Anything outside this editor leaves the controls as they were.
+    if (!el.contains(range.startContainer)) return
+
+    // A range that starts on an *element* boundary — which is what selecting a
+    // paragraph's contents produces — has that element as its container, not the
+    // styled span inside it. Reading the container directly therefore reported
+    // the paragraph's own font for text that was plainly not in it: select a
+    // sentence you have just set to 24px Georgia and the toolbar said 14px and
+    // no font. Descend to the node the range actually starts at.
+    let node: Node = range.startContainer
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      node = node.childNodes[range.startOffset] ?? node
+    }
+    const element = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement
+    if (!element) return
+
+    const style = window.getComputedStyle(element)
+    const next = {
+      block: matchBlock(element, el),
+      family: matchFamily(style.fontFamily),
+      size: matchSize(style.fontSize)
+    }
+    // `selectionchange` fires on every keystroke and every arrow key. Returning
+    // the previous object when nothing changed keeps that from re-rendering the
+    // toolbar a few hundred times a minute while someone types.
+    setCurrent((prev) =>
+      prev.block === next.block && prev.family === next.family && prev.size === next.size
+        ? prev
+        : next
+    )
+  }
+
+  useEffect(() => {
+    // `selectionchange` is a document event: there is no element-level version,
+    // which is why the containment check above is load-bearing rather than tidy.
+    document.addEventListener('selectionchange', syncFromSelection)
+    return () => document.removeEventListener('selectionchange', syncFromSelection)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const emit = () => {
     const el = editorRef.current
     if (!el) return
     const text = el.innerText
     setEmpty(text.trim().length === 0)
     onChange(el.innerHTML, text)
+    // Applying a command does not always move the selection, so `selectionchange`
+    // cannot be relied on to fire after one — without this, setting a font left
+    // the select still showing what was there before it was applied.
+    syncFromSelection()
   }
 
   const focusEditor = () => editorRef.current?.focus()
@@ -274,15 +383,21 @@ export function RichTextEditor({
   return (
     <div className="rte">
       <div className="rte-toolbar" role="toolbar" aria-label="Formatting">
+        {/*
+          All three are controlled by `current`, so they report the formatting
+          under the caret rather than labelling themselves. The empty option each
+          of the last two carries is what shows when the caret is somewhere the
+          menu cannot describe — a heading, or mail composed elsewhere in a face
+          we do not offer. It is deliberately not `disabled`: a disabled option
+          is unselectable, so a value that lands on it would leave the control
+          showing the previous font, which is the specific lie this avoids.
+        */}
         <select
           className="rte-select"
           aria-label="Paragraph style"
-          defaultValue="p"
+          value={current.block}
           onMouseDown={saveSelection}
-          onChange={(e) => {
-            exec('formatBlock', `<${e.target.value}>`)
-            e.currentTarget.value = 'p'
-          }}
+          onChange={(e) => exec('formatBlock', `<${e.target.value}>`)}
         >
           <option value="p">Normal</option>
           <option value="h1">Heading</option>
@@ -290,25 +405,15 @@ export function RichTextEditor({
           <option value="h3">Small heading</option>
         </select>
 
-        {/*
-          Both of these label themselves rather than showing the caret's current
-          font, and snap back to that label after use — the same shape as the
-          paragraph select beside them. Reflecting the selection means tracking
-          `selectionchange`, which none of the three do yet; a control that
-          claimed "Arial" while the caret sat in Georgia would be worse than one
-          that only ever offers.
-        */}
         <select
           className="rte-select"
           aria-label="Font"
-          defaultValue=""
+          value={current.family}
           onMouseDown={saveSelection}
-          onChange={(e) => {
-            applyFontFamily(e.target.value)
-            e.currentTarget.value = ''
-          }}
+          // Choosing the empty option back means "no change", not "no font".
+          onChange={(e) => e.target.value && applyFontFamily(e.target.value)}
         >
-          <option value="" disabled>Font</option>
+          <option value="">Font</option>
           {FONT_FAMILIES.map((font) => (
             <option key={font.label} value={font.stack} style={{ fontFamily: font.stack }}>
               {font.label}
@@ -319,14 +424,11 @@ export function RichTextEditor({
         <select
           className="rte-select"
           aria-label="Font size"
-          defaultValue=""
+          value={current.size}
           onMouseDown={saveSelection}
-          onChange={(e) => {
-            applyFontSize(Number(e.target.value))
-            e.currentTarget.value = ''
-          }}
+          onChange={(e) => e.target.value && applyFontSize(Number(e.target.value))}
         >
-          <option value="" disabled>Size</option>
+          <option value="">Size</option>
           {FONT_SIZES.map((size) => (
             <option key={size} value={size}>{size}</option>
           ))}

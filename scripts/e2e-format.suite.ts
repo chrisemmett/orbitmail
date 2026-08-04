@@ -18,11 +18,19 @@
  *   `<font>` left behind in the message, and a `<font size="7">` that was
  *   already in pasted mail being resized along with the selection.
  *
- * The last check is the one with real consequences. The styling is inline
- * `style=`, and DOMPurify runs over the body **on every load** — so if it
+ * The round trip at the end is the check with real consequences. The styling is
+ * inline `style=`, and DOMPurify runs over the body **on every load** — so if it
  * stripped those declarations the toolbar would look like it worked and the
  * formatting would vanish the next time the draft was opened. The draft is
  * therefore saved, the composer closed, and the draft reopened.
+ *
+ * The selects also report the formatting under the caret, and that half is
+ * asserted by *moving the caret*, not by applying something and reading it back
+ * — echoing the last command is precisely the failure that would pass a weaker
+ * check. It found a real one on its first run: selecting a paragraph's contents
+ * makes the **paragraph** the range's `startContainer`, not the styled span
+ * inside it, so the toolbar reported 14px and no font for text visibly set to
+ * 24px Georgia.
  */
 import { app, BrowserWindow } from 'electron'
 import { mkdtempSync } from 'fs'
@@ -106,6 +114,17 @@ async function main(): Promise<void> {
   }
 
   const EDITOR = `document.querySelector('.compose-editor-area [contenteditable]')`
+
+  // What the three style selects are showing. They are controlled by the
+  // `selectionchange` tracking, so these are the answer to "what formatting does
+  // the toolbar think the caret is in".
+  const readSelects = (win: BrowserWindow = composeWin) => win.webContents.executeJavaScript(
+    `(() => {
+       const at = (label) => document.querySelector('.rte-toolbar select[aria-label="' + label + '"]')?.value ?? null
+       return { block: at('Paragraph style'), font: at('Font'), size: at('Font size') }
+     })()`, true
+  ) as Promise<{ block: string | null; font: string | null; size: string | null }>
+
   const readEditor = () => composeWin.webContents.executeJavaScript(
     `(() => {
        const editor = ${EDITOR}
@@ -148,10 +167,19 @@ async function main(): Promise<void> {
   )
   ok('the text to format is selected', (await selectMine()) === TYPED)
 
+  // Before anything is applied: the toolbar reports the body's own formatting,
+  // which is the editor's 14px default in a face that is not on the menu. The
+  // font reading empty rather than guessing is the point — see the caret move
+  // further down for the other half of it.
+  await sleep(200)
+  let selects = await readSelects()
+  ok('the selects open on the formatting already under the caret',
+    selects.size === '14' && selects.font === '', JSON.stringify(selects))
+
   // Through the real controls, not by calling the handlers: `onMouseDown` saves
   // the selection and `onChange` applies it, and a test that skipped the events
   // would not notice if that pairing broke.
-  const useSelect = (label: string, value: string) => composeWin.webContents.executeJavaScript(
+  const useSelect = (label: string, value: string, win: BrowserWindow = composeWin) => win.webContents.executeJavaScript(
     `(() => {
        const select = document.querySelector('.rte-toolbar select[aria-label="${label}"]')
        if (!select) return 'missing'
@@ -162,7 +190,7 @@ async function main(): Promise<void> {
      })()`, true
   )
 
-  const sizeApplied = await useSelect('Font size', '24')
+  await useSelect('Font size', '24')
   await sleep(200)
   let state = await readEditor()
   ok('the size is applied as a CSS declaration', /font-size:\s*24px/i.test(state.html),
@@ -174,17 +202,48 @@ async function main(): Promise<void> {
   ok('the pasted <font size="7"> was not resized with it',
     state.pastedSize === '7' && !/id="pasted"[^>]*font-size/i.test(state.html),
     `#pasted is <${state.pastedIsFont} size=${state.pastedSize}>`)
-  ok('the size select returns to its label', sizeApplied === '')
 
   // Straight after the size, with no reselection: rewriting the nodes collapses
   // the selection, so this only works because applyFontSize puts it back.
-  const fontApplied = await useSelect('Font', 'Georgia, "Times New Roman", serif')
+  const GEORGIA = 'Georgia, "Times New Roman", serif'
+  await useSelect('Font', GEORGIA)
   await sleep(200)
   state = await readEditor()
   ok('a font applies to the same selection without reselecting it',
     /font-family:\s*Georgia/i.test(state.html), state.html.slice(0, 260))
   ok('as a CSS declaration, not a <font face> tag', !/<font[^>]*face=/i.test(state.html))
-  ok('the font select returns to its label', fontApplied === '')
+
+  // Applying a command does not reliably move the selection, so `selectionchange`
+  // may not fire after one — the sync from `emit()` is what makes this true.
+  selects = await readSelects()
+  ok('the selects report what was just applied',
+    selects.size === '24' && selects.font === GEORGIA, JSON.stringify(selects))
+
+  // The half that proves it is tracking rather than echoing the last command:
+  // put the caret somewhere else and the controls must change on their own. The
+  // pasted paragraph is <font size="7">, which renders at a size the menu does
+  // not offer — so the size reads empty rather than rounding to a neighbour and
+  // claiming the text is a size it is not.
+  await composeWin.webContents.executeJavaScript(
+    `(() => {
+       const editor = ${EDITOR}
+       editor.focus()
+       const range = document.createRange()
+       range.selectNodeContents(editor.querySelector('#pasted'))
+       const sel = getSelection()
+       sel.removeAllRanges()
+       sel.addRange(range)
+     })()`, true
+  )
+  await sleep(300)
+  selects = await readSelects()
+  ok('and follow the caret to text formatted differently',
+    selects.font === '' && selects.size === '', JSON.stringify(selects))
+
+  await selectMine()
+  await sleep(300)
+  selects = await readSelects()
+  ok('and back again', selects.font === GEORGIA && selects.size === '24', JSON.stringify(selects))
 
   // styleWithCSS is document-wide and sticky. Left on by the font command, this
   // is where it would show: bold would arrive as a styled span instead.
@@ -233,6 +292,26 @@ async function main(): Promise<void> {
   ok('and the sanitizer keeps the font and size on the way back in',
     /font-size:\s*24px/i.test(second.html) && /font-family:\s*Georgia/i.test(second.html),
     second.html.slice(0, 260))
+
+  // The paragraph select became controlled along with the other two, so it has
+  // the same obligation. Left until here because `formatBlock` replaces the
+  // element it applies to, which would take the ids the checks above rely on.
+  await secondWin.webContents.executeJavaScript(
+    `(() => {
+       const editor = ${EDITOR}
+       editor.focus()
+       const range = document.createRange()
+       range.selectNodeContents(editor.querySelector('#mine') ?? editor)
+       const sel = getSelection()
+       sel.removeAllRanges()
+       sel.addRange(range)
+     })()`, true
+  )
+  await useSelect('Paragraph style', 'h1', secondWin)
+  await sleep(300)
+  const blockSelects = await readSelects(secondWin)
+  ok('the paragraph select reports the block the caret is in',
+    blockSelects.block === 'h1', JSON.stringify(blockSelects))
 
   ok('nothing threw along the way', uncaught.length === 0, uncaught.join(' | ') || 'none')
   secondWin.destroy()
