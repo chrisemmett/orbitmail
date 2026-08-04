@@ -1088,6 +1088,66 @@ replied to, and the divider carries a **Remove** control to drop it entirely.
   not re-cleaning attacker content on every keystroke — it is the same string,
   now editable.
 
+### The compose formatting toolbar
+
+`RichTextEditor` is a `contentEditable` div driven by `document.execCommand`. The
+editor is **uncontrolled** — the DOM is the source of truth — so React never
+rewrites `innerHTML` while typing, which would reset the caret; remount it via
+`key` to load fresh content. Most of the toolbar is one `exec()` call per button.
+The two that are not:
+
+- **Font family** turns `styleWithCSS` on for the single `fontName` call and
+  straight back off. Without it the command emits `<font face="…">`; left on, it
+  is document-wide and sticky, and **bold stops emitting `<b>`** in favour of
+  `<span style="font-weight:bold">` — worse in exactly the old clients the change
+  is meant to accommodate.
+- **Font size** cannot be expressed by the command at all: `fontSize` speaks only
+  HTML's legacy 1–7 scale, and even with `styleWithCSS` on it yields keyword
+  sizes (`large`, `x-large`) rather than the value asked for. So size 7 is used
+  as a **marker** — `execCommand` does the part worth keeping, splitting the
+  selection correctly across element boundaries and partially-selected nodes, and
+  the elements it just tagged are rewritten to carry the real size. Two traps,
+  both pinned by `e2e-format.suite.ts`: pasted mail can contain a `<font
+  size="7">` of its own, so the ones already present are recorded and skipped
+  (resizing text the user never selected is a silent corruption of their
+  message), and replacing the nodes collapses the selection, so it is restored
+  across what was rewritten — otherwise setting a size and then a font would mean
+  reselecting in between. Children are **moved**, not round-tripped through
+  `innerHTML`: an inline image or link in the selection has to survive as the
+  same node, and re-parsing is both lossy and a needless injection sink.
+
+The families are full fallback stacks confined to faces that ship on both Windows
+and macOS — the recipient renders this, so a face they lack is a lottery. Sizes
+are px, not pt, because the editor is a browser and pt only means px × 4/3 here.
+
+**All three selects report the formatting under the caret**, tracked from
+`selectionchange` — the only document-level event for it, so the handler's
+"is this selection inside *my* editor" check is load-bearing rather than tidy
+(the composer has a subject field and a quoted-text block, and Settings has a
+second instance of this editor). Four things that are not obvious:
+
+- **Read from `getComputedStyle`, not `queryCommandValue`.** The latter cannot
+  answer for size at all — it speaks the legacy 1–7 scale and has no idea what
+  the px value is — and the computed style gets inheritance right for free.
+- **A range starting on an element boundary reports the wrong element.**
+  Selecting a paragraph's contents makes the *paragraph* the `startContainer`,
+  not the styled span inside it, so reading the container directly said "14px, no
+  font" for text plainly set to 24px Georgia. The handler descends to
+  `childNodes[startOffset]` first. This was caught by the e2e check, not by
+  reading the code.
+- **Nothing on the menu shows as empty**, deliberately, and the empty option is
+  *not* `disabled`: a disabled option cannot be selected, so a value landing on
+  it would leave the control showing the previous font — the exact lie this is
+  meant to avoid. Choosing it back is treated as "no change", not "no font".
+- **`emit()` re-syncs.** Applying a command does not reliably move the selection,
+  so `selectionchange` may not fire after one; without that call, setting a font
+  left the select showing what was there before. And `selectionchange` fires on
+  every keystroke, so the state setter returns the previous object when nothing
+  changed rather than re-rendering the toolbar a few hundred times a minute.
+
+For a selection spanning several styles this reports the **start** of the range,
+which is what other mail clients do and is at least predictable.
+
 ### Signatures
 
 Per-account, rich HTML, stored in `accounts.signature` and edited in
@@ -1964,6 +2024,29 @@ composer then edits the live DOM. A unit test of any one of the three would pass
 with the feature broken — and the two real defects this caught (the caret opening
 *inside* the signature block, and the separator being left behind) were both
 invisible to everything else. No mail server needed.
+
+**`e2e-format.suite.ts` — the compose toolbar's font family and size.** A real
+window because `document.execCommand` *is* the implementation: there is nothing
+underneath it to unit-test, and a stub would only repeat the answer we hoped for.
+What it pins is the three ways the browser's editing engine fights back. **`fontName`
+emits `<font face="…">`** unless `styleWithCSS` is on, and that flag is
+document-wide and sticky — so the suite applies a font and *then* checks that
+**bold still emits `<b>`**, which is the regression that leaving it on would
+cause. **`fontSize` speaks only the legacy 1–7 scale**, so the code tags with
+size 7 and rewrites what it tagged; both failure modes are asserted — a `<font>`
+marker shipped in the message, and a `<font size="7">` that came in with pasted
+mail being resized along with the selection (the draft is seeded with one,
+outside the selection, for exactly that). It drives the real `<select>` elements
+with real `mousedown`/`change` events, since `onMouseDown` saves the selection
+and `onChange` applies it, and calling the handlers directly would not notice
+that pairing breaking. **The selection tracking is checked by moving the caret**,
+not by applying something and reading it back — echoing the last command is the
+failure a weaker check would pass, and this one found a real defect on its first
+run (a range starting on an element boundary reported the paragraph's font
+instead of the styled span's). It ends by flushing the draft, closing the composer and
+**reopening it**: the styling is inline `style=`, DOMPurify runs over the body on
+every load, and a stripped declaration would look like a working toolbar until
+the next time the draft was opened. No mail server needed.
 
 **`e2e-window.suite.ts` — window lifecycle.** Two things, neither reachable
 without a real window manager, and no mail server needed.

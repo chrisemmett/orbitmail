@@ -125,7 +125,11 @@ draft flush and parent/child destroy order are invisible to it. Each suite impor
 checks the draft is deleted, the message is in Sent, the recipient got it, and the
 window closed without a save-as-draft prompt. **signature** types into a composer
 and switches the From account across three accounts, checking the signature block
-is swapped, removed and re-appended without eating what was typed. **window** maximizes
+is swapped, removed and re-appended without eating what was typed. **format** drives
+the toolbar's font and size selects in a real editor — `document.execCommand` *is*
+the implementation, so there is nothing underneath to unit-test — and reopens the
+draft afterwards, because inline styles have to survive DOMPurify on every load.
+**window** maximizes
 the composer and reads the bounds back — Electron's `isMaximizable()` says `true`
 even when the WM has vetoed it, which it does for any window given a `parent` —
 then closes the main window with a composer open and asserts the composer outlives
@@ -133,7 +137,7 @@ it and nothing throws. **zoom** sends real
 `Ctrl` `=` / `_` / `-` / `0` keystrokes and reads `getZoomLevel()` back — the key
 matching is pure and covered by `test:imap`, but whether the key reaches the
 handler, whether the frame is actually zoomed, and whether the level survives a
-reload need a window to send a key to. All four also assert **nothing threw**.
+reload need a window to send a key to. All five also assert **nothing threw**.
 Needs Docker *and* a display (headless Ozone segfaults on the
 first window), so it is **not in CI** — run it after touching the compose/send
 path, signatures, zoom, or anything window-lifecycle. Windows appear on screen for a few seconds.
@@ -207,12 +211,13 @@ did not**, because "verified" with no list has meant `build` alone more than onc
 3. `npm run test:imap` — if you touched `electron/`, the IPC contract, the schema,
    or any doc it checks. Also the honest default when you are unsure: it is what
    CI will run anyway, so finding out now is cheaper.
-4. `npm run test:e2e` — if you touched the **compose or send path**, **zoom**, or
-   anything **window-lifecycle** (a `close` handler, a parent/child relationship,
+4. `npm run test:e2e` — if you touched the **compose or send path**, the
+   **formatting toolbar**, **zoom**, or anything **window-lifecycle** (a `close`
+   handler, a parent/child relationship,
    a `BrowserWindow` reference held across time, a `webContents` listener). This is the only check that drives
    real windows, and CI *cannot* run it — so if you skip it there, nothing catches
    it later. Needs a display and opens windows for a few seconds.
 5. Docs in the same commit (rule 6), and grep for the claim you are replacing.
 
-A new check earns its place here only if it fails on the unfixed code. Both of the
-current e2e suites were confirmed that way — see their TODO.md entries.
+A new check earns its place here only if it fails on the unfixed code — every e2e
+suite here was confirmed that way; see their TODO.md entries.
