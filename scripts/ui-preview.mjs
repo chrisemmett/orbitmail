@@ -61,13 +61,18 @@ const accounts = [
 // The custom folders are listed out of alphabetical order on purpose: that is
 // how a server hands its labels over, and the sidebar is supposed to sort them.
 const folders = accounts.flatMap((a) => [
-  { id: a.id + '-inbox', accountId: a.id, name: 'Inbox', type: 'inbox', unreadCount: 3, totalCount: 12 },
-  { id: a.id + '-sent', accountId: a.id, name: 'Sent', type: 'sent', unreadCount: 0, totalCount: 8 },
-  { id: a.id + '-drafts', accountId: a.id, name: 'Drafts', type: 'drafts', unreadCount: 0, totalCount: 0 },
-  { id: a.id + '-l1', accountId: a.id, name: 'Receipts', type: 'custom', unreadCount: 0, totalCount: 4 },
-  { id: a.id + '-l2', accountId: a.id, name: 'accounts', type: 'custom', unreadCount: 2, totalCount: 9 },
-  { id: a.id + '-l3', accountId: a.id, name: 'Travel', type: 'custom', unreadCount: 0, totalCount: 1 },
-  { id: a.id + '-l4', accountId: a.id, name: 'Bills', type: 'custom', unreadCount: 0, totalCount: 6 }
+  { id: a.id + '-inbox', accountId: a.id, imapPath: 'INBOX', name: 'Inbox', type: 'inbox', unreadCount: 3, totalCount: 12 },
+  { id: a.id + '-sent', accountId: a.id, imapPath: 'Sent', name: 'Sent', type: 'sent', unreadCount: 0, totalCount: 8 },
+  { id: a.id + '-drafts', accountId: a.id, imapPath: 'Drafts', name: 'Drafts', type: 'drafts', unreadCount: 0, totalCount: 0 },
+  // Two nested labels sharing a leaf name, which is what Gmail's hierarchy
+  // makes easy to end up with: the name is the leaf, so the sidebar shows
+  // "Receipts" twice and only the path tells them apart. (No backticks in
+  // here — the whole stub is a template literal.)
+  { id: a.id + '-l1', accountId: a.id, imapPath: 'Work/Receipts', name: 'Receipts', type: 'custom', unreadCount: 0, totalCount: 4 },
+  { id: a.id + '-l5', accountId: a.id, imapPath: 'Home/Receipts', name: 'Receipts', type: 'custom', unreadCount: 1, totalCount: 3 },
+  { id: a.id + '-l2', accountId: a.id, imapPath: 'accounts', name: 'accounts', type: 'custom', unreadCount: 2, totalCount: 9 },
+  { id: a.id + '-l3', accountId: a.id, imapPath: 'Travel', name: 'Travel', type: 'custom', unreadCount: 0, totalCount: 1 },
+  { id: a.id + '-l4', accountId: a.id, imapPath: 'Bills', name: 'Bills', type: 'custom', unreadCount: 0, totalCount: 6 }
 ])
 
 // Sender HTML for the thread fixture. Written the way real mail is: a table
@@ -272,11 +277,15 @@ const OVERRIDES = {
       darkMode: false, selectedFolderId: 'acc-1-inbox', selectedMessageId: null,
       collapsedAccountIds: {},
       // Pinned across both accounts and out of alphabetical order, so the
-      // Favourites section renders at all and its sort is visible. Both
-      // Inboxes are pinned and nothing else collides, so the same list shows a
-      // qualified pair and unqualified rows — a fixture where every name
-      // collided would look right with the ambiguity test deleted.
-      favoriteFolderIds: ['acc-2-l3', 'acc-1-l2', 'acc-1-inbox', 'acc-2-l4', 'acc-2-inbox'],
+      // Favourites section renders at all and its sort is visible. It carries
+      // one of each collision — both Inboxes (two accounts, qualified by
+      // account) and both of Personal's Receipts labels (one account, qualified
+      // by parent path) — alongside rows that collide with nothing. A fixture
+      // where every name collided would look right with the test deleted.
+      favoriteFolderIds: [
+        'acc-2-l3', 'acc-1-l2', 'acc-1-inbox', 'acc-2-l4', 'acc-2-inbox',
+        'acc-1-l1', 'acc-1-l5'
+      ],
       threadedView: true,
       unreadFilterByAccount: {}, searchField: 'all'
     },

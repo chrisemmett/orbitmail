@@ -2,6 +2,7 @@ import { useMemo, useState, useRef, useEffect, type MouseEvent as ReactMouseEven
 import type { Account, Folder, FolderType } from '../../../shared/types'
 import { accountUnreadCount, shouldShowFolderUnreadBadge } from '../../../shared/folders'
 import { accountShortName } from '../../utils/accounts'
+import { favoriteRowHints } from '../../utils/folders'
 import {
   useMailStore,
   selectFolder,
@@ -39,16 +40,16 @@ function FolderRow({
   isActive,
   onSelect,
   onContextMenu,
-  accountHint
+  hint
 }: {
   folder: Folder
   isActive: boolean
   onSelect: () => void
   onContextMenu: (event: ReactMouseEvent<HTMLButtonElement>) => void
-  // Which account this folder belongs to, shown only where the name alone does
-  // not identify the row. Undefined on the per-account lists, which sit under a
-  // heading that has already said it.
-  accountHint?: string
+  // What tells this row apart from another of the same name — an account, a
+  // parent path, or both. Undefined on the per-account lists, which sit under a
+  // heading that has already said whose they are.
+  hint?: string
 }) {
   const Icon = FOLDER_ICON_MAP[folder.type]
   const colorClass = FOLDER_COLOR_CLASS[folder.type]
@@ -59,14 +60,15 @@ function FolderRow({
       onClick={onSelect}
       onContextMenu={onContextMenu}
       // The visible text reads "Inbox Personal", which a screen reader would
-      // run together; the title is what a mouse user gets on hover anyway.
-      title={accountHint ? `${folder.name} — ${accountHint}` : undefined}
+      // run together; the title is what a mouse user gets on hover anyway, and
+      // it is also where a squeezed row's truncated qualifier can still be read.
+      title={hint ? `${folder.name} — ${hint}` : undefined}
     >
       <Icon {...sidebarIconProps} className={`sidebar-item-icon ${colorClass}`} />
-      <span className={`sidebar-item-label${accountHint ? ' has-hint' : ''}`}>
+      <span className={`sidebar-item-label${hint ? ' has-hint' : ''}`}>
         {folder.name}
       </span>
-      {accountHint && <span className="sidebar-item-hint">{accountHint}</span>}
+      {hint && <span className="sidebar-item-hint">{hint}</span>}
       {shouldShowFolderUnreadBadge(folder) && (
         <span className="sidebar-badge">{folder.unreadCount}</span>
       )}
@@ -245,25 +247,17 @@ export function Sidebar() {
       .sort((a, b) => a.name.localeCompare(b.name))
   }, [favoriteFolderIds, folders])
 
-  // Names that more than one *account* has pinned. Those rows — and only those
-  // — carry the account name: this is the one list that mixes accounts, and
-  // qualifying every row would repeat the same word down a sidebar where the
-  // answer is usually obvious. Compared case-insensitively, since "receipts"
-  // and "Receipts" from two accounts are as confusable as two exact matches.
-  // Two same-named folders within *one* account are not covered — the account
-  // name would be identical on both rows, so it would disambiguate nothing.
-  const ambiguousFavoriteNames = useMemo(() => {
-    const accountsByName = new Map<string, Set<string>>()
-    for (const folder of favoriteFolders) {
-      const key = folder.name.toLocaleLowerCase()
-      const owners = accountsByName.get(key) ?? new Set<string>()
-      owners.add(folder.accountId)
-      accountsByName.set(key, owners)
-    }
-    return new Set(
-      [...accountsByName].filter(([, owners]) => owners.size > 1).map(([key]) => key)
-    )
-  }, [favoriteFolders])
+  // What each row needs beyond its name to be told apart — the account, the
+  // parent path, or both. The rule is in `favoriteRowHints`, where it is plain
+  // data in and out and `test:store` can reach it.
+  const favoriteHints = useMemo(
+    () =>
+      favoriteRowHints(
+        favoriteFolders,
+        new Map(accounts.map((account) => [account.id, accountShortName(account)]))
+      ),
+    [favoriteFolders, accounts]
+  )
 
   const accountById = useMemo(
     () => new Map(accounts.map((account) => [account.id, account])),
@@ -300,11 +294,7 @@ export function Sidebar() {
                 key={folder.id}
                 folder={folder}
                 isActive={selectedFolderId === folder.id}
-                accountHint={
-                  ambiguousFavoriteNames.has(folder.name.toLocaleLowerCase())
-                    ? accountShortName(account)
-                    : undefined
-                }
+                hint={favoriteHints.get(folder.id)}
                 onSelect={() => selectFolder(folder.id)}
                 onContextMenu={(event) => {
                   event.preventDefault()
