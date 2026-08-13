@@ -790,6 +790,53 @@ the control, and the README says so.
   move to an ordinary label keeps every other label, so the "deleted" message
   stays in All Mail, in search, and in thread views.
 
+### Gmail labels (`label-actions.ts`)
+
+A Gmail label **is** an IMAP folder, and a message carrying three labels syncs as
+three rows sharing one `message_id`. Thread listing already dedupes those rows
+for display; label editing is that same relationship read the other way.
+
+- **Reading them** — `listMessageCopies` (`db-service.ts`) takes message ids and
+  returns every row of the **same account** sharing their `COALESCE(message_id,
+  id)` key. `listMessageLabels` maps those copies onto the account's label
+  folders and counts, per folder, how many of the messages asked about carry it.
+- **Adding one** — a server-side `COPY` into the label's folder, taken from a
+  copy that already exists. The source is deliberately a *non-virtual* folder
+  where one exists: `[Gmail]/All Mail` and friends are views, and a COPY out of
+  one is not reliably allowed.
+- **Removing one** — an expunge of that folder's copy (`deleteMessageOnServer`),
+  which on Gmail removes only that label. The message survives in All Mail even
+  if it was the last one, which is what "archived, with no labels" already means
+  there. The local row is deleted with it so the list and the sidebar count do
+  not wait for a sync to agree.
+
+**What is offered as a label** is the Inbox plus the account's own labels.
+Virtual views are excluded, and so are Sent, Drafts, Trash and Spam — places a
+message can only be *moved* to, where "add the Trash label" would read as filing
+and behave as deleting. The Inbox is included on purpose: removing it is exactly
+how Gmail archives, and the chip's tooltip says so rather than leaving the user
+to discover it.
+
+**Gmail only, enforced in main.** `addLabel`/`removeLabel` throw on any other
+provider. On plain IMAP a message lives in one folder, a second copy is a second
+message, and none of these operations would mean what the word implies — the
+renderer also hides the row, but the guard that protects the mailbox is the one
+in the service.
+
+**Scope.** A label change applies to every message of the open conversation,
+which is what Gmail does. A label carried by only some of them is a real state
+(a reply that arrived after the filing, or filing done in the web UI), so the
+picker shows three states — on, partial, off — rather than rounding a partial to
+either end. Multi-selection in the list is **not** wired to labels; only the open
+conversation is.
+
+**The one thing not covered by `test:imap`**: that expunging a copy removes a
+label rather than deleting the message is *Gmail* behaviour, and GreenMail does
+not have it. Everything around it is checked — the copy arithmetic, the
+partial-vs-complete counts, the account scoping, what is offered as a label, the
+no-op paths and the provider guard — but the Gmail-specific server semantics can
+only be confirmed against a real account.
+
 ### Mailbox export (mbox)
 
 An mbox file separates messages with a line beginning `From `, so any line
@@ -1968,6 +2015,7 @@ reimplementing them, so it exercises the shipping code paths:
 | OAuth config | Credentials resolve environment-first, fall back to values entered in the app, and the status payload never carries a value back to the renderer. Plus the rule-5 guards: no OAuth constants in the build config, no placeholders in the bundle, and no `.env` value present in `out/main/index.js`. |
 | Tray icon | The count→icon mapping: nothing unread shows the plain icon, single digits show that number, ten or more collapses to `9+`, a fractional count floors instead of naming a file that does not exist, and junk (negative, `NaN`) falls back to the plain icon. Every file the mapping can name is checked to exist in `build/icons/tray/`, and the tooltip keeps the exact number past nine, singular at one. |
 | Launcher badge | The Unity `LauncherEntry` signal is a valid D-Bus object path (a percent-encoded app URI is not, and every emit silently failed), the count is typed `int64`, and zero hides the badge. |
+| Gmail labels | A label carried by the whole conversation counts every message; one carried by a single reply reports *one*, not the conversation (the difference the picker draws a dash for). The Inbox is a label and says so; a virtual view is not offered as one, and neither is anything a message can only be moved to. Another account holding the same `Message-ID` contributes no label — asserted against `listMessageCopies` itself, because the label-level check passes whether or not the scoping exists, and a leaked copy is what `addLabel` would take its COPY *from*. Adding a label every message already carries, or removing one none carries, does nothing at all (`failed` is asserted too — without the filter it would attempt a server round-trip and report a failure rather than a no-op). Labelling a non-Gmail account is refused, and a label deleted underneath the picker is an error rather than a crash. |
 | IPC contract | Every channel `preload.ts` invokes has an `ipcMain.handle` in `main.ts`. Added after two channels were wired into the preload but not main — clean build, green suite, runtime failure. |
 | Docs | Every `npm run` script and file path the docs cite exists, the documented Electron version matches `package.json`, and no document claims credentials are built into a package (CLAUDE.md rule 6). Prose is not checked; references are. |
 | mbox export | `From ` lines inside a body are escaped, at the start of a body too, already-escaped lines gain a marker (mboxrd, so it is reversible), and a word merely starting with "From" is untouched; 8-bit content survives byte for byte; the separator carries an asctime date and copes with an unusable one; and an end-to-end export of a message *containing* a From line produces one separator per message, not one per line, in an owner-only file. |

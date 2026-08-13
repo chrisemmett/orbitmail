@@ -737,6 +737,118 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Gmail labels: the folders a message sits in, read back as labels')
+  // -------------------------------------------------------------------------
+  {
+    // A Gmail label is an IMAP folder and a labelled message is one row per
+    // label, so "which labels does this carry" is a question about copies. The
+    // server half — that expunging a copy removes only that label — is Gmail
+    // behaviour GreenMail does not have; what is checked here is everything
+    // around it, which is where the arithmetic and the guards live.
+    const { getRawSqlite } = await import('../electron/db')
+    const labels = await import('../electron/services/label-actions')
+    const raw = getRawSqlite()
+
+    // Never connects — every check here is about what the DB says and what the
+    // guards do, so the token is deliberately not a real one.
+    const gmailAccount = db.saveAccount('gmail', {
+      authType: 'oauth',
+      email: 'labels@gmail.example',
+      displayName: 'Labels',
+      accessToken: 'not-a-real-token',
+      refreshToken: 'not-a-real-token',
+      expiryDate: Date.now() + 3_600_000
+    })
+
+    const inbox = db.upsertFolder(gmailAccount.id, 'INBOX', 'Inbox', 'inbox')
+    const work = db.upsertFolder(gmailAccount.id, 'Work', 'Work', 'custom')
+    const receipts = db.upsertFolder(gmailAccount.id, 'Work/Receipts', 'Receipts', 'custom')
+    const allMail = db.upsertFolder(gmailAccount.id, '[Gmail]/All Mail', 'All Mail', 'custom', true)
+    const trash = db.upsertFolder(gmailAccount.id, '[Gmail]/Bin', 'Bin', 'trash')
+
+    const ins = raw.prepare(
+      `INSERT INTO messages (id, folder_id, account_id, uid, message_id, thread_id, from_addr, to_addr, subject, snippet, date, is_read)
+       VALUES (@id, @f, @a, @uid, @mid, 'thr-lab', 'a@b.c', 'd@e.f', 'Labelled', 'snip', 0, 1)`
+    )
+    // Two messages of one conversation: the first in the Inbox, Work and All
+    // Mail, the second in Work alone. So "Work" is complete and "Inbox" is
+    // partial — the distinction the picker draws a dash for rather than a tick.
+    ins.run({ id: 'lab-1-inbox', f: inbox.id, a: gmailAccount.id, uid: 8001, mid: '<lab-1@x>' })
+    ins.run({ id: 'lab-1-work', f: work.id, a: gmailAccount.id, uid: 8002, mid: '<lab-1@x>' })
+    ins.run({ id: 'lab-1-all', f: allMail.id, a: gmailAccount.id, uid: 8003, mid: '<lab-1@x>' })
+    ins.run({ id: 'lab-2-work', f: work.id, a: gmailAccount.id, uid: 8004, mid: '<lab-2@x>' })
+    // A different account holding a message with the *same* Message-ID. Nothing
+    // about it may reach the first account's labels: they are different
+    // mailboxes that happen to have been sent the same mail.
+    const otherFolder = db.upsertFolder(account.id, 'OtherLabels', 'OtherLabels', 'custom')
+    ins.run({ id: 'lab-1-other', f: otherFolder.id, a: account.id, uid: 8005, mid: '<lab-1@x>' })
+
+    const forThread = labels.listMessageLabels(['lab-1-inbox', 'lab-2-work'])
+    const byName = new Map(forThread.map((l) => [l.name, l]))
+
+    ok('a label carried by the whole conversation is counted on every message',
+      byName.get('Work')?.messageCount === 2,
+      forThread.map((l) => `${l.name}=${l.messageCount}`).join(', '))
+    ok('a label on one message of two is reported as one, not as the conversation',
+      byName.get('Inbox')?.messageCount === 1,
+      String(byName.get('Inbox')?.messageCount))
+    ok('the Inbox is a label, and says so',
+      byName.get('Inbox')?.isInbox === true && byName.get('Work')?.isInbox === false)
+    ok('a virtual view is not offered as a label',
+      !byName.has('All Mail'), [...byName.keys()].join(', '))
+    ok('another account holding the same Message-ID contributes no label',
+      !forThread.some((l) => l.name === 'OtherLabels'), [...byName.keys()].join(', '))
+    // …and asserted against the query itself, because the line above passes
+    // whether or not the scoping exists: `listMessageLabels` only keeps folders
+    // that are labels *of this account*, so a leaked row is dropped a step
+    // later for an unrelated reason. The leak still matters — `addLabel` reads
+    // these rows to pick the folder it copies *from*, and a copy taken from
+    // another account's mailbox is a copy from a server this account cannot
+    // even reach.
+    const copiesOfOne = db.listMessageCopies(['lab-1-inbox'])
+    ok('and does not even come back as a copy of it',
+      copiesOfOne.every((c) => c.accountId === gmailAccount.id),
+      copiesOfOne.map((c) => c.id).join(', '))
+
+    const offered = labels.labelFoldersForAccount(gmailAccount.id).map((f) => f.name).sort()
+    ok('the label list is the Inbox and the user\'s own labels',
+      offered.join(', ') === 'Inbox, Receipts, Work', offered.join(', '))
+    ok('and excludes the places a message can only be moved to',
+      !offered.includes('Bin') && !offered.includes('All Mail'), offered.join(', '))
+
+    // Already-labelled messages are filtered out *before* anything is sent to
+    // the server. Without that filter this would attempt a COPY against a
+    // server this account has no way to reach, and report a failure rather
+    // than a no-op — so `failed` is asserted too, not just `changed`.
+    const noop = await labels.addLabel(['lab-1-inbox', 'lab-2-work'], work.id)
+    ok('adding a label every message already carries does nothing at all',
+      noop.changed === 0 && noop.failed === 0,
+      `changed=${noop.changed} failed=${noop.failed}`)
+
+    const nothingToRemove = await labels.removeLabel(['lab-2-work'], receipts.id)
+    ok('removing a label no message carries does nothing at all',
+      nothingToRemove.changed === 0 && nothingToRemove.failed === 0,
+      `changed=${nothingToRemove.changed} failed=${nothingToRemove.failed}`)
+
+    // The guard that matters: on any other provider a folder is a place, and
+    // "adding a label" would silently copy a message into it.
+    const refused = await rejects(() => labels.addLabel(['lab-1-other'], otherFolder.id))
+    ok('labelling a non-Gmail account is refused rather than quietly copying',
+      refused != null && /Gmail/.test(refused.message), refused?.message ?? 'resolved')
+    const refusedRemove = await rejects(() => labels.removeLabel(['lab-1-other'], otherFolder.id))
+    ok('and so is unlabelling one',
+      refusedRemove != null && /Gmail/.test(refusedRemove.message),
+      refusedRemove?.message ?? 'resolved')
+
+    const goneLabel = await rejects(() => labels.addLabel(['lab-1-inbox'], 'no-such-folder'))
+    ok('a label deleted underneath the picker is an error, not a crash',
+      goneLabel != null, goneLabel?.message ?? 'resolved')
+
+    raw.prepare("DELETE FROM messages WHERE id LIKE 'lab-%'").run()
+    db.removeAccount(gmailAccount.id)
+  }
+
+  // -------------------------------------------------------------------------
   section('Contacts: collected from mail, ranked by who you actually write to')
   // -------------------------------------------------------------------------
   {

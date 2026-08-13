@@ -1943,6 +1943,70 @@ export function prunePop3Skipped(accountId: string, presentUids: Set<string>): n
   return gone.length
 }
 
+/**
+ * Every stored copy of the given messages, across the folders of their own
+ * account.
+ *
+ * A Gmail label *is* an IMAP folder, and a message carrying three labels is
+ * synced as three rows sharing one `message_id`. That is the whole basis of
+ * label editing: the labels a message carries are the folders its copies sit
+ * in, adding one is a COPY into that folder, and removing one is an expunge of
+ * that copy. Thread listing already dedupes these rows for display; this is the
+ * same relationship read the other way, on purpose.
+ *
+ * Keyed by `COALESCE(message_id, id)` — the same key the dedupe uses — so a
+ * message that arrived without a Message-ID header groups with nothing but
+ * itself rather than with every other header-less message. The join is scoped
+ * to the account: two accounts that both hold a message have two independent
+ * sets of labels, and crossing them would offer to put one account's label on
+ * the other's copy.
+ */
+export interface MessageCopy {
+  /** The row's own id — what a delete or an expunge needs. */
+  id: string
+  /** The message it is a copy of, as passed in. */
+  requestedId: string
+  folderId: string
+  accountId: string
+  uid: number
+}
+
+export function listMessageCopies(messageIds: string[]): MessageCopy[] {
+  if (messageIds.length === 0) return []
+  const placeholders = messageIds.map(() => '?').join(', ')
+  // `seed` is the rows asked about; `copies` is every row of the same account
+  // sharing a seed's key. A seed is its own copy, which is what makes "this
+  // message is in Inbox" fall out without a special case.
+  const rows = getRawSqlite()
+    .prepare(
+      `WITH seed AS (
+         SELECT id, account_id, COALESCE(message_id, id) AS mkey
+         FROM messages WHERE id IN (${placeholders})
+       )
+       SELECT c.id AS id, s.id AS requested_id, c.folder_id AS folder_id,
+              c.account_id AS account_id, c.uid AS uid
+       FROM seed s
+       JOIN messages c
+         ON c.account_id = s.account_id
+        AND COALESCE(c.message_id, c.id) = s.mkey`
+    )
+    .all(...messageIds) as {
+    id: string
+    requested_id: string
+    folder_id: string
+    account_id: string
+    uid: number
+  }[]
+
+  return rows.map((r) => ({
+    id: r.id,
+    requestedId: r.requested_id,
+    folderId: r.folder_id,
+    accountId: r.account_id,
+    uid: r.uid
+  }))
+}
+
 /** The UIDL a POP3 message was stored under, for a server-side delete. */
 export function getMessageServerUid(messageId: string): string | null {
   const row = getRawSqlite()

@@ -40,6 +40,9 @@ import { Info } from '@phosphor-icons/react/dist/ssr/Info'
 import { Sparkle } from '@phosphor-icons/react/dist/ssr/Sparkle'
 import { Printer } from '@phosphor-icons/react/dist/ssr/Printer'
 import { Stack } from '@phosphor-icons/react/dist/ssr/Stack'
+import { Tag } from '@phosphor-icons/react/dist/ssr/Tag'
+import { Check } from '@phosphor-icons/react/dist/ssr/Check'
+import { Minus } from '@phosphor-icons/react/dist/ssr/Minus'
 import type { FolderType } from '../../shared/types'
 
 export const iconProps = {
@@ -108,7 +111,10 @@ export {
   Info,
   Sparkle,
   Printer,
-  Stack
+  Stack,
+  Tag,
+  Check,
+  Minus
 }
 
 export type { IconProps }

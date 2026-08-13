@@ -68,6 +68,29 @@ export interface Folder {
   isVirtualView: boolean
 }
 
+/**
+ * A label carried by one or more of the messages asked about.
+ *
+ * `messageCount` is how many of them carry it, which is the difference between
+ * a conversation that is labelled and one where a single reply is: Gmail lets
+ * both exist, so the picker shows the second as partial rather than claiming
+ * the conversation is labelled when it is not.
+ */
+export interface MessageLabel {
+  folderId: string
+  name: string
+  imapPath: string
+  /** Gmail's Inbox is a label like any other, and removing it is archiving. */
+  isInbox: boolean
+  messageCount: number
+}
+
+export interface LabelChangeResult {
+  /** Messages the label was actually put on or taken off. */
+  changed: number
+  failed: number
+}
+
 export type FlagColor = 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'gray'
 
 export interface MessageSummary {
@@ -587,6 +610,14 @@ export interface OrbitMailAPI {
     ) => Promise<{ deleted: number; failed: number }>
     move: (messageId: string, targetFolderId: string) => Promise<void>
     copy: (messageId: string, targetFolderId: string) => Promise<void>
+    // Gmail only. The labels these messages carry, the labels the account has
+    // to offer, and putting one on or taking one off the lot of them. Passing
+    // every message in a conversation is the normal call: Gmail labels a
+    // conversation, and so does this.
+    labels: (messageIds: string[]) => Promise<MessageLabel[]>
+    availableLabels: (accountId: string) => Promise<Folder[]>
+    addLabel: (messageIds: string[], folderId: string) => Promise<LabelChangeResult>
+    removeLabel: (messageIds: string[], folderId: string) => Promise<LabelChangeResult>
   }
   sync: {
     refresh: (accountId?: string) => Promise<void>

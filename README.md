@@ -35,6 +35,14 @@ messages and pull out what you still need to do.
   mailbox on the server and pulls older mail back in.
 - **Attachments** — messages carrying them are flagged in the list; save one or
   all of them wherever you like.
+- **Gmail labels** — an open conversation shows the labels it carries, under the
+  subject. Click the **×** on one to take it off, or **Label** to search your
+  labels and tick them on and off; a name you have not used yet can be created
+  from the same box. Labels apply to the whole conversation, and a label that
+  only some of its messages carry is shown as such rather than pretended
+  otherwise. Removing the **Inbox** label archives the conversation, as it does
+  in Gmail — the button says so before you click it. Other kinds of account do
+  not have labels, and do not show the row.
 
 ### Write
 
@@ -270,6 +278,8 @@ Everything Orbit Mail knows lives on your machine:
   to the account's Drafts folder, so one started here will not appear in webmail
   or on your phone.
 - **POP3 is inbox-only** — no moving or archiving on the server.
+- **Labels can be put on the conversation you are reading, not on a selection** —
+  and labels themselves can be created but not renamed or deleted from here.
 - **First sync fetches the most recent 200 messages per folder.** Use **Load
   more** for older mail, or **Search whole mailbox** to pull in older matches.
 - **A very long conversation is capped at 200 messages** — you see the most
