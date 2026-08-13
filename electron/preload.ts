@@ -65,7 +65,13 @@ const api: OrbitMailAPI = {
     move: (messageId, targetFolderId) =>
       ipcRenderer.invoke('messages:move', messageId, targetFolderId),
     copy: (messageId, targetFolderId) =>
-      ipcRenderer.invoke('messages:copy', messageId, targetFolderId)
+      ipcRenderer.invoke('messages:copy', messageId, targetFolderId),
+    labels: (messageIds) => ipcRenderer.invoke('messages:labels', messageIds),
+    availableLabels: (accountId) => ipcRenderer.invoke('messages:availableLabels', accountId),
+    addLabel: (messageIds, folderId) =>
+      ipcRenderer.invoke('messages:addLabel', messageIds, folderId),
+    removeLabel: (messageIds, folderId) =>
+      ipcRenderer.invoke('messages:removeLabel', messageIds, folderId)
   },
   sync: {
     refresh: (accountId) => ipcRenderer.invoke('sync:refresh', accountId),

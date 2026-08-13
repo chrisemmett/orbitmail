@@ -135,6 +135,12 @@ import {
   setAccountSyncDays
 } from './services/folder-actions'
 import {
+  addLabel,
+  labelFoldersForAccount,
+  listMessageLabels,
+  removeLabel
+} from './services/label-actions'
+import {
   getAppState,
   patchAppState,
   patchUiPreferences,
@@ -1321,6 +1327,33 @@ function registerIpc(): void {
       msg.uid
     )
     await pollForNewMessages({ announce: false })
+  })
+
+  ipcMain.handle('messages:labels', (_, messageIds: string[]) =>
+    listMessageLabels(messageIds)
+  )
+
+  ipcMain.handle('messages:availableLabels', (_, accountId: string) =>
+    labelFoldersForAccount(accountId)
+  )
+
+  // A label change is a COPY or an expunge on the server, so the folder it
+  // landed in has a row we do not have yet (add) or has lost one we still have
+  // (remove, already deleted locally). One poll covers the batch, the same way
+  // the bulk relocate does.
+  ipcMain.handle('messages:addLabel', async (_, messageIds: string[], folderId: string) => {
+    const result = await addLabel(messageIds, folderId)
+    if (result.changed > 0) {
+      await pollForNewMessages({ announce: false })
+      notifyMessagesUpdated()
+    }
+    return result
+  })
+
+  ipcMain.handle('messages:removeLabel', async (_, messageIds: string[], folderId: string) => {
+    const result = await removeLabel(messageIds, folderId)
+    if (result.changed > 0) notifyMessagesUpdated()
+    return result
   })
 
   ipcMain.handle('sync:refresh', async (_, accountId?: string) => {

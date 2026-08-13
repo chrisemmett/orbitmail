@@ -39,6 +39,25 @@ Severity tags come from the [2026-07-21 audit](#security--correctness-audit-2026
 
 ### Elsewhere
 
+- **Labels cannot be applied to a multi-selection, and cannot be renamed or
+  deleted.** Both were scoped out of the label editor (see Done) rather than
+  missed. The selection case is not hard — `relocateMany` is the shape to copy —
+  but it needs its own answer to partial results across a hundred rows, which the
+  conversation-sized "3 changed, 1 failed" toast is not. Rename and delete are a
+  different size again: an IMAP `RENAME`/`DELETE` plus re-keying every local row
+  that pointed at the old path, and the failure mode of getting it wrong is a
+  label that exists on the server and nowhere in the app, or vice versa. Gmail's
+  web UI does both well, and neither is what the feature was asked for.
+
+- **That removing a label does not delete the message is untested against a real
+  server.** It is Gmail behaviour — an expunge from a label folder unlabels,
+  leaving the message in All Mail — and GreenMail has no such semantics, so
+  `test:imap` covers everything *around* the round trip and not the round trip
+  itself. Pointing a `gmail`-provider account at GreenMail does not work either:
+  the pool authenticates Gmail with XOAUTH2. The honest options are a real
+  account behind an opt-in env var, or a fake that would only assert what it was
+  told to. Recorded rather than papered over.
+
 - **Two same-named folders within *one* account are still indistinguishable in
   Favourites.** Cross-account ambiguity is qualified now (see Done), but the
   qualifier is the account name, and pinning `Work/Receipts` and
@@ -96,6 +115,45 @@ does. Preserving that needs prefix or trigram tokenisation.
 # Done
 
 ## Shipped
+
+- **Gmail labels can be seen and edited on the open conversation** — asked for
+  as "an easy and intuitive way to view existing labels and add/modify/remove
+  labels". The implementation is small because the sync model had already made
+  the decision: a Gmail label **is** an IMAP folder, and a labelled message is
+  already stored as one row per label sharing a `message_id`. So the labels a
+  message carries are the folders its copies sit in — the same relationship
+  thread listing dedupes for display, read the other way — adding one is a
+  server-side `COPY`, and removing one is an expunge of that copy, which on
+  Gmail unlabels rather than deletes. No schema change and no new sync path.
+  **Four decisions carry the feature.** *What counts as a label*: the Inbox and
+  the user's own labels; not the virtual views, and not Sent/Drafts/Trash/Spam,
+  which a message can only be *moved* to — "add the Trash label" would read as
+  filing and behave as deleting. The Inbox is in on purpose, because removing it
+  is how Gmail archives, and the chip's tooltip says exactly that rather than
+  leaving it to be discovered. *What a change applies to*: the whole
+  conversation, as in Gmail. *That partial is a real state*: a label on one reply
+  of three is not the conversation being labelled, so the chip is dashed and the
+  picker's tick is a dash — rounding it either way would state something false
+  about the mailbox. *That the guard belongs in main*: `addLabel` and
+  `removeLabel` refuse a non-Gmail account outright. The renderer also hides the
+  row, but on plain IMAP a second copy is a second message, and the check that
+  protects a mailbox has to be the one nearest the mailbox. **The copy source is
+  deliberately non-virtual** — Gmail does not reliably allow a COPY out of
+  `[Gmail]/All Mail`, so an ordinary folder is preferred wherever one holds the
+  message. Thirteen checks in `test:imap`, and **one was passing for the wrong
+  reason**: "another account holding the same Message-ID contributes nothing"
+  survived deleting the account scoping from the SQL, because `listMessageLabels`
+  drops foreign folders a step later anyway. It now asserts against
+  `listMessageCopies` directly, where the leak would matter — `addLabel` reads
+  those rows to choose the folder it copies *from*, and a copy taken from another
+  account's mailbox is a copy from a server this one cannot reach. Both mutations
+  (the scoping, the virtual-view filter) were confirmed to fail before being
+  restored. Looked at in `ui:preview` in both themes, with a fixture that gives
+  the conversation a partial label so the dashed chip and the dash-ticked
+  checkbox are reachable at all, and one Gmail plus one plain-IMAP account so the
+  row's absence is visible too. Two things left undone and recorded in
+  Outstanding: labelling a multi-selection, and the Gmail server semantics that
+  GreenMail cannot stand in for.
 
 - **An ambiguous Favourites row says which account it belongs to** — the item
   filed in Outstanding when the section was sorted, closed the same day it was

@@ -51,8 +51,12 @@ const TYPES = {
 // empty state hides most of what is worth looking at.
 const STUB = `
 const accounts = [
-  { id: 'acc-1', email: 'you@example.com', displayName: 'Personal', provider: 'imap', syncDays: 30, signature: '' },
-  { id: 'acc-2', email: 'you@work.example', displayName: 'Work', provider: 'gmail', syncDays: 90, signature: '' }
+  // Gmail, so the reader's label row is reachable at all — it renders nothing
+  // for any other provider, where a folder is a place and not a label.
+  { id: 'acc-1', email: 'you@example.com', displayName: 'Personal', provider: 'gmail', syncDays: 30, signature: '' },
+  // Left as plain IMAP so the fixture holds one account of each kind: the label
+  // row must be absent here and present on the Gmail one above.
+  { id: 'acc-2', email: 'you@work.example', displayName: 'Work', provider: 'imap', syncDays: 90, signature: '' }
 ]
 // The custom folders are listed out of alphabetical order on purpose: that is
 // how a server hands its labels over, and the sidebar is supposed to sort them.
@@ -131,6 +135,23 @@ const OVERRIDES = {
     }
   ],
   'messages.countThreads': 1,
+  // The conversation's labels. One of them is on a single message of three,
+  // because "partial" is a state the picker and the chip both render
+  // differently and a fixture where every label were complete would look
+  // identical with that distinction deleted.
+  'messages.labels': [
+    { folderId: 'acc-1-inbox', name: 'Inbox', imapPath: 'INBOX', isInbox: true, messageCount: 3 },
+    { folderId: 'acc-1-l1', name: 'Receipts', imapPath: 'Work/Receipts', isInbox: false, messageCount: 3 },
+    { folderId: 'acc-1-l3', name: 'Travel', imapPath: 'Travel', isInbox: false, messageCount: 1 }
+  ],
+  'messages.availableLabels': folders.filter(
+    (f) => f.accountId === 'acc-1' && (f.type === 'inbox' || f.type === 'custom')
+  ),
+  // Nothing here talks to a server, so a click reports success and the row
+  // re-reads the same fixture: the picker's layout and states are what can be
+  // looked at here, not the effect of applying one.
+  'messages.addLabel': { changed: 1, failed: 0 },
+  'messages.removeLabel': { changed: 1, failed: 0 },
   'messages.getThread': ['m1', 'm2', 'm3'].map((id, i) => ({
     id, folderId: 'acc-1-inbox', accountId: 'acc-1', uid: 100 + i,
     messageId: '<' + id + '@work.example>', threadId: 'thread-1',

@@ -9,6 +9,7 @@ import { isReadableDocument } from '../../../shared/attachment-kinds'
 import { sanitizeEmailHtml } from '../../utils/sanitizeEmailHtml'
 import { assumesLightBackground } from '../../utils/emailColorScheme'
 import { RemoteContentBar, useRemoteImageBlocking } from './RemoteContentBar'
+import { MessageLabels } from './MessageLabels'
 import {
   useMailStore,
   toggleMessageStar,
@@ -566,6 +567,9 @@ export function MessageView() {
             {new Date(selectedMessage.date).toLocaleString()}
           </div>
         </div>
+        {/* The flat list has no conversation to speak for, so this is the one
+            message — the same component, given one id. */}
+        <MessageLabels accountId={selectedMessage.accountId} messageIds={[selectedMessage.id]} />
       </div>
 
       <AttachmentList
@@ -1028,6 +1032,12 @@ function ThreadView({ messages, threadId }: { messages: MessageDetail[]; threadI
             <ThreadSummaryButton accountId={latest.accountId} threadId={threadId} />
           </div>
         </div>
+        {/* Labels belong to the conversation, not the message being read: Gmail
+            labels a conversation, and so does this. */}
+        <MessageLabels
+          accountId={latest.accountId}
+          messageIds={messages.map((message) => message.id)}
+        />
       </div>
 
       {(analysis || summarizing) && (
