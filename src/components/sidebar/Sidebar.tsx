@@ -221,11 +221,17 @@ export function Sidebar() {
   const setShowAddAccount = useMailStore((s) => s.setShowAddAccount)
   const [folderMenu, setFolderMenu] = useState<FolderContextTarget | null>(null)
 
+  // Sorted by name like the per-account lists. `favoriteFolderIds` is the order
+  // folders were pinned in, not an order the user arranged — nothing can
+  // reorder it, `toggleFavoriteFolder` only appends — so there is nothing to
+  // preserve. Ties keep pin order, sort being stable: two accounts can both
+  // favourite an "Inbox", and this list shows the name without the account.
   const favoriteFolders = useMemo(() => {
     const byId = new Map(folders.map((folder) => [folder.id, folder]))
     return favoriteFolderIds
       .map((id) => byId.get(id))
       .filter((folder): folder is Folder => Boolean(folder))
+      .sort((a, b) => a.name.localeCompare(b.name))
   }, [favoriteFolderIds, folders])
 
   const accountById = useMemo(

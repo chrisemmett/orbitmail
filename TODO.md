@@ -39,6 +39,16 @@ Severity tags come from the [2026-07-21 audit](#security--correctness-audit-2026
 
 ### Elsewhere
 
+- **A Favourites row does not say which account it belongs to.** The section
+  shows `folder.name` alone, so two accounts that both pin an Inbox — or both
+  own a `Receipts` label, which Gmail users commonly do — produce two identical
+  rows. Sorting the section by name (see Done) made this easier to notice by
+  putting the pair adjacent; it did not create it, and pin order hid it only by
+  accident. The fix is not simply appending an account name: the row is narrow,
+  every standard folder would gain a suffix it does not need, and the honest
+  version is probably a secondary line or a per-account tint shown only where a
+  name is ambiguous. Left until it is worth designing rather than bolted on.
+
 - **Restoring down a composer that opened maximized gives a size nobody chose.** Size persistence ships (see Done); this is its one measured rough edge. A window maximized *before it is mapped* has no normal geometry for the window manager to restore to, so Muffin invents one at roughly 90% of the screen. The obvious fix is worse and was tried: re-imposing the remembered size from an `unmaximize` handler loses to the WM, which finishes its own restore afterwards and snaps the window back to the maximized rectangle — restore-down then appears to do nothing at all. The remaining option is to show the window unmaximized and maximize it after it is mapped, which trades this for a visible small→full-screen jump on **every** composer, a worse trade for a much more common action. Left alone deliberately; revisit only if a desktop is found where the jump does not happen.
 - **IMAP draft upload** — local autosave ships (see Done); drafts are not uploaded to the account's Drafts folder, so one started here is not visible in webmail or on a phone. Uploading means an APPEND per save *and* deleting the previously uploaded copy or the folder fills with revisions, needs the connection lane, cannot work offline, and has no meaning for POP3. The duplicate-draft failure if a delete fails is the reason it was not done with the local half.
 - Inline search-operator syntax (`from:`, `subject:`) and result highlighting — field **scoping** now ships via the search-scope selector (All/From/To/Subject/Body); inline operator parsing and match highlighting are still deferred
@@ -83,6 +93,21 @@ does. Preserving that needs prefix or trigram tokenisation.
 # Done
 
 ## Shipped
+
+- **Favourites are listed alphabetically too** — the follow-up to the sidebar
+  sort, asked for immediately after it, and the one question worth asking first
+  was whether `favoriteFolderIds` carried an order worth keeping. It does not:
+  it is the order things were pinned in, `toggleFavoriteFolder` only appends,
+  and nothing in the UI can reorder it — so there was no user arrangement to
+  destroy, only an accident of when each star was clicked. Same comparator as
+  the per-account lists, on `name`. Ties keep pin order, `sort` being stable,
+  which matters here in a way it does not in the per-account lists: Favourites
+  spans accounts and the row shows the name alone, so two pinned Inboxes are two
+  identical rows. Sorting puts that pair adjacent — it does not cause it, but it
+  does make it visible, so it is written up in Outstanding rather than left to
+  be rediscovered. The section is also **reachable in `ui:preview` for the first
+  time**: `favoriteFolderIds` was `[]` in the fixture, so a whole sidebar section
+  had never been looked at there.
 
 - **Gmail labels are listed alphabetically in the sidebar** — asked for after
   living with an account whose labels came out in server order, which for a
