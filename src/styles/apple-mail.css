@@ -598,6 +598,35 @@ textarea {
   white-space: nowrap;
 }
 
+/* A row carrying an account qualifier gives up the free space so the two sit
+   together — "Inbox Personal", not "Inbox" pinned left with the account far
+   away against the badge. Both shrink proportionally when the pair is too wide,
+   which is deliberate: shrinking the qualifier away first would leave a row
+   that is once again indistinguishable from the one under it, which is the
+   whole reason it is there. A truncated pair still differs, and the row's
+   `title` carries both in full. */
+.sidebar-item-label.has-hint {
+  flex: 0 1 auto;
+}
+
+.sidebar-item-hint {
+  flex: 0 1 auto;
+  margin-right: auto;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The row's own colour wins when it is selected; a secondary grey on the
+   selected background reads as disabled. */
+.sidebar-item.active .sidebar-item-hint {
+  color: inherit;
+  opacity: 0.75;
+}
+
 .sidebar-badge {
   font-size: 11px;
   font-weight: 700;

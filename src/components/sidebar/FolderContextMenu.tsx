@@ -1,5 +1,6 @@
 import type { Account, Folder } from '../../../shared/types'
 import { ContextMenu, type ContextMenuItem } from '../ui/ContextMenu'
+import { accountShortName } from '../../utils/accounts'
 import { useMailStore } from '../../stores/mailStore'
 import {
   createMailboxForAccount,
@@ -27,10 +28,6 @@ interface FolderContextMenuProps {
   y: number
   onClose: () => void
   onOpenAccountSettings: (accountId: string) => void
-}
-
-function accountShortName(account: Account): string {
-  return account.displayName.trim() || account.email
 }
 
 export function FolderContextMenu({
