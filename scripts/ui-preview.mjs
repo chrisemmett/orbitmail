@@ -251,8 +251,11 @@ const OVERRIDES = {
       darkMode: false, selectedFolderId: 'acc-1-inbox', selectedMessageId: null,
       collapsedAccountIds: {},
       // Pinned across both accounts and out of alphabetical order, so the
-      // Favourites section renders at all and its sort is visible.
-      favoriteFolderIds: ['acc-2-l3', 'acc-1-l2', 'acc-1-inbox', 'acc-2-l4'],
+      // Favourites section renders at all and its sort is visible. Both
+      // Inboxes are pinned and nothing else collides, so the same list shows a
+      // qualified pair and unqualified rows — a fixture where every name
+      // collided would look right with the ambiguity test deleted.
+      favoriteFolderIds: ['acc-2-l3', 'acc-1-l2', 'acc-1-inbox', 'acc-2-l4', 'acc-2-inbox'],
       threadedView: true,
       unreadFilterByAccount: {}, searchField: 'all'
     },

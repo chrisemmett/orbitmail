@@ -39,15 +39,18 @@ Severity tags come from the [2026-07-21 audit](#security--correctness-audit-2026
 
 ### Elsewhere
 
-- **A Favourites row does not say which account it belongs to.** The section
-  shows `folder.name` alone, so two accounts that both pin an Inbox — or both
-  own a `Receipts` label, which Gmail users commonly do — produce two identical
-  rows. Sorting the section by name (see Done) made this easier to notice by
-  putting the pair adjacent; it did not create it, and pin order hid it only by
-  accident. The fix is not simply appending an account name: the row is narrow,
-  every standard folder would gain a suffix it does not need, and the honest
-  version is probably a secondary line or a per-account tint shown only where a
-  name is ambiguous. Left until it is worth designing rather than bolted on.
+- **Two same-named folders within *one* account are still indistinguishable in
+  Favourites.** Cross-account ambiguity is qualified now (see Done), but the
+  qualifier is the account name, and pinning `Work/Receipts` and
+  `Personal/Receipts` from the *same* Gmail account puts the same word on both
+  rows — worse than nothing, since it looks like an answer. Gmail's nested
+  labels make this reachable: `mb.name` is the leaf, so the parent is not in the
+  name at all. The distinguishing thing there is the parent path, which means
+  splitting `imapPath` on the account's IMAP delimiter — the delimiter is
+  per-server (`/` on Gmail, `.` elsewhere) and is not stored, which is the work.
+  The ambiguity test deliberately requires **more than one account** rather than
+  more than one folder, so this case shows no qualifier instead of a misleading
+  one.
 
 - **Restoring down a composer that opened maximized gives a size nobody chose.** Size persistence ships (see Done); this is its one measured rough edge. A window maximized *before it is mapped* has no normal geometry for the window manager to restore to, so Muffin invents one at roughly 90% of the screen. The obvious fix is worse and was tried: re-imposing the remembered size from an `unmaximize` handler loses to the WM, which finishes its own restore afterwards and snaps the window back to the maximized rectangle — restore-down then appears to do nothing at all. The remaining option is to show the window unmaximized and maximize it after it is mapped, which trades this for a visible small→full-screen jump on **every** composer, a worse trade for a much more common action. Left alone deliberately; revisit only if a desktop is found where the jump does not happen.
 - **IMAP draft upload** — local autosave ships (see Done); drafts are not uploaded to the account's Drafts folder, so one started here is not visible in webmail or on a phone. Uploading means an APPEND per save *and* deleting the previously uploaded copy or the folder fills with revisions, needs the connection lane, cannot work offline, and has no meaning for POP3. The duplicate-draft failure if a delete fails is the reason it was not done with the local half.
@@ -93,6 +96,31 @@ does. Preserving that needs prefix or trigram tokenisation.
 # Done
 
 ## Shipped
+
+- **An ambiguous Favourites row says which account it belongs to** — the item
+  filed in Outstanding when the section was sorted, closed the same day it was
+  written. The rule is the whole feature: the qualifier appears where a name is
+  pinned by **more than one account**, not where a name simply repeats. That
+  distinction is not pedantry — two `Receipts` labels inside *one* account would
+  both be qualified "Personal", which looks like an answer and is not one, so
+  that case is left unqualified and recorded in Outstanding instead. Names are
+  compared case-insensitively, `receipts` and `Receipts` from two accounts being
+  as confusable as two exact matches. Every other row is untouched, deliberately:
+  qualifying all of them repeats one word down a list where the answer is usually
+  obvious, and the per-account lists below already sit under a heading that has
+  said it. The account name is the **short** form — `displayName` or, if that is
+  blank, the address — which was already being computed inside
+  `FolderContextMenu`; it moved to `src/utils/accounts.ts` rather than being
+  copied, since a sidebar row and a context menu naming the same account
+  differently is exactly the drift a duplicate invites. **Under squeeze both the
+  name and the qualifier ellipsise**, which is a choice and not the default
+  falling out: shrinking the qualifier away first would restore the very
+  ambiguity it exists to resolve, so they shrink together and the row's `title`
+  carries both in full. Looked at in `ui:preview` in both themes and with a long
+  name and a long account name forced in, since the pair only competes for width
+  when both are long. The fixture pins both Inboxes and nothing else colliding,
+  so one list shows a qualified pair *and* unqualified rows — a fixture where
+  every name collided would look right with the ambiguity test deleted.
 
 - **Favourites are listed alphabetically too** — the follow-up to the sidebar
   sort, asked for immediately after it, and the one question worth asking first

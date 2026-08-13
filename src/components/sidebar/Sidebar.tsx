@@ -1,6 +1,7 @@
 import { useMemo, useState, useRef, useEffect, type MouseEvent as ReactMouseEvent } from 'react'
 import type { Account, Folder, FolderType } from '../../../shared/types'
 import { accountUnreadCount, shouldShowFolderUnreadBadge } from '../../../shared/folders'
+import { accountShortName } from '../../utils/accounts'
 import {
   useMailStore,
   selectFolder,
@@ -37,12 +38,17 @@ function FolderRow({
   folder,
   isActive,
   onSelect,
-  onContextMenu
+  onContextMenu,
+  accountHint
 }: {
   folder: Folder
   isActive: boolean
   onSelect: () => void
   onContextMenu: (event: ReactMouseEvent<HTMLButtonElement>) => void
+  // Which account this folder belongs to, shown only where the name alone does
+  // not identify the row. Undefined on the per-account lists, which sit under a
+  // heading that has already said it.
+  accountHint?: string
 }) {
   const Icon = FOLDER_ICON_MAP[folder.type]
   const colorClass = FOLDER_COLOR_CLASS[folder.type]
@@ -52,9 +58,15 @@ function FolderRow({
       className={`sidebar-item${isActive ? ' active' : ''}`}
       onClick={onSelect}
       onContextMenu={onContextMenu}
+      // The visible text reads "Inbox Personal", which a screen reader would
+      // run together; the title is what a mouse user gets on hover anyway.
+      title={accountHint ? `${folder.name} — ${accountHint}` : undefined}
     >
       <Icon {...sidebarIconProps} className={`sidebar-item-icon ${colorClass}`} />
-      <span className="sidebar-item-label">{folder.name}</span>
+      <span className={`sidebar-item-label${accountHint ? ' has-hint' : ''}`}>
+        {folder.name}
+      </span>
+      {accountHint && <span className="sidebar-item-hint">{accountHint}</span>}
       {shouldShowFolderUnreadBadge(folder) && (
         <span className="sidebar-badge">{folder.unreadCount}</span>
       )}
@@ -224,8 +236,7 @@ export function Sidebar() {
   // Sorted by name like the per-account lists. `favoriteFolderIds` is the order
   // folders were pinned in, not an order the user arranged — nothing can
   // reorder it, `toggleFavoriteFolder` only appends — so there is nothing to
-  // preserve. Ties keep pin order, sort being stable: two accounts can both
-  // favourite an "Inbox", and this list shows the name without the account.
+  // preserve. Ties keep pin order, sort being stable.
   const favoriteFolders = useMemo(() => {
     const byId = new Map(folders.map((folder) => [folder.id, folder]))
     return favoriteFolderIds
@@ -233,6 +244,26 @@ export function Sidebar() {
       .filter((folder): folder is Folder => Boolean(folder))
       .sort((a, b) => a.name.localeCompare(b.name))
   }, [favoriteFolderIds, folders])
+
+  // Names that more than one *account* has pinned. Those rows — and only those
+  // — carry the account name: this is the one list that mixes accounts, and
+  // qualifying every row would repeat the same word down a sidebar where the
+  // answer is usually obvious. Compared case-insensitively, since "receipts"
+  // and "Receipts" from two accounts are as confusable as two exact matches.
+  // Two same-named folders within *one* account are not covered — the account
+  // name would be identical on both rows, so it would disambiguate nothing.
+  const ambiguousFavoriteNames = useMemo(() => {
+    const accountsByName = new Map<string, Set<string>>()
+    for (const folder of favoriteFolders) {
+      const key = folder.name.toLocaleLowerCase()
+      const owners = accountsByName.get(key) ?? new Set<string>()
+      owners.add(folder.accountId)
+      accountsByName.set(key, owners)
+    }
+    return new Set(
+      [...accountsByName].filter(([, owners]) => owners.size > 1).map(([key]) => key)
+    )
+  }, [favoriteFolders])
 
   const accountById = useMemo(
     () => new Map(accounts.map((account) => [account.id, account])),
@@ -269,6 +300,11 @@ export function Sidebar() {
                 key={folder.id}
                 folder={folder}
                 isActive={selectedFolderId === folder.id}
+                accountHint={
+                  ambiguousFavoriteNames.has(folder.name.toLocaleLowerCase())
+                    ? accountShortName(account)
+                    : undefined
+                }
                 onSelect={() => selectFolder(folder.id)}
                 onContextMenu={(event) => {
                   event.preventDefault()
