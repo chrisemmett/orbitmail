@@ -318,6 +318,15 @@ async function main() {
     logLevel: 'silent'
   })
 
+  await build({
+    entryPoints: [join(root, 'src/utils/folders.ts')],
+    bundle: true,
+    format: 'cjs',
+    platform: 'node',
+    outfile: join(outDir, 'folders.cjs'),
+    logLevel: 'silent'
+  })
+
   // Reachable here only because the classifier is deliberately string work and
   // not a DOM walk: this script runs in plain node, where there is no DOM at
   // all (DOMPurify itself could not run).
@@ -1010,6 +1019,86 @@ async function main() {
 
     ok('an empty body asks for nothing', !assumesLightBackground(''))
     ok('a null body asks for nothing', !assumesLightBackground(null))
+  }
+
+  // -------------------------------------------------------------------------
+  section('Favourites: a row that needs qualifying, and one that does not')
+  // -------------------------------------------------------------------------
+  {
+    const { favoriteRowHints, folderParentPath } = require(join(outDir, 'folders.cjs'))
+    const names = new Map([['a1', 'Personal'], ['a2', 'Work']])
+    const folder = (id, accountId, name, imapPath) => ({
+      id, accountId, name, imapPath, type: 'custom', unreadCount: 0, isVirtualView: false
+    })
+    const hints = (rows) => favoriteRowHints(rows, names)
+
+    // The delimiter is per-server and unstored; the leaf is the tail of the
+    // path, so the character in front of it is the delimiter whatever it is.
+    ok('a parent is read off a slash-delimited path',
+      folderParentPath(folder('f', 'a1', 'Receipts', 'Work/Receipts')) === 'Work')
+    ok('and off a dot-delimited one, with nothing told about the delimiter',
+      folderParentPath(folder('f', 'a1', 'Receipts', 'Work.Receipts')) === 'Work')
+    ok('a top-level folder has no parent',
+      folderParentPath(folder('f', 'a1', 'Receipts', 'Receipts')) === undefined)
+    // A localized or renamed name is not the tail of its path. Slicing by
+    // length anyway would cut mid-path and print a fragment as if it were a
+    // parent, which is worse than showing nothing.
+    ok('a name that is not the tail of its path yields no parent',
+      folderParentPath(folder('f', 'a1', 'Bin', '[Gmail]/Trash')) === undefined)
+
+    ok('a unique name is not qualified at all',
+      hints([
+        folder('f1', 'a1', 'Receipts', 'Receipts'),
+        folder('f2', 'a1', 'Travel', 'Travel')
+      ]).size === 0)
+
+    const crossAccount = hints([
+      folder('f1', 'a1', 'Inbox', 'INBOX'),
+      folder('f2', 'a2', 'Inbox', 'INBOX')
+    ])
+    ok('the same name in two accounts is qualified by account',
+      crossAccount.get('f1') === 'Personal' && crossAccount.get('f2') === 'Work',
+      [...crossAccount].map(([id, h]) => `${id}=${h}`).join(', '))
+
+    // The case this section exists for: the account name is identical on both
+    // rows, so it disambiguates nothing and the parent has to carry it.
+    const sameAccount = hints([
+      folder('f1', 'a1', 'Receipts', 'Work/Receipts'),
+      folder('f2', 'a1', 'Receipts', 'Home/Receipts')
+    ])
+    ok('the same name twice in one account is qualified by parent, not account',
+      sameAccount.get('f1') === 'Work' && sameAccount.get('f2') === 'Home',
+      [...sameAccount].map(([id, h]) => `${id}=${h}`).join(', '))
+
+    // Both kinds of collision at once. Only the account that holds two of them
+    // needs a parent; the third row is told apart by its account alone, and
+    // giving it a parent it does not need would be noise.
+    const both = hints([
+      folder('f1', 'a1', 'Receipts', 'Work/Receipts'),
+      folder('f2', 'a1', 'Receipts', 'Home/Receipts'),
+      folder('f3', 'a2', 'Receipts', 'Receipts')
+    ])
+    ok('a row colliding both ways names the account and the parent',
+      both.get('f1') === 'Personal · Work' && both.get('f2') === 'Personal · Home',
+      [...both].map(([id, h]) => `${id}=${h}`).join(', '))
+    ok('while the row that only collides across accounts names just the account',
+      both.get('f3') === 'Work', String(both.get('f3')))
+
+    ok('case does not hide a collision',
+      hints([
+        folder('f1', 'a1', 'receipts', 'Work/receipts'),
+        folder('f2', 'a1', 'Receipts', 'Home/Receipts')
+      ]).size === 2)
+
+    // Two top-level folders cannot both be named the same thing on one server,
+    // so this is a corrupt or hand-made state rather than a real mailbox — it
+    // must not throw, and must not print a bare separator.
+    const noParent = hints([
+      folder('f1', 'a1', 'Receipts', 'Receipts'),
+      folder('f2', 'a1', 'Receipts', 'Receipts')
+    ])
+    ok('a same-account collision with no parent to show is left unqualified',
+      noParent.size === 0)
   }
 
   console.log(

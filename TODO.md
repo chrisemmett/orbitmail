@@ -58,19 +58,6 @@ Severity tags come from the [2026-07-21 audit](#security--correctness-audit-2026
   account behind an opt-in env var, or a fake that would only assert what it was
   told to. Recorded rather than papered over.
 
-- **Two same-named folders within *one* account are still indistinguishable in
-  Favourites.** Cross-account ambiguity is qualified now (see Done), but the
-  qualifier is the account name, and pinning `Work/Receipts` and
-  `Personal/Receipts` from the *same* Gmail account puts the same word on both
-  rows — worse than nothing, since it looks like an answer. Gmail's nested
-  labels make this reachable: `mb.name` is the leaf, so the parent is not in the
-  name at all. The distinguishing thing there is the parent path, which means
-  splitting `imapPath` on the account's IMAP delimiter — the delimiter is
-  per-server (`/` on Gmail, `.` elsewhere) and is not stored, which is the work.
-  The ambiguity test deliberately requires **more than one account** rather than
-  more than one folder, so this case shows no qualifier instead of a misleading
-  one.
-
 - **Restoring down a composer that opened maximized gives a size nobody chose.** Size persistence ships (see Done); this is its one measured rough edge. A window maximized *before it is mapped* has no normal geometry for the window manager to restore to, so Muffin invents one at roughly 90% of the screen. The obvious fix is worse and was tried: re-imposing the remembered size from an `unmaximize` handler loses to the WM, which finishes its own restore afterwards and snaps the window back to the maximized rectangle — restore-down then appears to do nothing at all. The remaining option is to show the window unmaximized and maximize it after it is mapped, which trades this for a visible small→full-screen jump on **every** composer, a worse trade for a much more common action. Left alone deliberately; revisit only if a desktop is found where the jump does not happen.
 - **IMAP draft upload** — local autosave ships (see Done); drafts are not uploaded to the account's Drafts folder, so one started here is not visible in webmail or on a phone. Uploading means an APPEND per save *and* deleting the previously uploaded copy or the folder fills with revisions, needs the connection lane, cannot work offline, and has no meaning for POP3. The duplicate-draft failure if a delete fails is the reason it was not done with the local half.
 - Inline search-operator syntax (`from:`, `subject:`) and result highlighting — field **scoping** now ships via the search-scope selector (All/From/To/Subject/Body); inline operator parsing and match highlighting are still deferred
@@ -154,6 +141,31 @@ does. Preserving that needs prefix or trigram tokenisation.
   row's absence is visible too. Two things left undone and recorded in
   Outstanding: labelling a multi-selection, and the Gmail server semantics that
   GreenMail cannot stand in for.
+
+- **The same-account collision is qualified by parent path** — the case
+  deliberately left out of the account-name change, and closed the same day it
+  was filed. Two of one account's labels can share a leaf name (`Work/Receipts`
+  and `Home/Receipts`), which Gmail's hierarchy makes easy to arrive at because
+  `mb.name` is the **leaf**: the parent is nowhere in what the row shows. The
+  account name cannot help there — it is the same word on both rows — so the
+  parent path carries it, and a row that collides *both* ways gets both, joined:
+  `Personal · Work`. **The delimiter problem the deferral was written around
+  turned out not to exist.** It is per-server (`/` on Gmail, `.` elsewhere) and
+  nothing stores it, but it does not have to be known: the leaf is the tail of
+  its own path, so whatever single character precedes it *is* the delimiter.
+  `folderParentPath` slices on that and is delimiter-agnostic, which the checks
+  pin with a dot-delimited path alongside a slash-delimited one. **A name that
+  is not the tail of its path yields no parent at all** — a localized `Bin`
+  against `[Gmail]/Trash` — because slicing by length anyway prints a fragment
+  of the path as though it were a parent. The rule moved out of the component
+  into `favoriteRowHints` in `src/utils/folders.ts`, which made it plain data in
+  and out, and therefore reachable from `test:store` — **and the first run
+  failed two checks**: `slice(0, -1)` on a top-level folder returns the name
+  minus its last character, so `Receipts` claimed a parent called `Receipt`.
+  That is the argument for the checks existing: it is invisible by reading, and
+  in the UI it would have shown a plausible-looking word that is not a folder.
+  Twelve checks in `test:store`; looked at in `ui:preview` in both themes with a
+  fixture carrying one of each collision and rows that collide with nothing.
 
 - **An ambiguous Favourites row says which account it belongs to** — the item
   filed in Outstanding when the section was sorted, closed the same day it was
