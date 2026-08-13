@@ -2233,7 +2233,10 @@ attachments — including a format the extractor cannot read — because otherwi
 neither the split **Analyze** button nor the skipped-attachment caveat is
 reachable in the preview at all. The custom folders are listed out of
 alphabetical order for the same reason: the sidebar sorts them, and a fixture
-already in order would render identically with the sort deleted. Ask what the
+already in order would render identically with the sort deleted. **A section can
+also be missing entirely** — `favoriteFolderIds` was `[]`, so Favourites had
+never rendered here at all; an empty fixture hides a pane rather than showing it
+wrong. Ask what the
 fixture would look like if the code under test were deleted.
 
 **Rebuilt but unchanged on screen? It is the HTTP cache.** The server sends the

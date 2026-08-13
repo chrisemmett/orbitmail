@@ -249,7 +249,11 @@ const OVERRIDES = {
   'preferences.get': {
     ui: {
       darkMode: false, selectedFolderId: 'acc-1-inbox', selectedMessageId: null,
-      collapsedAccountIds: {}, favoriteFolderIds: [], threadedView: true,
+      collapsedAccountIds: {},
+      // Pinned across both accounts and out of alphabetical order, so the
+      // Favourites section renders at all and its sort is visible.
+      favoriteFolderIds: ['acc-2-l3', 'acc-1-l2', 'acc-1-inbox', 'acc-2-l4'],
+      threadedView: true,
       unreadFilterByAccount: {}, searchField: 'all'
     },
     lastSyncAt: Date.now() - 120000,
