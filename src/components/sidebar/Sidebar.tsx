@@ -132,7 +132,14 @@ function AccountSection({
   )
 
   const byType = (type: FolderType) => accountFolders.find((f) => f.type === type)
-  const customFolders = accountFolders.filter((f) => f.type === 'custom')
+  // Custom folders (Gmail labels among them) arrive in whatever order the
+  // server listed them during sync, which is neither stable nor meaningful.
+  // Sort by `name` — the leaf label the row actually shows, so a nested label
+  // sorts where a user reading the sidebar would look for it, not under its
+  // parent's initial.
+  const customFolders = accountFolders
+    .filter((f) => f.type === 'custom')
+    .sort((a, b) => a.name.localeCompare(b.name))
 
   const openFolderMenu = (folder: Folder) => (event: ReactMouseEvent<HTMLButtonElement>) => {
     event.preventDefault()

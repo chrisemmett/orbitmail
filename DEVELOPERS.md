@@ -2231,8 +2231,10 @@ lists the user's own action items first, so a fixture whose first item is alread
 fixtures deliberately put the user's action *last*, and give one message
 attachments — including a format the extractor cannot read — because otherwise
 neither the split **Analyze** button nor the skipped-attachment caveat is
-reachable in the preview at all. Ask what the fixture would look like if the code
-under test were deleted.
+reachable in the preview at all. The custom folders are listed out of
+alphabetical order for the same reason: the sidebar sorts them, and a fixture
+already in order would render identically with the sort deleted. Ask what the
+fixture would look like if the code under test were deleted.
 
 **Rebuilt but unchanged on screen? It is the HTTP cache.** The server sends the
 built bundle under a hashed name, but the browser can hold `index.html`, so a

@@ -54,10 +54,16 @@ const accounts = [
   { id: 'acc-1', email: 'you@example.com', displayName: 'Personal', provider: 'imap', syncDays: 30, signature: '' },
   { id: 'acc-2', email: 'you@work.example', displayName: 'Work', provider: 'gmail', syncDays: 90, signature: '' }
 ]
+// The custom folders are listed out of alphabetical order on purpose: that is
+// how a server hands its labels over, and the sidebar is supposed to sort them.
 const folders = accounts.flatMap((a) => [
   { id: a.id + '-inbox', accountId: a.id, name: 'Inbox', type: 'inbox', unreadCount: 3, totalCount: 12 },
   { id: a.id + '-sent', accountId: a.id, name: 'Sent', type: 'sent', unreadCount: 0, totalCount: 8 },
-  { id: a.id + '-drafts', accountId: a.id, name: 'Drafts', type: 'drafts', unreadCount: 0, totalCount: 0 }
+  { id: a.id + '-drafts', accountId: a.id, name: 'Drafts', type: 'drafts', unreadCount: 0, totalCount: 0 },
+  { id: a.id + '-l1', accountId: a.id, name: 'Receipts', type: 'custom', unreadCount: 0, totalCount: 4 },
+  { id: a.id + '-l2', accountId: a.id, name: 'accounts', type: 'custom', unreadCount: 2, totalCount: 9 },
+  { id: a.id + '-l3', accountId: a.id, name: 'Travel', type: 'custom', unreadCount: 0, totalCount: 1 },
+  { id: a.id + '-l4', accountId: a.id, name: 'Bills', type: 'custom', unreadCount: 0, totalCount: 6 }
 ])
 
 // Sender HTML for the thread fixture. Written the way real mail is: a table
