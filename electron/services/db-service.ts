@@ -1172,7 +1172,8 @@ export function getThread(accountId: string, threadKey: string, limit = 200): Me
       filename: a.filename,
       mimeType: a.mimeType,
       size: a.size,
-      localPath: a.localPath
+      localPath: a.localPath,
+      inline: a.isInline
     }))
   }))
 }
@@ -1426,7 +1427,8 @@ export function getMessage(messageId: string): MessageDetail | null {
       filename: a.filename,
       mimeType: a.mimeType,
       size: a.size,
-      localPath: a.localPath
+      localPath: a.localPath,
+      inline: a.isInline
     }))
   }
 }
@@ -2353,7 +2355,8 @@ export function addAttachment(
   filename: string,
   mimeType: string,
   size: number,
-  localPath: string | null
+  localPath: string | null,
+  isInline = false
 ): string {
   const db = getDb()
   const id = randomUUID()
@@ -2363,7 +2366,8 @@ export function addAttachment(
     filename,
     mimeType,
     size,
-    localPath
+    localPath,
+    isInline
   }).run()
   return id
 }

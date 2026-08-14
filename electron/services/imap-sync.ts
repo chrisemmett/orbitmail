@@ -672,7 +672,11 @@ async function fetchMessagesByUid(
 
     const isRead = msg.flags?.has('\\Seen') ?? false
     const isStarred = msg.flags?.has('\\Flagged') ?? false
-    const hasAttachments = (parsed.attachments?.length ?? 0) > 0
+    // Not `.map(toAttachmentMeta)`: map passes the index as the second argument,
+    // which is the HTML body here.
+    const attachmentMeta = (parsed.attachments ?? []).map((att) => toAttachmentMeta(att, bodyHtml))
+    // Images already embedded in the body are not what the paperclip means.
+    const hasAttachments = attachmentMeta.some((att) => !att.inline)
     const inReplyTo = normalizeReferences(parsed.inReplyTo)
     const references = normalizeReferences(parsed.references)
     const threadId = computeThreadId({
@@ -703,7 +707,7 @@ async function fetchMessagesByUid(
         bodyHtml,
         bodyText
       },
-      attachments: (parsed.attachments ?? []).map(toAttachmentMeta)
+      attachments: attachmentMeta
     })
   }
 

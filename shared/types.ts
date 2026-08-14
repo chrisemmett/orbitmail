@@ -126,6 +126,13 @@ export interface Attachment {
   mimeType: string
   size: number
   localPath: string | null
+  /**
+   * An image the sender embedded in the message body — a signature logo — which
+   * the reader shows underneath the text rather than as an attachment chip. The
+   * row still exists and can still be opened or saved; it is only collapsed out
+   * of the way, because a long reply chain accumulates one copy per reply.
+   */
+  inline: boolean
 }
 
 // One collapsed conversation row in the message list. Represents a thread as it

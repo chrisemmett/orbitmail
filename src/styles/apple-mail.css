@@ -1361,6 +1361,41 @@ textarea {
   color: var(--accent);
 }
 
+/* Discloses the images the sender embedded in the body. Dashed and quiet like
+   "Save all": it is a control over the row, not another attachment. */
+.attachment-embedded-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+  cursor: pointer;
+  background: transparent;
+  color: var(--text-muted);
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.attachment-embedded-toggle:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Once disclosed, embedded images stay visibly secondary to what was attached. */
+.attachment-item-inline .attachment-chip,
+.attachment-item-inline .attachment-save-btn {
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.attachment-item-inline .attachment-chip:hover,
+.attachment-item-inline .attachment-save-btn:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 .attachment-chip:disabled,
 .attachment-save-btn:disabled,
 .attachment-save-all-btn:disabled {

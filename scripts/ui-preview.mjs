@@ -178,15 +178,25 @@ const OVERRIDES = {
     // cannot read. That is what makes the split "Analyze" button (with its
     // "Include attachments" option) and the skipped-attachment caveat
     // reachable here at all — with no attachments anywhere, neither renders.
+    //
+    // The trailing image.png copies are inline: a signature logo repeated once
+    // per reply. They are the case AttachmentList collapses, so the fixture
+    // carries enough of them for the disclosure to be worth looking at.
     attachments: i === 2
       ? [
           { id: 'att-1', messageId: id, filename: 'Q3 launch plan.docx',
             mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            size: 38112, localPath: null },
+            size: 38112, localPath: null, inline: false },
           { id: 'att-2', messageId: id, filename: 'Minutes 2019.doc',
-            mimeType: 'application/msword', size: 21044, localPath: null },
+            mimeType: 'application/msword', size: 21044, localPath: null, inline: false },
           { id: 'att-3', messageId: id, filename: 'Logo.png',
-            mimeType: 'image/png', size: 8123, localPath: null }
+            mimeType: 'image/png', size: 8123, localPath: null, inline: false },
+          // No backticks: this whole fixture lives inside the STUB template
+          // literal, and one would close it.
+          ...Array.from({ length: 12 }, (_, n) => ({
+            id: 'att-inline-' + n, messageId: id, filename: 'image.png',
+            mimeType: 'image/png', size: [583, 745, 8712][n % 3], localPath: null, inline: true
+          }))
         ]
       : []
   })),

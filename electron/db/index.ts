@@ -93,7 +93,8 @@ function initTables(db: Database.Database): void {
       filename TEXT NOT NULL,
       mime_type TEXT NOT NULL,
       size INTEGER NOT NULL,
-      local_path TEXT
+      local_path TEXT,
+      is_inline INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE INDEX IF NOT EXISTS attachments_message_id_idx ON attachments(message_id);
@@ -374,6 +375,138 @@ function migrateSchema(db: Database.Database): void {
       PRIMARY KEY (account_id, thread_id)
     )
   `)
+
+  // Inline-image marking. Appended, never reordered — see the note above.
+  const attachmentCols = db.prepare('PRAGMA table_info(attachments)').all() as Array<{
+    name: string
+  }>
+  if (!new Set(attachmentCols.map((c) => c.name)).has('is_inline')) {
+    db.exec('ALTER TABLE attachments ADD COLUMN is_inline INTEGER NOT NULL DEFAULT 0')
+  }
+  backfillInlineAttachments(db)
+}
+
+// Decoded byte length of a base64 payload of `length` characters, `padding` of
+// which are trailing '='. Every 4 characters carry 3 bytes.
+function base64DecodedLength(length: number, padding: number): number {
+  return (length / 4) * 3 - padding
+}
+
+// Header plus payload in one match, so the scan stays inside the regex engine.
+// Walking the payload character by character from JS instead cost 14s over the
+// 313MB of message bodies on a real profile; this is ~1s.
+const EMBEDDED_IMAGE = /data:(image\/[\w+.-]+);base64,([A-Za-z0-9+/=]+)/gi
+
+/**
+ * The `mime:size` of every `data:` image already embedded in an HTML body.
+ *
+ * The payload is matched by what base64 may contain rather than by looking for
+ * the quote that closes the `src`, because the body is not trusted to be
+ * well-formed. Only its *length* is read — the decoded size follows from that
+ * and the padding, so nothing has to be decoded.
+ */
+function embeddedImageSizes(html: string): Set<string> {
+  const sizes = new Set<string>()
+  EMBEDDED_IMAGE.lastIndex = 0
+  let match: RegExpExecArray | null
+  while ((match = EMBEDDED_IMAGE.exec(html)) !== null) {
+    const payload = match[2]
+    if (payload.length % 4 !== 0) continue
+    let padding = 0
+    while (padding < 2 && payload[payload.length - 1 - padding] === '=') padding++
+    sizes.add(`${match[1].toLowerCase()}:${base64DecodedLength(payload.length, padding)}`)
+  }
+  return sizes
+}
+
+/**
+ * One-time: mark the inline images already synced, so history stops showing a
+ * signature logo per reply as an attachment.
+ *
+ * The flag is normally set at parse time from mailparser's `related`/`cid`,
+ * which are long gone for a stored row — but the evidence survives in the body.
+ * mailparser rewrites each referenced `cid:` into a `data:` URI, so an image row
+ * whose MIME and decoded size match one of the body's embedded images is one of
+ * those rewrites.
+ *
+ * Matches are *not* consumed, and that is deliberate: the parts outnumber the
+ * embedded copies. One real message here holds 140 image parts against 70
+ * `data:` URIs — Outlook kept a part per quoted reply while the body embeds each
+ * distinct image once, and mailparser's rewrite is keyed by cid, so the surplus
+ * has no body evidence of its own. Flagging every row that matches a size which
+ * *is* embedded catches those; consuming one match per URI would leave half the
+ * chips behind, which is the complaint.
+ *
+ * The cost is a real attachment that is byte-for-byte the same size and type as
+ * an embedded image on the same message, which would be collapsed with them.
+ * That is why the reader discloses what it hid instead of deleting rows, and why
+ * this is scoped to `image/*` on messages that actually embed data: URIs.
+ * Guarded so it runs once.
+ */
+export function backfillInlineAttachments(db: Database.Database): number {
+  const done = db
+    .prepare("SELECT value FROM app_preferences WHERE key = 'inline_attachment_backfill_v1'")
+    .get() as { value: string } | undefined
+  if (done?.value === '1') return 0
+
+  // Driven from attachments, which is indexed and small. Adding the obvious
+  // `AND m.body_html LIKE '%data:image%'` here reads instead like a scan of
+  // every body in the database — 0.5s for a filter the loop below applies for
+  // free when it fetches the body it needs anyway.
+  const candidates = db
+    .prepare(
+      `SELECT DISTINCT message_id AS id
+       FROM attachments
+       WHERE mime_type LIKE 'image/%' AND is_inline = 0`
+    )
+    .all() as Array<{ id: string }>
+
+  const readBody = db.prepare('SELECT body_html FROM messages WHERE id = ?')
+  const readRows = db.prepare(
+    "SELECT id, mime_type, size FROM attachments WHERE message_id = ? AND mime_type LIKE 'image/%'"
+  )
+  const markInline = db.prepare('UPDATE attachments SET is_inline = 1 WHERE id = ?')
+
+  let flagged = 0
+  let touched = 0
+  const run = db.transaction((ids: Array<{ id: string }>) => {
+    for (const { id } of ids) {
+      const body = readBody.get(id) as { body_html: string | null } | undefined
+      if (!body?.body_html) continue
+      const sizes = embeddedImageSizes(body.body_html)
+      if (sizes.size === 0) continue
+
+      const rows = readRows.all(id) as Array<{ id: string; mime_type: string; size: number }>
+      for (const row of rows) {
+        if (!sizes.has(`${row.mime_type.toLowerCase()}:${row.size}`)) continue
+        markInline.run(row.id)
+        flagged++
+      }
+      touched++
+    }
+
+    // The list-pane paperclip reads has_attachments, so a message left with
+    // nothing but inline images has to stop claiming one.
+    db.prepare(
+      `UPDATE messages SET has_attachments = 0
+       WHERE has_attachments = 1
+         AND NOT EXISTS (
+           SELECT 1 FROM attachments WHERE message_id = messages.id AND is_inline = 0
+         )`
+    ).run()
+  })
+  run(candidates)
+
+  if (flagged > 0) {
+    console.log(
+      `[orbit-mail] Marked ${flagged} embedded image(s) across ${touched} message(s) as inline.`
+    )
+  }
+
+  db.prepare(
+    "INSERT INTO app_preferences (key, value) VALUES ('inline_attachment_backfill_v1', '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+  ).run()
+  return flagged
 }
 
 // Remove duplicate (folder_id, uid) message rows so the UNIQUE index can be

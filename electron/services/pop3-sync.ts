@@ -189,6 +189,12 @@ export async function syncPop3Account(
         subject
       })
 
+      // Not `.map(toAttachmentMeta)`: map passes the index as the second
+      // argument, which is the HTML body here.
+      const attachmentMeta = (parsed.attachments ?? []).map((att) =>
+        toAttachmentMeta(att, bodyHtml)
+      )
+
       const { id, isNew } = upsertMessage({
         folderId: folder.id,
         accountId,
@@ -206,15 +212,16 @@ export async function syncPop3Account(
         date,
         isRead: false,
         isStarred: false,
-        hasAttachments: (parsed.attachments?.length ?? 0) > 0,
+        // Images already embedded in the body are not what the paperclip means.
+        hasAttachments: attachmentMeta.some((att) => !att.inline),
         bodyHtml,
         bodyText
       })
 
       if (!isNew) continue
 
-      if (parsed.attachments?.length) {
-        recordAttachmentsMetadata(id, parsed.attachments.map(toAttachmentMeta))
+      if (attachmentMeta.length) {
+        recordAttachmentsMetadata(id, attachmentMeta)
       }
 
       newCount++

@@ -43,6 +43,7 @@ import { Stack } from '@phosphor-icons/react/dist/ssr/Stack'
 import { Tag } from '@phosphor-icons/react/dist/ssr/Tag'
 import { Check } from '@phosphor-icons/react/dist/ssr/Check'
 import { Minus } from '@phosphor-icons/react/dist/ssr/Minus'
+import { ImageSquare } from '@phosphor-icons/react/dist/ssr/ImageSquare'
 import type { FolderType } from '../../shared/types'
 
 export const iconProps = {
@@ -114,7 +115,8 @@ export {
   Stack,
   Tag,
   Check,
-  Minus
+  Minus,
+  ImageSquare
 }
 
 export type { IconProps }

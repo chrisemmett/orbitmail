@@ -312,14 +312,19 @@ the same illusion the caveat exists to break.
 **The trigger is `isReadableDocument`, not "has attachments"**, and the
 difference is the whole feature. On a real mailbox, 607 messages carry
 attachments and **161 of them (27%) carry nothing but small images** — signature
-logos. An attachment row has no `disposition` or `content_id`, so a logo and a
-screenshot are indistinguishable here. Firing on every attachment would put a
-caveat under a quarter of all analyses for no reason, and a nag on every
-corporate footer is worse than the ambiguity it fixes. Images are therefore
-excluded, and so is anything we cannot open (`.doc`, iWork): offering to include
-a file the extractor would skip anyway would be a lie. The cost is a screenshot
-never prompting — a miss rather than a false positive, which is the right
-direction for this.
+logos. Firing on every attachment would put a caveat under a quarter of all
+analyses for no reason, and a nag on every corporate footer is worse than the
+ambiguity it fixes. Images are therefore excluded, and so is anything we cannot
+open (`.doc`, iWork): offering to include a file the extractor would skip anyway
+would be a lie. The cost is a screenshot never prompting — a miss rather than a
+false positive, which is the right direction for this.
+
+Attachment rows now carry `is_inline` (see [Inline images are not
+attachments](#inline-images-are-not-attachments)), so a logo and a screenshot
+are no longer wholly indistinguishable — but this classification stays keyed on
+readability rather than on that flag, because the two answer different
+questions: `is_inline` says the reader already showed it, `isReadableDocument`
+says the extractor could read it. An embedded PDF would be neither.
 
 `shared/attachment-kinds.ts` holds the classification because **both processes
 need the same answer**: main decides what to extract, the renderer decides
@@ -574,7 +579,9 @@ the control, and the README says so.
   Only attachment *metadata* is buffered across the batch, not the parsed content
   `Buffer`s: each message is reduced via `toAttachmentMeta` as it is parsed, so a
   folder of large attachments no longer retains gigabytes of buffers until the
-  write (they are re-fetched on open). #67.
+  write (they are re-fetched on open). #67. `toAttachmentMeta` also decides
+  `inline` — see [Inline images are not
+  attachments](#inline-images-are-not-attachments).
 - **Unread counts** — recalculated from local message read state after fetch (kept in sync with the message list)
 - **Launcher badge** — `updateAppBadge` (`app-badge.ts`) computes one total
   (`totalUnreadCount` across accounts) and applies it to the window title,
@@ -789,6 +796,73 @@ the control, and the README says so.
   folder called "Deleted Items". On Gmail that is not a harmless mislabel — a
   move to an ordinary label keeps every other label, so the "deleted" message
   stays in All Mail, in search, and in thread views.
+
+### Inline images are not attachments
+
+A signature logo is not a file the sender attached, but mailparser hands it over
+as though it were, and for a long time we believed it. `simpleParser` puts every
+`multipart/related` part in `parsed.attachments` next to the real ones — *and*
+rewrites the `cid:` that referenced it into a `data:` URI inside `parsed.html`
+(`mail-parser.js`, `updateImageLinks`). Recording each element of that array
+therefore stored a row for an image the body was already displaying.
+
+The effect compounds down a reply chain, because each reply carries every
+earlier signature. One real thread here reached **182 attachment rows on a single
+message — 15 distinct images, repeated about twelve times each, 2.4MB** — and the
+two documents that had actually been sent were somewhere in the middle of them.
+Across that profile, 10,110 of 10,868 attachment rows were images under 200KB.
+
+- **The flag** — `isInlineImagePart` (`attachment-fetch.ts`) marks a part inline
+  when it is `related`, has a `cid`, the body is HTML, and the content type
+  matches `image/[\w]+`. Those conditions mirror mailparser's own rewrite test
+  exactly, which is why the regex is strict: `image/svg+xml` fails it *there*, so
+  the SVG is never embedded, so it must remain an attachment *here*.
+- **Marked, never dropped.** Filtering the rows out at insert time is the
+  obvious fix and it breaks fetching. `attachmentOccurrence` identifies which
+  server part to download by counting position among same-named rows, and
+  `resolveAttachmentPart` walks BODYSTRUCTURE the same way; removing rows shifts
+  those indices out of step with the server's part order. Messages where every
+  part is called `image001.png` are exactly the ones that would break. It is also
+  the safer failure mode: the flag is a heuristic, and a wrong answer hides a
+  file rather than losing it.
+- **What the reader does** — `AttachmentList` (`MessageView.tsx`) shows the real
+  attachments and collapses the rest behind an "N embedded images" disclosure,
+  which expands them as dimmed chips that still open and save individually.
+  `attachments:saveAll` skips them, so "Save all" cannot write a directory of
+  `image.png` copies.
+- **`has_attachments` follows the same rule** — it is `some part is not inline`,
+  so the list-pane paperclip stops appearing on messages that carry only a
+  footer.
+- **Known imprecision, stated deliberately**: a related image whose `cid:` the
+  body never actually references is not embedded, but is flagged anyway. It is
+  collapsed rather than lost, which is the direction to be wrong in.
+
+**The backfill.** Rows written before the flag existed cannot be re-parsed
+without refetching every message, but the evidence survives in `body_html`: each
+`cid:` mailparser rewrote is a `data:` URI whose decoded length is the part's
+size. `backfillInlineAttachments` (`electron/db/index.ts`) reads those lengths — from the
+base64 character count and padding, decoding nothing — and marks image rows whose
+MIME and size match. Guarded by `inline_attachment_backfill_v1` in
+`app_preferences`, so it runs once.
+
+Two things it does *not* do, both deliberate:
+
+- **Matches are not consumed.** The parts outnumber the embedded copies: one
+  message here holds 140 image parts against 70 `data:` URIs, because Outlook
+  kept a part per quoted reply while the body embeds each distinct image once.
+  Consuming one match per URI would leave half the chips behind. The cost is that
+  a real attachment identical in size and type to an embedded image on the same
+  message is collapsed with them — recoverable, since the reader discloses them.
+- **It does not scan bodies in SQL.** `AND m.body_html LIKE '%data:image%'` in
+  the candidate query reads as a scan of every body in the database (0.5s); the
+  loop applies the same filter for free on the body it fetches anyway. The
+  payload is matched with one regex rather than walked from JS — walking cost
+  14s over 313MB of bodies, against ~1s for the regex. The whole pass is ~2.4s
+  once on a 10,868-row profile.
+
+On that profile it marked 10,172 rows across 516 messages. The worst message went
+from 182 visible attachments to none; the most any message still shows is 8, and
+they are PDFs, spreadsheets and presentations.
 
 ### Gmail labels (`label-actions.ts`)
 
@@ -1936,6 +2010,14 @@ Opening an attachment whose extension can execute (`.desktop`, `.sh`, `.jar`,
 and keyed by attachment id, so two parts sharing a filename cannot overwrite
 each other.
 
+The prompt is what protects an embedded image too. Inline images are collapsed
+in the reader (see [Inline images are not
+attachments](#inline-images-are-not-attachments)) but remain openable, and being
+collapsed grants them nothing: `attachments:open` runs the same extension check
+on an `image001.png` chip as on any other. Marking a part inline is a display
+decision, not a trust decision — a sender controls both the disposition and the
+filename.
+
 **Outgoing attachments are allowlisted** (`attachment-allowlist.ts`). `sendMail`
 used to `readFileSync` whatever `attachmentPaths` the renderer supplied — and the
 renderer is the process that renders untrusted email HTML, so script execution
@@ -2006,7 +2088,9 @@ reimplementing them, so it exercises the shipping code paths:
 | IDLE | Push works, survives a full server restart, and resumes afterwards. |
 | Responsiveness | A mark-read issued while a flag reconcile is in flight is not stuck behind the whole pass — `imap-pool` serializes per account, so anything holding the lane across every folder blocks user actions. |
 | Send | SMTP submission succeeds; the message is filed in `Sent` exactly once and shares its Message-ID with the delivered copy; the **delivered** copy carries no `Bcc` header, while the **filed** copy does. |
-| Attachments | Two parts sharing a filename get distinct cache paths **and** distinct content — the second used to overwrite the first on disk *and* resolve to the first MIME part, so it was never downloaded. Also that executable extensions are classified for the open-warning, and ordinary documents are not. |
+| Attachments | Two parts sharing a filename get distinct cache paths **and** distinct content — the second used to overwrite the first on disk *and* resolve to the first MIME part, so it was never downloaded. |
+| Inline images (inbound) | A `multipart/related` message parsed by the real mailparser: the referenced image is marked inline and *is* already a `data:` URI in the body, the `.pdf` beside it is not marked, and an `image/svg+xml` is left alone because mailparser did not embed it either. A message whose only part is a signature logo carries no attachments at all; without an HTML body nothing is hidden. |
+| Inline images (backfill) | Every copy of an embedded image is marked, not just the first — the parts outnumber the `data:` URIs, so consuming matches would leave half behind. A size match under a different image MIME counts; an image the body never embedded stays visible; a document of a colliding size is never touched. `has_attachments` clears only once nothing but embedded images is left, and a second run is a no-op. |
 | Attachment text | The document formats the AI features can read: a `.docx`/`.xlsx`/`.pptx`/`.odt`/`.ods`/`.odp` yields its text with paragraph and row structure intact, text comes from run elements only (so a floating image's coordinates do not appear as content), spreadsheet cells resolve through the shared-string table, a self-closing empty cell does not swallow its neighbour, and an unreadable container (non-ZIP, missing part, iWork, no text) returns null so the caller names it as skipped. RTF drops the font and colour tables, decodes `\'hh` and `\u`, and stops at a `\bin` run rather than emitting binary. |
 | Attachment untrustedness | Extracted attachment text is fenced like a message body, and no attachment heading interpolates a raw filename — the label sits outside the fence, so a filename cannot open a line of its own or forge a marker. |
 | Analysis detail | Brief and full ask for exactly the same fields and differ only in description, so the levels cannot drift apart; both keep the anti-invention rule, the owner requirement and the carry-the-specifics rule; an unknown stored value falls back rather than reaching the API. An analysis cached before action items had owners is upgraded to `{action, owner: 'You'}` rather than dropped or re-billed. |
@@ -2383,6 +2467,14 @@ LauncherEntry note under Sync model → Launcher badge.
 See [`TODO.md`](TODO.md) for the full backlog.
 
 - **Bring-your-own OAuth credentials** — Orbit Mail ships none, and will not: that would mean either embedding the builder's own client secret in every package (prohibited — CLAUDE.md rule 5) or funding Google verification and a CASA assessment for the restricted Gmail scope, which has been declined. Each user registers an OAuth app once and enters the credentials in the app, and clicks through Google's "unverified app" warning per account. Nothing about a packaged build requires editing a file.
+- **A reply chain still stores every copy of an embedded image.** Marking them
+  inline stops them being listed as attachments, but `body_html` still holds one
+  base64 copy per reply — the message behind that fix is 3.66MB of it. Nothing
+  deduplicates the body, so the disk cost of a long thread is unchanged.
+- **`attachment-safety.ts` has no automated coverage.** The executable-extension
+  warning is reached only through `attachments:open`, and no suite exercises the
+  classifier. Documented here rather than quietly: the table above used to claim
+  this was tested.
 
 ## License
 

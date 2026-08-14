@@ -30,13 +30,45 @@ export interface AttachmentMeta {
   filename: string
   contentType: string
   size: number
+  inline: boolean
 }
 
-export function toAttachmentMeta(att: ParsedAttachment): AttachmentMeta {
+/**
+ * Whether this part is an image mailparser has already embedded in the HTML
+ * body, rather than something the sender attached.
+ *
+ * mailparser puts `multipart/related` parts in `parsed.attachments` alongside
+ * real ones, *and* rewrites the `cid:` that referenced them into a `data:` URI
+ * in `parsed.html`. Storing a row for each is how one signature logo became a
+ * chip per reply: a long thread carried 182 of them, 15 distinct images repeated
+ * twelve times over, every one already visible in the body underneath.
+ *
+ * The conditions mirror mailparser's own rewrite (mail-parser.js updateImageLinks)
+ * exactly, including the strict `image/[\w]+` — `image/svg+xml` does not match
+ * it there, so it is not embedded, so it must stay an attachment here. Without
+ * an HTML body nothing was rewritten and nothing is inline.
+ *
+ * Residual imprecision, in the safe direction: a related image whose `cid:` the
+ * body never actually references is not embedded, but is flagged here anyway.
+ * That hides it behind the reader's disclosure rather than losing it — which is
+ * also why this marks rows instead of dropping them.
+ */
+export function isInlineImagePart(att: ParsedAttachment, hasHtmlBody: boolean): boolean {
+  return (
+    hasHtmlBody &&
+    att.related === true &&
+    typeof att.cid === 'string' &&
+    att.cid.length > 0 &&
+    /^image\/[\w]+$/i.test(att.contentType ?? '')
+  )
+}
+
+export function toAttachmentMeta(att: ParsedAttachment, htmlBody?: string | null): AttachmentMeta {
   return {
     filename: att.filename ?? 'attachment',
     contentType: att.contentType ?? 'application/octet-stream',
-    size: att.size ?? att.content?.length ?? 0
+    size: att.size ?? att.content?.length ?? 0,
+    inline: isInlineImagePart(att, Boolean(htmlBody))
   }
 }
 
@@ -45,7 +77,7 @@ export function recordAttachmentsMetadata(
   attachments: AttachmentMeta[]
 ): void {
   for (const att of attachments) {
-    addAttachment(messageId, att.filename, att.contentType, att.size, null)
+    addAttachment(messageId, att.filename, att.contentType, att.size, null, att.inline)
   }
 }
 
