@@ -3182,9 +3182,8 @@ async function main(): Promise<void> {
   section('Attachments: opening one must not silently run code')
   // -------------------------------------------------------------------------
   {
-    const { isExecutableAttachment, attachmentExtension } = await import(
-      '../electron/services/attachment-safety'
-    )
+    const { isExecutableAttachment, attachmentExtension, executableAttachmentWarning } =
+      await import('../electron/services/attachment-safety')
 
     // The filename and its extension come from whoever sent the mail.
     const risky = [
@@ -3216,6 +3215,42 @@ async function main(): Promise<void> {
 
     ok('extension parsing takes the last segment',
       attachmentExtension('a.tar.gz') === 'gz' && attachmentExtension('README') === '')
+
+    // The filename is the sender's, so it can be path-shaped, and the basename
+    // split is what makes the *directory's* extension not count. Both cases below
+    // fail without it: a plain lastIndexOf('.') reads "exe/readme" as an
+    // extension, and reads "x/.sh" as .sh — which flips the warning on.
+    ok('a directory carrying an extension does not lend it to the file',
+      attachmentExtension('setup.exe/README') === '',
+      attachmentExtension('setup.exe/README'))
+    ok('a basename that is only a dot-extension is a dotfile, not an extension',
+      !isExecutableAttachment('scripts/.sh') && attachmentExtension('scripts/.sh') === '')
+
+    // Path-shaped and still risky — the separator handling has to work in the
+    // ordinary direction too, for both kinds of slash.
+    ok('a path-shaped filename is still classified by its basename',
+      isExecutableAttachment('../../.local/share/applications/x.desktop') &&
+        isExecutableAttachment('C:\\Users\\rob\\AppData\\setup.exe'))
+    ok('and a risky-looking directory does not make an ordinary file risky',
+      !isExecutableAttachment('invoice.exe/report.pdf'))
+
+    // Neither of these is an extension, and treating them as one would either
+    // nag on every dotfile or match the empty string against the set.
+    ok('a leading dot is not an extension', attachmentExtension('.bashrc') === '')
+    ok('a trailing dot is not an extension', attachmentExtension('setup.exe.') === '')
+
+    // The warning is the whole mitigation — the dialog is what the user reads
+    // before deciding, and a `.pdf.exe` is built so the eye stops at `.pdf`.
+    const warning = executableAttachmentWarning('Invoice-2026.pdf.exe')
+    ok('the warning names the file in full',
+      warning.message.includes('Invoice-2026.pdf.exe'), warning.message)
+    ok('and states the extension that actually decides what runs',
+      warning.detail.includes('.exe') && !warning.detail.includes('.pdf file'),
+      warning.detail.slice(0, 60))
+    ok('the warning says opening may run a program, not that it will',
+      /may run/.test(warning.detail))
+    ok('and it names the sender as the reason to hesitate',
+      /sender/.test(warning.detail))
   }
 
   // -------------------------------------------------------------------------

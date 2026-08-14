@@ -16,11 +16,6 @@ Severity tags come from the [2026-07-21 audit](#security--correctness-audit-2026
 
 - **The blank-window root cause is still unknown.** Reported from a running app: white window, title bar still counting unread mail, and the renderer process alive at ~199MB — the signature of a render-time throw with no error boundary. The window is now recoverable and the error is written to `renderer-errors.log` (see Done), but *what* threw is not known, and nothing reproduced it: it appeared after the app was left idle, possibly across a desktop screen lock. Next occurrence should be diagnosable from the log; if it recurs without one, suspect the process dying rather than a throw. Worth noting the instance seen was `npm run dev`, so an HMR artifact is not ruled out — but a packaged app has the same missing boundary either way, which is why the fix was not made conditional on knowing.
 
-- **`attachment-safety.ts` is untested.** `isExecutableAttachment` decides
-  whether opening an attachment prompts first — the `.pdf.exe` guard — and no
-  suite imports it. Pure string work, so it belongs with the other pure-logic
-  checks in `test:imap`; the reason it is not there yet is that it was believed
-  to be, which is the argument for adding it rather than trusting the table.
 - *(low)* **A long reply chain stores every copy of every embedded image.**
   Marking them inline (see Done) took them out of the attachment list, but
   `body_html` still holds one base64 copy per reply — 3.66MB for the thread that
@@ -154,12 +149,27 @@ does. Preserving that needs prefix or trigram tokenisation.
   listing was the complaint; the storage cost is recorded under Known limitations
   rather than fixed on spec.
 
-- **`attachment-safety.ts` has no test coverage, and the docs said it did** —
-  found while writing the above. The DEVELOPERS.md integration table claimed
-  "executable extensions are classified for the open-warning, and ordinary
-  documents are not"; nothing in `scripts/` has ever imported that module. The
-  false claim is removed and the gap is now listed under Known limitations. The
-  test itself is still outstanding — see below.
+- **`attachment-safety.ts` gained the cases its section was missing** — and the
+  reason it happened is worth more than the tests. While writing the inline-image
+  work above, `rg -n "attachment-safety" scripts/` returned nothing, so the
+  existing section at `imap-integration.suite.ts:3182` was declared absent, the
+  DEVELOPERS.md row describing it was deleted as a false claim, and a gap was
+  filed that did not exist. All of that was published before anyone noticed the
+  section was right there.
+
+  **`scripts/imap-integration.suite.ts` contains a NUL byte** — an iWork fixture,
+  `'\x00\x01binary'`, around line 3516. Searched as a named file, ripgrep reads
+  it as text. Searched as part of a **directory**, ripgrep detects binary content
+  and silently drops *every* result from the file, exit code 1, no warning. The
+  suite is the repo's largest source of truth about what is tested, and it is
+  invisible to the ordinary way of searching for things. Noted in CLAUDE.md.
+
+  What was genuinely missing, and is now covered: `executableAttachmentWarning`
+  had no assertions at all, so nothing checked that the dialog names the real
+  extension — the entire point of the function, since a `.pdf.exe` is designed to
+  be read as a PDF. Nor was `attachmentExtension`'s basename split covered, so a
+  path-shaped filename was untested in both directions: `.../x.sh` must still
+  warn, and `evil.exe/report.pdf` must not.
 
 - **Gmail labels can be seen and edited on the open conversation** — asked for
   as "an easy and intuitive way to view existing labels and add/modify/remove

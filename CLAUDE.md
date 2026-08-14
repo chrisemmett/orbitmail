@@ -84,6 +84,15 @@ Two habits that prevent the worst of it:
 
 - **Grep before claiming.** Before writing "X works like Y", grep the docs for
   the old claim — stale statements hide in files you did not touch.
+- **Name the suite file when you grep it.** `scripts/imap-integration.suite.ts`
+  holds a NUL byte (an iWork fixture, `'\x00\x01binary'`, ~line 3516). Given the
+  path directly, ripgrep reads it as text; reached through a **directory** —
+  `rg foo scripts/`, or a repo-wide search — binary detection drops *every* match
+  in the file, silently, exit code 1. It is the largest record of what is
+  actually tested, and it is the file most likely to answer "is X covered?" with
+  a confident, wrong "no". That has already produced a shipped commit deleting a
+  true statement from DEVELOPERS.md and filing a gap that did not exist. Confirm
+  any "nothing covers this" against the named file, or `rg --text`.
 - **Document what is *not* handled.** A security or feature section that lists
   only wins is worse than none: remote images still load, credential encryption
   degrades without a keyring, thread listing is still linear in account size.

@@ -2088,7 +2088,7 @@ reimplementing them, so it exercises the shipping code paths:
 | IDLE | Push works, survives a full server restart, and resumes afterwards. |
 | Responsiveness | A mark-read issued while a flag reconcile is in flight is not stuck behind the whole pass — `imap-pool` serializes per account, so anything holding the lane across every folder blocks user actions. |
 | Send | SMTP submission succeeds; the message is filed in `Sent` exactly once and shares its Message-ID with the delivered copy; the **delivered** copy carries no `Bcc` header, while the **filed** copy does. |
-| Attachments | Two parts sharing a filename get distinct cache paths **and** distinct content — the second used to overwrite the first on disk *and* resolve to the first MIME part, so it was never downloaded. |
+| Attachments | Two parts sharing a filename get distinct cache paths **and** distinct content — the second used to overwrite the first on disk *and* resolve to the first MIME part, so it was never downloaded. Also that executable extensions are classified for the open-warning and ordinary documents are not, that the classifier reads the *basename* so a path-shaped filename cannot smuggle one past it, and that the warning names the real extension rather than the one the eye stops at. |
 | Inline images (inbound) | A `multipart/related` message parsed by the real mailparser: the referenced image is marked inline and *is* already a `data:` URI in the body, the `.pdf` beside it is not marked, and an `image/svg+xml` is left alone because mailparser did not embed it either. A message whose only part is a signature logo carries no attachments at all; without an HTML body nothing is hidden. |
 | Inline images (backfill) | Every copy of an embedded image is marked, not just the first — the parts outnumber the `data:` URIs, so consuming matches would leave half behind. A size match under a different image MIME counts; an image the body never embedded stays visible; a document of a colliding size is never touched. `has_attachments` clears only once nothing but embedded images is left, and a second run is a no-op. |
 | Attachment text | The document formats the AI features can read: a `.docx`/`.xlsx`/`.pptx`/`.odt`/`.ods`/`.odp` yields its text with paragraph and row structure intact, text comes from run elements only (so a floating image's coordinates do not appear as content), spreadsheet cells resolve through the shared-string table, a self-closing empty cell does not swallow its neighbour, and an unreadable container (non-ZIP, missing part, iWork, no text) returns null so the caller names it as skipped. RTF drops the font and colour tables, decodes `\'hh` and `\u`, and stops at a `\bin` run rather than emitting binary. |
@@ -2471,10 +2471,11 @@ See [`TODO.md`](TODO.md) for the full backlog.
   inline stops them being listed as attachments, but `body_html` still holds one
   base64 copy per reply — the message behind that fix is 3.66MB of it. Nothing
   deduplicates the body, so the disk cost of a long thread is unchanged.
-- **`attachment-safety.ts` has no automated coverage.** The executable-extension
-  warning is reached only through `attachments:open`, and no suite exercises the
-  classifier. Documented here rather than quietly: the table above used to claim
-  this was tested.
+- **The dialog in `attachments:open` is not itself covered.** The classifier and
+  its warning text are (see the table above), but whether declining actually
+  aborts the open needs a window — `test:imap` is windowless and no e2e suite
+  drives that dialog. `response !== 1` means closing or escaping the box counts
+  as a decline, which is the safe direction, but nothing checks it.
 
 ## License
 
