@@ -111,6 +111,25 @@ does. Preserving that needs prefix or trigram tokenisation.
 
 ## Shipped
 
+- **Audit sweep: the three findings Dependabot never raised** — `npm audit`
+  reported high-severity DoS advisories in `brace-expansion` (unbounded
+  expansion, and a second bypassing the first mitigation), `tar` (uncontrolled
+  recursion on crafted long paths) and `nanoid` (custom generators looping on
+  size zero). None appeared as Dependabot alerts, and all three are **dev
+  toolchain, not the shipped app**: `brace-expansion` and `tar` come in under
+  `electron-builder`, `nanoid` under `vite` → `postcss`.
+
+  Every fix was already published **within the existing major line**
+  (`brace-expansion` 1.1.18 / 2.1.4 / 5.0.9, `tar` 7.5.22, `nanoid` 3.3.18), so
+  this is a lockfile refresh and nothing else — `package.json` is untouched and
+  no parent package moved. Eight entries changed; `npm audit` now reports **0
+  vulnerabilities**.
+
+  Verified beyond the usual gates on purpose: `brace-expansion` and `tar` are on
+  the **packaging** path, which no test exercises, so `dist:deb` was run to
+  confirm electron-builder still packages after the bump. `build`, `test:store`
+  and `test:imap` (665 passed, 0 failed) alongside it.
+
 - **Electron 39 → 44** — clears the last open advisory, `extract-zip`'s
   unvalidated symlink path traversal, which reached us through Electron's own
   dependency. **`npm audit` names the wrong fix**: it reported
