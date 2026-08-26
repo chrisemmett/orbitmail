@@ -122,7 +122,12 @@ export const attachments = sqliteTable(
     filename: text('filename').notNull(),
     mimeType: text('mime_type').notNull(),
     size: integer('size').notNull(),
-    localPath: text('local_path')
+    localPath: text('local_path'),
+    // An image mailparser has already embedded in body_html as a data: URI —
+    // a signature logo, not something the sender attached. The row is kept
+    // (see isInlineImagePart) so part resolution still counts positions the
+    // way the server ordered them; the reader collapses these out of sight.
+    isInline: integer('is_inline', { mode: 'boolean' }).notNull().default(false)
   },
   // Every attachment lookup is by message_id, and the ON DELETE CASCADE above
   // needs it too — without this index each parent delete is a full scan, so

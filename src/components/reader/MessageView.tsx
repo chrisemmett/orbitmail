@@ -39,7 +39,8 @@ import {
   Trash,
   Printer,
   ListChecks,
-  TrayArrowDown
+  TrayArrowDown,
+  ImageSquare
 } from '../icons'
 import { flagColorHex } from '../../constants/flags'
 import { printMessageDetail, printThreadDetails } from '../../utils/printMessage'
@@ -757,6 +758,14 @@ function formatSize(bytes: number): string {
 // Attachment chips shared by the single-message and thread readers. Each chip
 // opens on click; a trailing button saves it to disk, and "Save all" appears
 // when a message carries more than one attachment.
+//
+// Images the sender embedded in the body are held back behind a disclosure.
+// They are already visible in the message underneath, and a reply chain
+// accumulates a fresh copy of every signature logo per reply — one real thread
+// here produced 182 chips of 15 distinct images, burying the two attachments
+// that were actually sent. They stay reachable because the flag is a heuristic
+// (see isInlineImagePart): when it is wrong, the file is one click away rather
+// than gone.
 function AttachmentList({
   attachments,
   messageId
@@ -767,12 +776,17 @@ function AttachmentList({
   const setToast = useMailStore((s) => s.setToast)
   const [busy, setBusy] = useState<{ id: string; kind: 'open' | 'save' } | null>(null)
   const [savingAll, setSavingAll] = useState(false)
+  const [showEmbedded, setShowEmbedded] = useState(false)
   const [menu, setMenu] = useState<{
     x: number
     y: number
     att: MessageDetail['attachments'][number]
   } | null>(null)
   const anyBusy = busy !== null || savingAll
+
+  const sent = attachments.filter((att) => !att.inline)
+  const embedded = attachments.filter((att) => att.inline)
+  const shown = showEmbedded ? [...sent, ...embedded] : sent
 
   if (attachments.length === 0) return null
 
@@ -831,7 +845,7 @@ function AttachmentList({
           icon: <TrayArrowDown size={14} weight="duotone" />,
           onClick: () => void handleSave(menu.att.id, menu.att.filename)
         },
-        ...(attachments.length > 1
+        ...(sent.length > 1
           ? [
               { id: 'sep', label: '', separator: true },
               {
@@ -847,10 +861,10 @@ function AttachmentList({
 
   return (
     <div className="reader-attachments">
-      {attachments.map((att) => (
+      {shown.map((att) => (
         <div
           key={att.id}
-          className="attachment-item"
+          className={att.inline ? 'attachment-item attachment-item-inline' : 'attachment-item'}
           onContextMenu={(event) => {
             event.preventDefault()
             event.stopPropagation()
@@ -879,7 +893,7 @@ function AttachmentList({
           </button>
         </div>
       ))}
-      {attachments.length > 1 && (
+      {sent.length > 1 && (
         <button
           type="button"
           className="attachment-save-all-btn"
@@ -889,6 +903,23 @@ function AttachmentList({
         >
           <TrayArrowDown size={14} weight="duotone" />
           {savingAll ? 'Saving…' : 'Save all'}
+        </button>
+      )}
+      {embedded.length > 0 && (
+        <button
+          type="button"
+          className="attachment-embedded-toggle"
+          onClick={() => setShowEmbedded((open) => !open)}
+          title={
+            showEmbedded
+              ? 'Hide images embedded in the message body'
+              : 'These are already shown in the message — usually signature logos'
+          }
+        >
+          <ImageSquare size={14} weight="duotone" />
+          {showEmbedded
+            ? 'Hide embedded images'
+            : `${embedded.length} embedded image${embedded.length === 1 ? '' : 's'}`}
         </button>
       )}
       {menu && (

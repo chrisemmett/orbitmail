@@ -1503,7 +1503,10 @@ function registerIpc(): void {
   // Save every attachment on a message into a user-chosen directory. Returns the
   // number of files saved, or null if the user cancelled the dialog.
   ipcMain.handle('attachments:saveAll', async (_, messageId: string) => {
-    const atts = listMessageAttachments(messageId)
+    // Real attachments only. "Save all" on a message whose sender has a logo in
+    // their signature should not write out a directory of image.png copies; the
+    // embedded ones are still saveable one at a time from the reader.
+    const atts = listMessageAttachments(messageId).filter((att) => !att.isInline)
     if (atts.length === 0) throw new Error('No attachments to save')
     const result = await dialog.showOpenDialog(mainWindow ?? undefined, {
       properties: ['openDirectory', 'createDirectory']

@@ -34,7 +34,12 @@ messages and pull out what you still need to do.
   Subject / Body**. If nothing matches locally, one click searches the whole
   mailbox on the server and pulls older mail back in.
 - **Attachments** — messages carrying them are flagged in the list; save one or
-  all of them wherever you like.
+  all of them wherever you like. Images that are part of the message itself —
+  the logos in people's signatures — are not listed as attachments, because a
+  long reply chain collects a fresh copy of every one of them and they bury the
+  files someone actually sent. They are still there: the message shows a count
+  you can click to see them, and each can be opened or saved as usual. The
+  paperclip in the list, and **Save all**, both go by real attachments only.
 - **Gmail labels** — an open conversation shows the labels it carries, under the
   subject. Click the **×** on one to take it off, or **Label** to search your
   labels and tick them on and off; a name you have not used yet can be created

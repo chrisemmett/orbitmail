@@ -1857,6 +1857,210 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Inline images: a signature logo is not an attachment on the way in')
+  // -------------------------------------------------------------------------
+  {
+    // The inbound counterpart of the section above, and the more damaging half.
+    // mailparser puts multipart/related parts in `parsed.attachments` next to
+    // real ones AND rewrites their cid: into a data: URI in `parsed.html`, so
+    // recording every element gave one chip per embedded image — a real reply
+    // chain here reached 182 of them, all already visible in the body, burying
+    // the attachments that had actually been sent.
+    const { simpleParser } = await import('mailparser')
+    const { toAttachmentMeta } = await import('../electron/services/attachment-fetch')
+
+    const onePixel =
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+    const related = [
+      'From: sender@example.com',
+      'To: rob@example.com',
+      'Subject: Quarterly numbers',
+      'Content-Type: multipart/related; boundary="rel"',
+      '',
+      '--rel',
+      'Content-Type: text/html; charset=utf-8',
+      '',
+      '<p>Numbers attached.</p><img src="cid:logo@sig"><img src="cid:vector@sig">',
+      '',
+      '--rel',
+      'Content-Type: image/png',
+      'Content-Transfer-Encoding: base64',
+      'Content-ID: <logo@sig>',
+      'Content-Disposition: inline; filename="image001.png"',
+      '',
+      onePixel,
+      '',
+      '--rel',
+      'Content-Type: image/svg+xml',
+      'Content-Transfer-Encoding: base64',
+      'Content-ID: <vector@sig>',
+      'Content-Disposition: inline; filename="badge.svg"',
+      '',
+      Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>').toString('base64'),
+      '',
+      '--rel',
+      'Content-Type: application/pdf',
+      'Content-Transfer-Encoding: base64',
+      'Content-Disposition: attachment; filename="Q3.pdf"',
+      '',
+      Buffer.from('%PDF-1.4 not really').toString('base64'),
+      '',
+      '--rel--',
+      ''
+    ].join('\r\n')
+
+    const parsed = await simpleParser(related)
+    const html = String(parsed.html ?? '')
+    const meta = parsed.attachments.map((att) => toAttachmentMeta(att, parsed.html))
+    const byName = new Map(meta.map((m) => [m.filename, m]))
+
+    ok('mailparser hands back all three parts as attachments', meta.length === 3,
+      String(meta.length))
+    ok('and has already embedded the referenced image in the body',
+      html.includes('data:image/png;base64,') && !html.includes('cid:logo@sig'),
+      html.slice(0, 90))
+
+    ok('the embedded image is marked inline', byName.get('image001.png')?.inline === true)
+    ok('the real attachment is not', byName.get('Q3.pdf')?.inline === false)
+
+    // mailparser's rewrite tests /^image\/[\w]+$/, which image/svg+xml fails —
+    // so it stays a cid: the body cannot show, and must stay an attachment here.
+    ok('an svg is left alone, because mailparser did not embed it either',
+      byName.get('badge.svg')?.inline === false && html.includes('cid:vector@sig'))
+
+    // The list-pane paperclip follows the same rule: hasAttachments is "some
+    // part is not inline". This message has two that qualify.
+    ok('a message with real attachments still shows a paperclip',
+      meta.some((m) => !m.inline))
+
+    // And the case the complaint is about: a note whose only part is the
+    // sender's logo must not look like it carries a file.
+    const signatureOnly = await simpleParser(
+      [
+        'From: sender@example.com',
+        'Subject: Just a note',
+        'Content-Type: multipart/related; boundary="rel"',
+        '',
+        '--rel',
+        'Content-Type: text/html; charset=utf-8',
+        '',
+        '<p>Thanks!</p><img src="cid:logo@sig">',
+        '',
+        '--rel',
+        'Content-Type: image/png',
+        'Content-Transfer-Encoding: base64',
+        'Content-ID: <logo@sig>',
+        'Content-Disposition: inline; filename="image001.png"',
+        '',
+        onePixel,
+        '',
+        '--rel--',
+        ''
+      ].join('\r\n')
+    )
+    ok('a message of nothing but a signature logo carries no attachments',
+      signatureOnly.attachments.length === 1 &&
+        !signatureOnly.attachments
+          .map((att) => toAttachmentMeta(att, signatureOnly.html))
+          .some((m) => !m.inline))
+
+    // Without an HTML body nothing was rewritten, so nothing is inline: the
+    // images are only reachable as attachments.
+    const textOnly = await simpleParser(
+      related.replace('Content-Type: text/html; charset=utf-8', 'Content-Type: text/plain')
+    )
+    ok('with no HTML body, nothing is hidden',
+      textOnly.attachments.every((att) => !toAttachmentMeta(att, textOnly.html).inline))
+
+    // The same part, with and without a body, must classify differently — the
+    // body is the whole evidence that mailparser embedded it anywhere.
+    ok('an empty body is not a body',
+      toAttachmentMeta(parsed.attachments[0], '').inline === false)
+  }
+
+  // -------------------------------------------------------------------------
+  section('Inline images: already-synced mail is marked from the body it kept')
+  // -------------------------------------------------------------------------
+  {
+    // Rows stored before the flag existed cannot be re-parsed without refetching
+    // the message, but mailparser left the evidence in body_html: every cid: it
+    // rewrote is a data: URI whose decoded length is the part's size.
+    const { getRawSqlite, backfillInlineAttachments } = await import('../electron/db')
+    const raw = getRawSqlite()
+    const folder = db.upsertFolder(account.id, 'Backfill', 'Backfill', 'custom')
+
+    const logo = Buffer.from('a signature logo, 32 bytes long.')
+    const notEmbedded = Buffer.from('a photograph the body never embedded')
+    const body =
+      `<p>Hi</p><img src="data:image/png;base64,${logo.toString('base64')}">` +
+      `<img src='data:image/gif;base64,${logo.toString('base64')}'>`
+
+    raw
+      .prepare(
+        `INSERT INTO messages (id, folder_id, account_id, uid, from_addr, to_addr, subject, snippet, date, has_attachments, body_html)
+         VALUES ('bf-1', @folder, @account, 9001, 'a@x', 'b@y', 'Backfill', 'snip', 1000, 1, @body)`
+      )
+      .run({ folder: folder.id, account: account.id, body })
+
+    const insAtt = raw.prepare(
+      `INSERT INTO attachments (id, message_id, filename, mime_type, size, local_path, is_inline)
+       VALUES (@id, 'bf-1', @name, @mime, @size, NULL, 0)`
+    )
+    // Two copies of the one embedded PNG — the reply-chain duplication.
+    insAtt.run({ id: 'bf-png-1', name: 'image001.png', mime: 'image/png', size: logo.length })
+    insAtt.run({ id: 'bf-png-2', name: 'image002.png', mime: 'image/png', size: logo.length })
+    // A GIF of that size is embedded too, so its row matches on mime as well.
+    insAtt.run({ id: 'bf-gif', name: 'spacer.gif', mime: 'image/gif', size: logo.length })
+    // An image the body does not embed, and a document: both must survive.
+    insAtt.run({
+      id: 'bf-photo',
+      name: 'holiday.jpeg',
+      mime: 'image/jpeg',
+      size: notEmbedded.length
+    })
+    insAtt.run({ id: 'bf-doc', name: 'Q3.pdf', mime: 'application/pdf', size: logo.length })
+
+    // The guard has already fired during this process's startup migration.
+    raw.prepare("DELETE FROM app_preferences WHERE key = 'inline_attachment_backfill_v1'").run()
+    const flagged = backfillInlineAttachments(raw)
+
+    const isInline = (id: string) =>
+      (raw.prepare('SELECT is_inline FROM attachments WHERE id = ?').get(id) as
+        | { is_inline: number }
+        | undefined)?.is_inline === 1
+
+    ok('every copy of an embedded image is marked, not just the first',
+      isInline('bf-png-1') && isInline('bf-png-2'))
+    ok('a matching size under a different mime type is matched on both',
+      isInline('bf-gif'))
+    ok('an image the body never embedded is left visible', !isInline('bf-photo'))
+    // Scoped to image/*: a PDF that happens to be exactly the size of the logo
+    // is not a rewritten cid, and the mime is what says so.
+    ok('a document of a colliding size is never touched', !isInline('bf-doc'))
+    ok('the count returned is the rows it changed', flagged >= 3, String(flagged))
+
+    // has_attachments drives the list-pane paperclip, so it has to follow.
+    const stillFlagged = (raw.prepare('SELECT has_attachments h FROM messages WHERE id = ?')
+      .get('bf-1') as { h: number }).h
+    ok('a message keeps its paperclip while a real attachment remains',
+      stillFlagged === 1, String(stillFlagged))
+
+    raw.prepare("DELETE FROM attachments WHERE id IN ('bf-photo','bf-doc')").run()
+    raw.prepare("DELETE FROM app_preferences WHERE key = 'inline_attachment_backfill_v1'").run()
+    backfillInlineAttachments(raw)
+    const clearedPaperclip = (raw.prepare('SELECT has_attachments h FROM messages WHERE id = ?')
+      .get('bf-1') as { h: number }).h
+    ok('and loses it once only embedded images are left',
+      clearedPaperclip === 0, String(clearedPaperclip))
+
+    // Guarded: it is a one-time pass over every body in the database.
+    ok('a second run is a no-op', backfillInlineAttachments(raw) === 0)
+
+    raw.prepare('DELETE FROM messages WHERE folder_id = ?').run(folder.id)
+    raw.prepare('DELETE FROM folders WHERE id = ?').run(folder.id)
+  }
+
+  // -------------------------------------------------------------------------
   section('Drafts: saved locally, listed in the Drafts folder, gone once sent')
   // -------------------------------------------------------------------------
   {
@@ -2978,9 +3182,8 @@ async function main(): Promise<void> {
   section('Attachments: opening one must not silently run code')
   // -------------------------------------------------------------------------
   {
-    const { isExecutableAttachment, attachmentExtension } = await import(
-      '../electron/services/attachment-safety'
-    )
+    const { isExecutableAttachment, attachmentExtension, executableAttachmentWarning } =
+      await import('../electron/services/attachment-safety')
 
     // The filename and its extension come from whoever sent the mail.
     const risky = [
@@ -3012,6 +3215,42 @@ async function main(): Promise<void> {
 
     ok('extension parsing takes the last segment',
       attachmentExtension('a.tar.gz') === 'gz' && attachmentExtension('README') === '')
+
+    // The filename is the sender's, so it can be path-shaped, and the basename
+    // split is what makes the *directory's* extension not count. Both cases below
+    // fail without it: a plain lastIndexOf('.') reads "exe/readme" as an
+    // extension, and reads "x/.sh" as .sh — which flips the warning on.
+    ok('a directory carrying an extension does not lend it to the file',
+      attachmentExtension('setup.exe/README') === '',
+      attachmentExtension('setup.exe/README'))
+    ok('a basename that is only a dot-extension is a dotfile, not an extension',
+      !isExecutableAttachment('scripts/.sh') && attachmentExtension('scripts/.sh') === '')
+
+    // Path-shaped and still risky — the separator handling has to work in the
+    // ordinary direction too, for both kinds of slash.
+    ok('a path-shaped filename is still classified by its basename',
+      isExecutableAttachment('../../.local/share/applications/x.desktop') &&
+        isExecutableAttachment('C:\\Users\\rob\\AppData\\setup.exe'))
+    ok('and a risky-looking directory does not make an ordinary file risky',
+      !isExecutableAttachment('invoice.exe/report.pdf'))
+
+    // Neither of these is an extension, and treating them as one would either
+    // nag on every dotfile or match the empty string against the set.
+    ok('a leading dot is not an extension', attachmentExtension('.bashrc') === '')
+    ok('a trailing dot is not an extension', attachmentExtension('setup.exe.') === '')
+
+    // The warning is the whole mitigation — the dialog is what the user reads
+    // before deciding, and a `.pdf.exe` is built so the eye stops at `.pdf`.
+    const warning = executableAttachmentWarning('Invoice-2026.pdf.exe')
+    ok('the warning names the file in full',
+      warning.message.includes('Invoice-2026.pdf.exe'), warning.message)
+    ok('and states the extension that actually decides what runs',
+      warning.detail.includes('.exe') && !warning.detail.includes('.pdf file'),
+      warning.detail.slice(0, 60))
+    ok('the warning says opening may run a program, not that it will',
+      /may run/.test(warning.detail))
+    ok('and it names the sender as the reason to hesitate',
+      /sender/.test(warning.detail))
   }
 
   // -------------------------------------------------------------------------

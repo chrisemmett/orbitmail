@@ -16,6 +16,14 @@ Severity tags come from the [2026-07-21 audit](#security--correctness-audit-2026
 
 - **The blank-window root cause is still unknown.** Reported from a running app: white window, title bar still counting unread mail, and the renderer process alive at ~199MB — the signature of a render-time throw with no error boundary. The window is now recoverable and the error is written to `renderer-errors.log` (see Done), but *what* threw is not known, and nothing reproduced it: it appeared after the app was left idle, possibly across a desktop screen lock. Next occurrence should be diagnosable from the log; if it recurs without one, suspect the process dying rather than a throw. Worth noting the instance seen was `npm run dev`, so an HMR artifact is not ruled out — but a packaged app has the same missing boundary either way, which is why the fix was not made conditional on knowing.
 
+- *(low)* **A long reply chain stores every copy of every embedded image.**
+  Marking them inline (see Done) took them out of the attachment list, but
+  `body_html` still holds one base64 copy per reply — 3.66MB for the thread that
+  prompted the fix, 313MB of bodies across the profile. Deduplicating would mean
+  rewriting bodies to a content-addressed store and resolving on render, which is
+  a much larger change than the listing bug needed, and risks the "why did that
+  image change" class of bug. Recorded because the disk cost is real, not because
+  it is obviously worth paying to fix.
 - *(low)* **`markRead`/`toggleStar` await the server round-trip inside the IPC handler** (`main.ts` `messages:markRead` et al). The renderer patches optimistically so the delay is not visible, but the handler stays open for the whole round-trip and a burst of actions serializes. Decoupling means a background queue plus a way to roll the UI back after the fact.
 - **O365 Sent filing is unverified** (loose end from #32) — Exchange Online does not reliably file SMTP-submitted mail into Sent Items (it is governed by `MessageCopyForSMTPClientSubmissionEnabled`), so O365 accounts may not get a Sent copy at all. Left out of that fix rather than guessed at; needs testing against a real tenant.
 
@@ -102,6 +110,66 @@ does. Preserving that needs prefix or trigram tokenisation.
 # Done
 
 ## Shipped
+
+- **Signature logos are no longer listed as attachments** — reported as a
+  "proliferation of false attachments", with a screenshot of one message showing
+  well over a hundred `image.png` chips. They were not false: mailparser puts
+  every `multipart/related` part in `parsed.attachments` beside the real ones,
+  *and* rewrites the `cid:` that referenced it into a `data:` URI in
+  `parsed.html`, so we stored a row for an image the body was already showing.
+  Down a reply chain that compounds — the worst message here held **182 rows, 15
+  distinct images repeated about twelve times, 2.4MB**, with the two real
+  documents lost among them; 10,110 of 10,868 attachment rows on that profile
+  were images under 200KB.
+
+  `isInlineImagePart` marks a part inline on the same conditions mailparser uses
+  to embed it, so `image/svg+xml` — which its regex rejects, and which therefore
+  never reaches the body — stays an attachment. Rows are **marked, not dropped**:
+  part resolution counts position among same-named rows, so deleting them would
+  break fetching for precisely the messages where everything is `image001.png`,
+  and marking makes a wrong guess recoverable rather than destructive. The reader
+  collapses them behind an "N embedded images" disclosure; `has_attachments` and
+  **Save all** follow the same rule.
+
+  History was backfilled rather than left to a resync, since 110 messages were
+  already affected: mailparser's rewrite leaves each part's decoded size in the
+  body as a `data:` URI, so `backfillInlineAttachments` matches on `mime:size`
+  read from the base64 length. Two decisions worth keeping — matches are **not**
+  consumed (one message holds 140 parts against 70 URIs, because Outlook keeps a
+  part per quoted reply, and consuming would leave half the chips behind), and
+  the candidate query does not filter on `body_html LIKE '%data:image%'` (that
+  reads as a scan of every body; the loop filters for free on the body it fetches
+  anyway). Matching the payload with a regex instead of walking it from JS took
+  the pass from 14s to ~2.4s over 313MB of bodies. It marked 10,172 rows across
+  516 messages; the worst went from 182 visible attachments to none, and the most
+  any message still shows is 8 — all genuine documents.
+
+  Not done, deliberately: **the bodies still hold every copy**. `body_html` for
+  that thread is 3.66MB of repeated base64 and nothing deduplicates it. Only the
+  listing was the complaint; the storage cost is recorded under Known limitations
+  rather than fixed on spec.
+
+- **`attachment-safety.ts` gained the cases its section was missing** — and the
+  reason it happened is worth more than the tests. While writing the inline-image
+  work above, `rg -n "attachment-safety" scripts/` returned nothing, so the
+  existing section at `imap-integration.suite.ts:3182` was declared absent, the
+  DEVELOPERS.md row describing it was deleted as a false claim, and a gap was
+  filed that did not exist. All of that was published before anyone noticed the
+  section was right there.
+
+  **`scripts/imap-integration.suite.ts` contains a NUL byte** — an iWork fixture,
+  `'\x00\x01binary'`, around line 3516. Searched as a named file, ripgrep reads
+  it as text. Searched as part of a **directory**, ripgrep detects binary content
+  and silently drops *every* result from the file, exit code 1, no warning. The
+  suite is the repo's largest source of truth about what is tested, and it is
+  invisible to the ordinary way of searching for things. Noted in CLAUDE.md.
+
+  What was genuinely missing, and is now covered: `executableAttachmentWarning`
+  had no assertions at all, so nothing checked that the dialog names the real
+  extension — the entire point of the function, since a `.pdf.exe` is designed to
+  be read as a PDF. Nor was `attachmentExtension`'s basename split covered, so a
+  path-shaped filename was untested in both directions: `.../x.sh` must still
+  warn, and `evil.exe/report.pdf` must not.
 
 - **Gmail labels can be seen and edited on the open conversation** — asked for
   as "an easy and intuitive way to view existing labels and add/modify/remove
