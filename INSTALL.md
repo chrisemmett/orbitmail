@@ -48,9 +48,10 @@ About 15 minutes and a terminal. No coding.
 sudo apt install git nodejs npm build-essential python3
 ```
 
-Node.js 20 or newer is required — check with `node --version`. If your distro
-ships an older Node, install a current one from [nodejs.org](https://nodejs.org/)
-or via `nvm`.
+Node.js 22.12 or newer is required — check with `node --version`. That floor is
+Electron's own (`engines.node`), and it is the strictest in the toolchain. If your
+distro ships an older Node, install a current one from
+[nodejs.org](https://nodejs.org/) or via `nvm`.
 
 **2. Get the code:**
 

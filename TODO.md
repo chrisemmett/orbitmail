@@ -111,6 +111,42 @@ does. Preserving that needs prefix or trigram tokenisation.
 
 ## Shipped
 
+- **Electron 39 → 44** — clears the last open advisory, `extract-zip`'s
+  unvalidated symlink path traversal, which reached us through Electron's own
+  dependency. **`npm audit` names the wrong fix**: it reported
+  `electron@44.0.0` because that is the `latest` tag, while the advisory's fixed
+  range starts at **40.10.3**, where Electron swapped `extract-zip` for
+  `@electron-internal/extract-zip`. So the minimum fix was one major, not five.
+  44 was chosen anyway rather than 40 — this app renders untrusted HTML, and
+  stopping four majors short on Chromium to shorten a changelog is the wrong
+  trade. Runtime goes Chromium 142 → 152, Node 22 → 24, ICU 74 → 78; the `.deb`
+  grows ~97 MB → ~107 MB.
+
+  **No application code changed.** The 40–44 breaking-change list was checked
+  against this codebase rather than inferred from a green suite: `clipboard`
+  being removed from the renderer in 44 looked fatal but is not ours — the only
+  hit is `event.clipboardData` in `RichTextEditor.tsx`, the DOM paste API.
+  `showHiddenFiles`, `clearStorageData` quotas, `net.request` validation,
+  frameless-window corners and the macOS/32-bit drops are unused or don't apply
+  to a Linux x64 app.
+
+  **Two deliberate acceptances.** Electron 43 changed unspecified dialog paths
+  to default to Downloads rather than the OS-remembered directory; every
+  `showSaveDialog` here passes an explicit `defaultPath`, but
+  `compose:pickAttachments` and the save-all directory picker do not, so both
+  now open at Downloads. Left as-is: it is a behaviour change, not a break, and
+  worth watching before adding a `defaultPath` nobody asked for. Separately,
+  `scripts/install-electron.sh` stopped being a workaround — from Electron 42
+  the binary is no longer fetched by Electron's postinstall, so that script is
+  now what puts it on disk, in CI too. Recorded in DEVELOPERS.md.
+
+  Verified locally in full, because CI could not run: `build`, `test:store`,
+  `test:imap` (665 passed, 0 failed) and `test:e2e` (**all 5 suites**, the one
+  gate that actually exercises window lifecycle across a Chromium jump), plus
+  `dist:deb` to prove it still packages and the native rebuild still works.
+  `engines.node` for Electron 44 is `>= 22.12.0`, so INSTALL.md's "Node 20 or
+  newer" was false the moment this landed and CI moved 22 → 24.
+
 - **mailparser bumped to 3.9.16 to clear a high-severity parser vulnerability**
   — `deepmerge-ts` 7.1.5 is vulnerable to stack exhaustion on recursive objects,
   and it reaches us through `mailparser` → `html-to-text`, which is the code path
