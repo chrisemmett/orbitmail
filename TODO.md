@@ -111,6 +111,20 @@ does. Preserving that needs prefix or trigram tokenisation.
 
 ## Shipped
 
+- **mailparser bumped to 3.9.16 to clear a high-severity parser vulnerability**
+  — `deepmerge-ts` 7.1.5 is vulnerable to stack exhaustion on recursive objects,
+  and it reaches us through `mailparser` → `html-to-text`, which is the code path
+  that parses **untrusted mail**. Dependabot could not fix it in place: the patch
+  is `deepmerge-ts` 8, so the whole chain has to move (`mailparser` 3.9.16 →
+  `html-to-text` 10.0.1 → `deepmerge-ts` 8.0.2). It had raised a grouped branch
+  for it that sat unmerged and was nearly deleted as a stale duplicate — worth
+  reading the diff before clearing a `multi-` branch, because that is the shape
+  the fix takes when it cannot be a one-line bump. Verified against the full
+  suite rather than merged on green CI alone: the inline-image work in #168 keys
+  directly off `simpleParser`'s `related`/`cid` fields and its `data:` URI
+  rewrite, so a minor bump of that parser is exactly the change those assertions
+  exist to catch. 665 passed, 0 failed.
+
 - **Signature logos are no longer listed as attachments** — reported as a
   "proliferation of false attachments", with a screenshot of one message showing
   well over a hundred `image.png` chips. They were not false: mailparser puts
