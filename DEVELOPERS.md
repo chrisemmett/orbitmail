@@ -510,7 +510,7 @@ the control, and the README says so.
 
 | Layer | Technology |
 |-------|------------|
-| Shell | Electron 39, electron-vite |
+| Shell | Electron 44, electron-vite |
 | UI | React 18, TypeScript, Zustand, Phosphor Icons |
 | IMAP | imapflow (sync, IDLE, move, flags) |
 | POP3 | node-pop3 (inbox-only sync) |
@@ -2051,6 +2051,15 @@ their own. Approval is cleared when the compose window closes.
 | `npm run dist` | Build icons, compile, and package (.deb + AppImage) |
 | `npm run dist:deb` | Debian package only |
 | `npm run dist:appimage` | AppImage only |
+
+`postinstall` runs `electron-builder install-app-deps` (which rebuilds
+`better-sqlite3` against Electron's ABI) and then `scripts/install-electron.sh`.
+That second step is **load-bearing, not a workaround**: since Electron 42 the
+runtime binary is no longer downloaded by Electron's own postinstall, so without
+it `npm ci` leaves `node_modules/electron/dist` empty and every Electron-hosted
+check fails at startup. It unzips from `~/.cache/electron` when the version is
+already there and falls back to `install.js` otherwise, which is also what makes
+CI's Electron cache worth having.
 
 ## Integration tests (GreenMail)
 
