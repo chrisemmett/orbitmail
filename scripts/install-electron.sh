@@ -25,6 +25,17 @@ case "$PLATFORM" in
   *)      PLATFORM_PATH="electron" ;;
 esac
 
+# Where @electron/get keeps downloaded zips, which is also what CI caches. The
+# fast path below is only a fast path — install.js reads this same cache itself,
+# so getting it wrong costs a re-download at worst, never correctness. Which is
+# exactly why it is worth deriving rather than assuming: a silently-never-hit
+# cache lookup looks identical to a working one.
+case "$PLATFORM" in
+  darwin) CACHE_DIR="${HOME}/Library/Caches/electron" ;;
+  win32)  CACHE_DIR="${LOCALAPPDATA:-${HOME}/AppData/Local}/electron/Cache" ;;
+  *)      CACHE_DIR="${XDG_CACHE_HOME:-${HOME}/.cache}/electron" ;;
+esac
+
 if [[ -x "$DIST/$PLATFORM_PATH" ]] && [[ -f "$PATH_FILE" ]]; then
   echo "Electron $VERSION already installed."
   exit 0
@@ -42,12 +53,12 @@ mkdir -p "$DIST"
 # Electron 42 that download was removed, so on a cold runner there is no
 # directory at all, and a cache miss became a build failure. Keep the guard.
 CACHE_ZIP=""
-if [[ -d "${HOME}/.cache/electron" ]]; then
-  CACHE_ZIP=$(find "${HOME}/.cache/electron" -name "electron-v${VERSION}-${PLATFORM}-${ARCH}.zip" 2>/dev/null | head -1 || true)
+if [[ -d "$CACHE_DIR" ]]; then
+  CACHE_ZIP=$(find "$CACHE_DIR" -name "electron-v${VERSION}-${PLATFORM}-${ARCH}.zip" 2>/dev/null | head -1 || true)
 fi
 
 if [[ -z "$CACHE_ZIP" ]]; then
-  echo "Not in ${HOME}/.cache/electron; downloading."
+  echo "Not in ${CACHE_DIR}; downloading."
   node "$ELECTRON_DIR/install.js"
 else
   echo "Found $CACHE_ZIP; unpacking."

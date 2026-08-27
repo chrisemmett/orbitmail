@@ -3072,9 +3072,25 @@ async function main(): Promise<void> {
         err = e as Error
       }
       ok('missing credentials throw rather than half-configure', err !== null)
+      // The `.env` this names is resolved from `app.getPath('userData')`, not
+      // spelled out — `~/.config/orbit-mail/.env` on Linux, `~/Library/
+      // Application Support/Orbit Mail/.env` on macOS, and under this suite the
+      // throwaway userData the runner owns. This check used to pin the Linux
+      // literal, which is the same mistake the UI made: three user-facing
+      // strings hardcoded that path while `main.ts` read the real one, so on
+      // macOS they pointed at a directory that does not exist. Assert against
+      // the resolver the app itself reads through, and assert separately that
+      // the resolver agrees with `userData` — pinning a literal here would let
+      // the two drift apart again with the suite still green.
+      const envPath = cfg.userEnvFilePath()
       ok('the error names every place they can be supplied',
-        !!err && err.message.includes('~/.config/orbit-mail/.env') && err.message.includes('.env'),
+        !!err &&
+          err.message.includes(envPath) &&
+          err.message.includes('this dialog') &&
+          err.message.includes('the environment'),
         err?.message.split('\n')[0])
+      ok('and the .env it names is the one the app actually reads',
+        envPath === join(app.getPath('userData'), '.env'), envPath)
       ok('hasGoogleOAuthConfig reports absence without throwing',
         cfg.hasGoogleOAuthConfig() === false)
     } finally {

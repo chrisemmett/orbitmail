@@ -159,6 +159,20 @@ does. Preserving that needs prefix or trigram tokenisation.
   running on. Adding a field to an existing status payload rather than a new IPC
   channel keeps the spine untouched.
 
+  **Two things the first CI run found, both in the same script.** The suite
+  pinned the literal `~/.config/orbit-mail/.env` in the OAuth error check — the
+  same hardcoding the fix removed from the UI, so the fix failed its own
+  regression test. It now asserts against `userEnvFilePath()` and separately
+  that the resolver agrees with `app.getPath('userData')`, which is a stronger
+  check than the literal ever was: pinning a string would let the message and
+  the reader drift apart again with the suite still green. And the macOS leg
+  passed while logging `Not in /Users/runner/.cache/electron` — the cache
+  lookup was still assuming the Linux directory, so the fast path never hit on
+  macOS. Harmless (the unzip is only a shortcut; `install.js` reads the same
+  cache itself) and therefore exactly the kind of thing that stays broken: a
+  lookup that never hits behaves like one that always does, only slower. The
+  cache directory is derived now too.
+
   **Not done, deliberately:** no universal binary (arm64 and x64 are separate
   artifacts — a universal build needs `better-sqlite3` compiled for both slices
   and lipo'd, a second native-build failure mode for something almost nobody

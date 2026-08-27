@@ -2155,9 +2155,11 @@ their own. Approval is cleared when the compose window closes.
 That second step is **load-bearing, not a workaround**: since Electron 42 the
 runtime binary is no longer downloaded by Electron's own postinstall, so without
 it `npm ci` leaves `node_modules/electron/dist` empty and every Electron-hosted
-check fails at startup. It unzips from `~/.cache/electron` when the version is
-already there and falls back to `install.js` otherwise, which is also what makes
-CI's Electron cache worth having.
+check fails at startup. It unzips from the platform's Electron download cache
+when the version is already there and falls back to `install.js` otherwise,
+which is also what makes CI's Electron cache worth having (`~/.cache/electron`
+on Linux, `~/Library/Caches/electron` on macOS — the workflow caches whichever
+the runner uses).
 
 **Everything platform-shaped in it is derived, not assumed**, and that is the
 second reason it is load-bearing. It used to hardcode the Linux answer to three
@@ -2169,6 +2171,13 @@ zip, `dist/electron` does not exist on macOS (the binary is at
 `npm install` with it. There was no way to get a Mac checkout to install at all.
 Platform and arch now come from `process.platform` / `process.arch`, which also
 makes a Linux **arm64** checkout install for the first time.
+
+The **cache directory** is derived the same way, and is worth calling out
+because getting it wrong is invisible: the unzip is only a fast path, and
+`install.js` reads the same cache itself, so a lookup that never hits behaves
+exactly like one that always does — just slower. The first macOS CI run caught
+this in its own log (`Not in /Users/runner/.cache/electron`) while still passing
+green.
 
 The cache lookup is guarded with `[[ -d ]]` for a reason. `find` exits non-zero
 on a directory that does not exist, and under the script's `set -euo pipefail`
