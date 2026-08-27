@@ -2061,6 +2061,17 @@ check fails at startup. It unzips from `~/.cache/electron` when the version is
 already there and falls back to `install.js` otherwise, which is also what makes
 CI's Electron cache worth having.
 
+The cache lookup is guarded with `[[ -d ]]` for a reason. `find` exits non-zero
+on a directory that does not exist, and under the script's `set -euo pipefail`
+that aborted the whole thing *silently* — printing "Installing Electron
+<version> binary..." and exiting 1 without ever reaching the download. The bug
+was latent for as long as the directory was always there, which up to Electron 41
+it was: Electron's own postinstall created and populated it. Electron 42 removed
+that download, so the first cache miss after the upgrade turned `npm ci` into a
+red build on `main`. Any change to this script must be exercised with a genuinely
+cold `~/.cache/electron` **and** no `node_modules/electron/dist` — the state a CI
+runner starts in, and the state a developer's machine almost never reproduces.
+
 ## Integration tests (GreenMail)
 
 `npm run build` is still the main verification gate, and there is no unit-test
