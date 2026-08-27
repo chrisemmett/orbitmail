@@ -102,7 +102,7 @@ Two habits that prevent the worst of it:
 
 - `npm run dev` — dev server with hot reload. If Electron refuses to start, `unset ELECTRON_RUN_AS_NODE` first (it's set in this environment's shell).
 - `npm run build` — **this is the verification gate.** It compiles main, preload, and renderer via electron-vite/esbuild. Run it after changes to confirm they're sound.
-- `npm run dist` / `dist:deb` / `dist:appimage` — package (runs `icons` + `build` + electron-builder). Packages contain **no** OAuth credentials (rule 5); they are resolved at runtime, so there is nothing to rebuild after editing `.env`.
+- `npm run dist` / `dist:deb` / `dist:appimage` / `dist:mac` / `dist:mac:x64` — package (runs `icons` + `build` + electron-builder). `dist` targets the host platform: Linux `.deb`+AppImage, or macOS `.dmg`+`.zip`. Packages contain **no** OAuth credentials (rule 5); they are resolved at runtime, so there is nothing to rebuild after editing `.env`. **Rule 5 covers the macOS signing identity too** — `build.mac.identity` is `null` on purpose, so releases are ad-hoc signed; do not remove it to make Gatekeeper quieter (DEVELOPERS.md → macOS packages explains the electron-builder auto-discovery trap behind it).
 
 - `npm run ui:preview` — serve the built renderer to a browser with the IPC bridge stubbed, so UI changes can be looked at where Electron will not start. Not a test; see the GUI note below.
 
@@ -167,7 +167,7 @@ three commands you ran.
 - **`offscreen: true` hangs forever.** That is the thing that does not work, and what made "the GUI can't run" look absolute.
 - **A *visible* window works on the real display** with `--disable-gpu` — that is what `npm run test:e2e` uses, and it is how anything window-lifecycle (a `close` handler, a parent/child destroy order) can be tested at all. Headless Ozone segfaults on the first window instead, which is why those checks cannot run in CI.
 
-To inspect state, read the SQLite DB directly with `ELECTRON_RUN_AS_NODE=1`; DB lives at `~/.config/orbit-mail/data/orbit-mail.db`. **Copy the `-wal` file too** — the DB runs in WAL mode, so a copy of just the `.db` can be missing recent commits.
+To inspect state, read the SQLite DB directly with `ELECTRON_RUN_AS_NODE=1`; DB lives under the userData root — `~/.config/orbit-mail/data/orbit-mail.db` on Linux, `~/Library/Application Support/Orbit Mail/data/orbit-mail.db` on a packaged macOS build. **Never hardcode either in user-facing text**: resolve it from `app.getPath('userData')` (see `userEnvFilePath()`), because a Linux-only path in a dialog is a bug on macOS and reads as correct to whoever writes it. **Copy the `-wal` file too** — the DB runs in WAL mode, so a copy of just the `.db` can be missing recent commits.
 
 ## Process architecture
 

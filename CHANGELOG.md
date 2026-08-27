@@ -7,6 +7,39 @@ which keeps decisions rather than just tasks.
 Versions follow [semantic versioning](https://semver.org/). Before 1.0 the minor
 number moves for anything substantial.
 
+## Unreleased
+
+Orbit Mail runs on macOS.
+
+### Added
+
+- **A macOS build.** There is now a `.dmg` for Apple Silicon and for Intel,
+  alongside the Linux `.deb` and AppImage. It is the same app: the same
+  accounts, the same cached mail, the same AI features. macOS gets a dock badge
+  with your unread count instead of a tray icon, `Cmd` for the zoom shortcuts,
+  and closing the last window leaves Orbit Mail in the dock rather than quitting
+  it. Your mail lives in `~/Library/Application Support/Orbit Mail/`.
+- **Stored passwords are properly encrypted on macOS.** The Keychain is always
+  there, so the fallback that Linux desktops without a keyring have to use — where
+  secrets are obfuscated rather than encrypted, and the app warns you — never
+  applies on a Mac.
+
+### Fixed
+
+- **The Add Account dialog told you to edit a file that did not exist.** When it
+  offered a `.env` as an alternative to typing your OAuth credentials in, it
+  always printed the Linux path. It now shows the real path for your machine.
+
+### Known issues
+
+- **macOS builds are not signed by an identified developer.** The first launch
+  needs a right-click → **Open**; after that it opens normally. Signing a public
+  release would mean putting a personal Apple developer identity into a public
+  repository, which Orbit Mail does not do with any credential. See
+  [INSTALL.md](INSTALL.md#macos).
+- **No Windows build**, and no way to run Orbit Mail on a NAS or server — it
+  needs a desktop.
+
 ## 0.7.0 — 2026-08-04
 
 Writing a message gets the window and the toolbar it should always have had. The

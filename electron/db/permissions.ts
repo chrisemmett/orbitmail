@@ -1,9 +1,10 @@
 import { chmodSync, existsSync, mkdirSync, statSync } from 'fs'
 
 // Every local copy of the user's mail is readable by anyone with an account on
-// the machine unless we say otherwise. Electron creates `~/.config/orbit-mail`
-// as 0700, but everything we make inside it followed the process umask: the
-// database landed 0644 and the data directories 0775, so on a shared machine
+// the machine unless we say otherwise. Electron creates the userData root
+// (`~/.config/orbit-mail` on Linux, `~/Library/Application Support/...` on
+// macOS) as 0700, but everything we make inside it followed the process umask:
+// the database landed 0644 and the data directories 0775, so on a shared machine
 // another user could read the message bodies, the attachment files, and the
 // encrypted credential blobs.
 //

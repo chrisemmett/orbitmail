@@ -2,7 +2,7 @@
   "name": "orbit-mail",
   "version": "0.7.0",
   "desktopName": "orbit-mail.desktop",
-  "description": "Orbit Mail — a polished desktop email client for Linux",
+  "description": "Orbit Mail — a polished desktop email client for Linux and macOS",
   "main": "out/main/index.js",
   "homepage": "https://github.com/orbit-mail/orbit-mail",
   "author": {
@@ -19,6 +19,8 @@
     "dist": "npm run icons && npm run build && electron-builder",
     "dist:deb": "npm run icons && npm run build && electron-builder --linux deb",
     "dist:appimage": "npm run icons && npm run build && electron-builder --linux AppImage",
+    "dist:mac": "npm run icons && npm run build && electron-builder --mac",
+    "dist:mac:x64": "npm run icons && npm run build && electron-builder --mac --x64",
     "postinstall": "electron-builder install-app-deps && bash scripts/install-electron.sh",
     "test:imap": "node scripts/imap-integration.mjs",
     "test:store": "node scripts/store-race.mjs",
@@ -80,6 +82,16 @@
         ]
       }
     ],
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.productivity",
+      "artifactName": "${name}-${version}-${os}-${arch}.${ext}",
+      "identity": null,
+      "notarize": false
+    },
     "linux": {
       "target": [
         "deb",

@@ -126,7 +126,11 @@ import {
   isExecutableAttachment,
   executableAttachmentWarning
 } from './services/attachment-safety'
-import { getOAuthConfigStatus, setStoredOAuthCredentials } from './services/oauth-config'
+import {
+  getOAuthConfigStatus,
+  setStoredOAuthCredentials,
+  userEnvFilePath
+} from './services/oauth-config'
 import {
   getAccountInfo,
   createMailbox,
@@ -251,7 +255,9 @@ process.on('unhandledRejection', (reason) => reportUnexpectedError(reason, 'Unha
 // credentials without rebuilding. Existing environment variables win, so this
 // never overrides a developer's shell or the project .env.
 function loadUserEnvFile(): void {
-  const path = join(app.getPath('userData'), '.env')
+  // Shared with the OAuth error message and the Add Account hints, so what the
+  // app reads and what it tells you to edit cannot drift apart per platform.
+  const path = userEnvFilePath()
   if (!existsSync(path)) return
   try {
     const parsed = parseDotenv(readFileSync(path))

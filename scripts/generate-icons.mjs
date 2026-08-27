@@ -17,7 +17,11 @@ for (const size of sizes) {
   console.log(`Wrote ${out}`)
 }
 
-await sharp(svgPath, { density: 384 }).resize(512, 512).png().toFile(join(root, 'build/icon.png'))
+// The single-file icon, used by electron-builder for the macOS .icns (the Linux
+// targets point at the `build/icons` directory above instead). 1024 rather than
+// 512 because an .icns carries 512@2x, and generating that from a 512 source
+// leaves the Finder and dock previews visibly soft on a retina display.
+await sharp(svgPath, { density: 512 }).resize(1024, 1024).png().toFile(join(root, 'build/icon.png'))
 console.log(`Wrote ${join(root, 'build/icon.png')}`)
 
 // ---------------------------------------------------------------------------

@@ -69,8 +69,9 @@ Severity tags come from the [2026-07-21 audit](#security--correctness-audit-2026
 - **Restoring down a composer that opened maximized gives a size nobody chose.** Size persistence ships (see Done); this is its one measured rough edge. A window maximized *before it is mapped* has no normal geometry for the window manager to restore to, so Muffin invents one at roughly 90% of the screen. The obvious fix is worse and was tried: re-imposing the remembered size from an `unmaximize` handler loses to the WM, which finishes its own restore afterwards and snaps the window back to the maximized rectangle — restore-down then appears to do nothing at all. The remaining option is to show the window unmaximized and maximize it after it is mapped, which trades this for a visible small→full-screen jump on **every** composer, a worse trade for a much more common action. Left alone deliberately; revisit only if a desktop is found where the jump does not happen.
 - **IMAP draft upload** — local autosave ships (see Done); drafts are not uploaded to the account's Drafts folder, so one started here is not visible in webmail or on a phone. Uploading means an APPEND per save *and* deleting the previously uploaded copy or the folder fills with revisions, needs the connection lane, cannot work offline, and has no meaning for POP3. The duplicate-draft failure if a delete fails is the reason it was not done with the local half.
 - Inline search-operator syntax (`from:`, `subject:`) and result highlighting — field **scoping** now ships via the search-scope selector (All/From/To/Subject/Body); inline operator parsing and match highlighting are still deferred
-- Auto-update and code signing (CI and integration tests now exist — `.github/workflows/ci.yml` runs `npm run build`, `npm run test:store` and `npm run test:imap` on every push and pull request)
-- Cross-platform builds (Windows/macOS)
+- Auto-update and code signing (CI and integration tests now exist — `.github/workflows/ci.yml` runs `npm run build`, `npm run test:store` and `npm run test:imap` on every push and pull request, plus a macOS leg that builds and runs the store tests). **Signing is not merely undone, it is pinned off** for macOS: `build.mac.identity` is `null`, so releases are ad-hoc signed and every user clicks through Gatekeeper once. See the macOS entry in Done for why that is the deliberate reading of rule 5, and what would have to change to sign a release without putting a Developer ID in a public repo.
+- **A headless / server mode, for a NAS or a remote host.** Every mail operation — sync, send, OAuth, search — lives behind the IPC contract inside a running Electron main process, so there is nothing to run without a desktop session. Assessed 2026-08-27 and **not attempted**: the only cheap route is a full desktop in a container reached over VNC, which drags in the thing that makes it a bad idea rather than merely an awkward one — a container has no keyring, so `safeStorage` degrades to base64 and the credential blob for every account is recoverable by anyone who can read the file, on a machine that is by definition network-reachable. The honest version is splitting `electron/services/` out into a daemon with its own web UI, which is a different product and a rewrite of the process architecture, not a port. Recorded so the next person costs it before starting.
+- Windows build — macOS now ships (see Done); Windows is untouched and nobody has asked for it
 - POP3 move support or reduced POP3 scope
 - **Block is linear in account size** — `from_addr` stores the display form (`"Name" <addr>`), so the block predicate is a `LIKE` per blocked entry and cannot use an index; it is capped at 200 entries. The sub-linear fix is a `from_normalized` column populated in `upsertMessage` beside `search_text`, backfilled through `drainInBackground`, indexed on `(account_id, from_normalized)`. **Its trap, recorded before anyone tries it:** un-backfilled rows are `NULL`, and `from_normalized NOT IN (…)` evaluates to `NULL` for them — falsy — so a naive version silently hides *every* message the backfill has not reached yet. It needs `(from_normalized IS NULL OR from_normalized NOT IN (…))`, which in turn fails to block old mail until the backfill completes.
 
@@ -110,6 +111,65 @@ does. Preserving that needs prefix or trigram tokenisation.
 # Done
 
 ## Shipped
+
+- **Orbit Mail builds and runs on macOS** — a real `dist:mac` target, not a
+  "should work". The blocker was not the app: the mail layer is platform-neutral
+  and the desktop integration was already gated per call site (tray, Unity
+  badge, `.desktop` registration all return early off Linux; `window-all-closed`
+  already skipped `quit` on darwin; `zoomActionForInput` already matched
+  `meta`). **It was `postinstall`.** `scripts/install-electron.sh` hardcoded the
+  Linux answer to three questions — the cache filename `…-linux-x64.zip`, the
+  binary path inside `dist/`, and the executable check that ends the script —
+  and on macOS the third turned a *successful* download into a hard failure:
+  `install.js` fetched the right zip, `dist/electron` does not exist on macOS
+  (the binary is `Electron.app/Contents/MacOS/Electron`), the check failed, and
+  the script exited 1 with `npm install` behind it. A Mac checkout could not be
+  installed at all, so nobody ever got as far as finding out whether the app
+  ran. Platform and arch now come from `process.platform` / `process.arch`,
+  which incidentally makes a Linux **arm64** checkout install for the first
+  time. **The reason it survived**: it is the one script no check exercises —
+  CI's only runner was `ubuntu-latest`, where every hardcoded value happened to
+  be correct. A `macos-latest` leg now runs `npm run build` and
+  `npm run test:store`, which is exactly the class of failure it catches;
+  `test:imap` stays Linux-only because the macOS runners have no Docker for
+  GreenMail, and `test:e2e` runs on neither.
+
+  **Signing is deliberately absent, and pinned that way.** `build.mac` sets
+  `identity: null` and `notarize: false`, so releases are ad-hoc signed (which
+  arm64 macOS requires to run a binary at all) and users right-click → **Open**
+  once. A Developer ID is a credential identifying one person and this is a
+  public repo, which is rule 5 exactly. `identity: null` rather than merely
+  omitting it, because electron-builder's default is to **auto-discover**
+  whatever ID is in the building machine's keychain — a contributor packaging a
+  test build on their own Mac would otherwise sign artifacts under their own
+  name without deciding to, and signed-but-unnotarised is a *worse* first-launch
+  experience than ad-hoc, so the accident buys nothing. DEVELOPERS.md records
+  the `-c.mac.identity=null@false` incantation for signing a private build with
+  credentials supplied from the environment.
+
+  **One user-visible bug fell out of the same review**, and it was not
+  cosmetic: the path of the `.env` a packaged build reads was hardcoded as
+  `~/.config/orbit-mail/.env` in three user-facing strings — the "not
+  configured" OAuth error and two hints in the Add Account dialog — while
+  `main.ts` read the real `app.getPath('userData')`. On macOS those strings
+  pointed at a directory that does not exist and never would, on the one screen
+  a Mac user has to get right to use Gmail at all. It is now resolved once
+  (`userEnvFilePath()`) and carried to the renderer as `envFilePath` on
+  `OAuthConfigStatus`, so the dialog prints the path for the machine it is
+  running on. Adding a field to an existing status payload rather than a new IPC
+  channel keeps the spine untouched.
+
+  **Not done, deliberately:** no universal binary (arm64 and x64 are separate
+  artifacts — a universal build needs `better-sqlite3` compiled for both slices
+  and lipo'd, a second native-build failure mode for something almost nobody
+  needs), no notarisation, no auto-update, and **no measured verification of
+  macOS runtime behaviour** — `test:e2e` needs a display and has never run
+  there, so window lifecycle on macOS rests on the per-call-site gating being
+  right, not on a green check. That is recorded in DEVELOPERS.md → Known
+  limitations rather than left implied. Verified with `npm run build` and
+  `npm run test:store`; `test:imap` and `test:e2e` could not run in the
+  environment this was written in (the Electron binary download is blocked
+  there), so CI is the first real run of the suite.
 
 - **Sync status is per account** — the first item out of the daily-driver audit,
   and the one four other findings collapse into. `SyncStatus` was a single

@@ -565,6 +565,13 @@ export interface OAuthConfigStatus {
   fromEnvironment: OAuthCredentialKey[]
   /** False when safeStorage is unavailable, so values are only base64-encoded. */
   encryptionAvailable: boolean
+  /**
+   * Absolute path of the `.env` a packaged build reads, resolved by the main
+   * process. The renderer must not rebuild this from a hardcoded
+   * `~/.config/orbit-mail`: that is the Linux answer, and macOS keeps user data
+   * under `~/Library/Application Support`.
+   */
+  envFilePath: string
 }
 
 export interface OrbitMailAPI {

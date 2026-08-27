@@ -57,3 +57,44 @@ jobs:
       # container down, so there is no separate log-collection step here.
       - name: Integration tests
         run: npm run test:imap
+
+  # The macOS target has one job here: prove it still installs and builds.
+  #
+  # The reason it is a separate job rather than a matrix leg is that the two
+  # platforms can run different amounts of the suite. `test:imap` needs Docker
+  # for GreenMail, and the macOS runners have no Docker daemon, so the
+  # integration suite stays Linux-only and this leg stops at the build gate plus
+  # the store tests.
+  #
+  # What it catches is worth a job on its own: `postinstall` resolves the
+  # Electron binary path per platform, and the Linux-only version of that script
+  # failed `npm install` outright on macOS. That is invisible to every check
+  # that runs on ubuntu.
+  build-macos:
+    runs-on: macos-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Cache Electron binary
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/electron
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      # Also rebuilds better-sqlite3 against Electron's ABI, and runs the
+      # platform-aware Electron install script — the step that used to fail here.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Store tests
+        run: npm run test:store

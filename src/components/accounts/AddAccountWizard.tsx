@@ -272,13 +272,13 @@ function OAuthCredentialsForm({
       </p>
       <p className="account-hint">
         See DEVELOPERS.md → OAuth setup for the registration steps. You can also set them
-        in <code>~/.config/orbit-mail/.env</code> instead.
+        in <code>{status.envFilePath}</code> instead.
       </p>
 
       {!status.encryptionAvailable && (
         <p className="account-hint">
           No system keyring is available, so these will be stored obfuscated rather than
-          encrypted. Consider using <code>~/.config/orbit-mail/.env</code> instead.
+          encrypted. Consider using <code>{status.envFilePath}</code> instead.
         </p>
       )}
 

@@ -9,14 +9,28 @@ ELECTRON_DIR="$ROOT/node_modules/electron"
 VERSION="$(node -p "require('$ELECTRON_DIR/package.json').version")"
 DIST="$ELECTRON_DIR/dist"
 PATH_FILE="$ELECTRON_DIR/path.txt"
-PLATFORM_PATH="electron"
+
+# Where the binary lands inside dist/, and what the download is called, both
+# vary by platform. This script hardcoded the Linux answers to all three, and on
+# macOS that was not a graceful degradation: `node install.js` downloaded the
+# right zip, the executable check then looked for `dist/electron` — which only
+# exists on Linux — and the script exited 1, taking `npm install` with it. Ask
+# Node what platform this is rather than assuming.
+PLATFORM="$(node -p 'process.platform')"
+ARCH="$(node -p 'process.arch')"
+
+case "$PLATFORM" in
+  darwin) PLATFORM_PATH="Electron.app/Contents/MacOS/Electron" ;;
+  win32)  PLATFORM_PATH="electron.exe" ;;
+  *)      PLATFORM_PATH="electron" ;;
+esac
 
 if [[ -x "$DIST/$PLATFORM_PATH" ]] && [[ -f "$PATH_FILE" ]]; then
   echo "Electron $VERSION already installed."
   exit 0
 fi
 
-echo "Installing Electron $VERSION binary..."
+echo "Installing Electron $VERSION binary for ${PLATFORM}-${ARCH}..."
 
 rm -rf "$DIST"
 mkdir -p "$DIST"
@@ -29,7 +43,7 @@ mkdir -p "$DIST"
 # directory at all, and a cache miss became a build failure. Keep the guard.
 CACHE_ZIP=""
 if [[ -d "${HOME}/.cache/electron" ]]; then
-  CACHE_ZIP=$(find "${HOME}/.cache/electron" -name "electron-v${VERSION}-linux-x64.zip" 2>/dev/null | head -1 || true)
+  CACHE_ZIP=$(find "${HOME}/.cache/electron" -name "electron-v${VERSION}-${PLATFORM}-${ARCH}.zip" 2>/dev/null | head -1 || true)
 fi
 
 if [[ -z "$CACHE_ZIP" ]]; then

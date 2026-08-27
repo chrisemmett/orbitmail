@@ -16,7 +16,9 @@
 // wins:
 //
 //   1. the process environment — a developer's .env, loaded by dotenv in main.ts
-//   2. ~/.config/orbit-mail/.env — for someone running a packaged build
+//   2. a `.env` in the app's user-data directory — for someone running a
+//      packaged build. `userEnvFilePath()` below resolves it per platform:
+//      ~/.config/orbit-mail/.env on Linux, ~/Library/Application Support/... on macOS
 //   3. entered in the app when adding an account, stored encrypted via
 //      safeStorage (the same mechanism the Anthropic API key uses)
 //
@@ -25,9 +27,25 @@
 // (RFC 8252 §8.5), which is why the flow also uses PKCE. That is a reason not
 // to panic if one leaks; it is not a reason to ship one.
 
-import { safeStorage } from 'electron'
+import { app, safeStorage } from 'electron'
+import { join } from 'path'
 import { getRawSqlite } from '../db'
 import type { OAuthConfigStatus } from '../../shared/types'
+
+/**
+ * The `.env` a packaged build reads, resolved rather than assumed.
+ *
+ * This path was written out as `~/.config/orbit-mail/.env` in three places — an
+ * error message, and two hints in the Add Account dialog. That is the Linux
+ * answer only: `app.getPath('userData')` is `~/Library/Application Support/...`
+ * on macOS, so every one of those strings sent a Mac user to a directory that
+ * does not exist and never would. `main.ts` always read the real path; only the
+ * text describing it was hardcoded, which is the kind of drift that survives
+ * because nothing about it looks wrong on the platform it was written on.
+ */
+export function userEnvFilePath(): string {
+  return join(app.getPath('userData'), '.env')
+}
 
 export type OAuthCredentialKey =
   | 'GOOGLE_CLIENT_ID'
@@ -46,7 +64,7 @@ function missing(names: string[]): Error {
     `${names.join(' and ')} ${plural ? 'are' : 'is'} not configured.\n\n` +
       `Supply ${plural ? 'them' : 'it'} in one of:\n` +
       `  • this dialog — stored encrypted on this machine\n` +
-      `  • ~/.config/orbit-mail/.env\n` +
+      `  • ${userEnvFilePath()}\n` +
       `  • the environment before launching\n\n` +
       `Registering an OAuth app takes a few minutes: see DEVELOPERS.md → OAuth setup.`
   )
@@ -83,8 +101,8 @@ export function hasMicrosoftOAuthConfig(): boolean {
 //
 // Stored encrypted via safeStorage in app_preferences, the same mechanism the
 // Anthropic API key uses. They sit *below* the environment so a developer's
-// .env — or ~/.config/orbit-mail/.env — always wins and the app never silently
-// disagrees with the file someone just edited.
+// .env — or the user-data `.env` (`userEnvFilePath()`) — always wins and the
+// app never silently disagrees with the file someone just edited.
 //
 // Values are never handed back to the renderer. The UI is told only whether a
 // provider is configured and which keys came from the environment; it collects
@@ -150,6 +168,7 @@ export function getOAuthConfigStatus(): OAuthConfigStatus {
     google: hasGoogleOAuthConfig(),
     microsoft: hasMicrosoftOAuthConfig(),
     fromEnvironment: keys.filter((key) => !!process.env[key]?.trim()),
-    encryptionAvailable: safeStorage.isEncryptionAvailable()
+    encryptionAvailable: safeStorage.isEncryptionAvailable(),
+    envFilePath: userEnvFilePath()
   }
 }

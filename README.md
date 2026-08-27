@@ -1,13 +1,13 @@
 # Orbit Mail
 
-A desktop email client for Linux, with the three-pane layout Apple Mail users
-will recognise. It handles Gmail, Microsoft 365, and any IMAP or POP3 account.
-Your mail is cached on your machine, so search is instant and you can read
-offline. Optional AI features — off unless you add your own API key — summarise
+A desktop email client for Linux and macOS, with the three-pane layout Apple
+Mail users will recognise. It handles Gmail, Microsoft 365, and any IMAP or
+POP3 account. Your mail is cached on your machine, so search is instant and you
+can read offline. Optional AI features — off unless you add your own API key — summarise
 messages and pull out what you still need to do.
 
 ![Version](https://img.shields.io/badge/version-0.7.0-blue)
-![Platform](https://img.shields.io/badge/platform-Linux-green)
+![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
 - [What you can do](#what-you-can-do)
@@ -225,13 +225,19 @@ name offers **Sync now** and **Remove account**.
 
 ## Your mail and your data
 
-Everything Orbit Mail knows lives on your machine:
+Everything Orbit Mail knows lives on your machine, in a settings folder that
+differs by platform:
 
-| Where | What |
-|-------|------|
-| `~/.config/orbit-mail/data/orbit-mail.db` | Your accounts, folders, cached mail and settings |
-| `~/.config/orbit-mail/data/attachments/` | Downloaded attachments |
-| `~/.config/orbit-mail/renderer-errors.log` | Written only if the window fails to draw — what went wrong, so a report has something to attach |
+| Platform | Settings folder |
+|----------|-----------------|
+| Linux | `~/.config/orbit-mail/` |
+| macOS | `~/Library/Application Support/Orbit Mail/` |
+
+| Inside it | What |
+|-----------|------|
+| `data/orbit-mail.db` | Your accounts, folders, cached mail and settings |
+| `data/attachments/` | Downloaded attachments |
+| `renderer-errors.log` | Written only if the window fails to draw — what went wrong, so a report has something to attach |
 
 - **Nothing is sent anywhere except your mail servers** — no telemetry, no
   analytics, no accounts with us. There is no "us".
@@ -289,7 +295,11 @@ Everything Orbit Mail knows lives on your machine:
   more** for older mail, or **Search whole mailbox** to pull in older matches.
 - **A very long conversation is capped at 200 messages** — you see the most
   recent 200, and the app does not currently tell you when there were more.
-- **Linux only** — no Windows or macOS builds.
+- **No Windows build.** Linux and macOS only.
+- **The macOS build is not signed by an identified developer**, so the first
+  launch needs an extra step — right-click the app and choose **Open**. See
+  [INSTALL.md](INSTALL.md#macos). The app is not notarised by Apple, and no
+  release is.
 
 The full backlog, including known bugs, is in [TODO.md](TODO.md).
 
@@ -308,8 +318,8 @@ administrator's.
 Click **Reload** on the panel that appears. If the window is blank with no
 panel, close and reopen Orbit Mail — your mail is stored on this computer, so
 nothing is lost either way. It writes what happened to `renderer-errors.log` in
-your settings folder (`~/.config/orbit-mail/`), which is the useful thing to
-attach if you report it.
+your settings folder (see [Your mail and your data](#your-mail-and-your-data)),
+which is the useful thing to attach if you report it.
 
 **Sync errors in the status bar**  
 Click **Retry**, or **Re-authenticate** if it is an account problem.
