@@ -107,8 +107,9 @@ Two habits that prevent the worst of it:
 **Two platforms, and the Mac half cannot be run from here.** The app's only
 Linux-specific runtime code is the launcher badge and the tray, both already
 gated on `process.platform`. The traps are in the scaffolding: `postinstall`'s
-Electron path and cache-zip name are platform-derived (they were hardcoded to
-Linux, and `npm install` could not complete on a Mac), `--ozone-platform` and
+Electron path, cache directory and zip name are all platform-derived (they were
+hardcoded to Linux; `npm install` could not complete on a Mac, and the cache
+step went green having cached nothing), `--ozone-platform` and
 `DISPLAY` are Linux notions the test runners must gate on, and
 `build.mac.identity` is `"-"` because electron-builder does not sign without a
 Developer ID and the kernel refuses an unsigned arm64 bundle. All of it is

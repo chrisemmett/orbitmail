@@ -134,6 +134,16 @@ does. Preserving that needs prefix or trigram tokenisation.
     there and failed its own final guard. Both are derived now, mirroring
     `getPlatformPath()` in Electron's `install.js`, and the download path
     delegates to `install.js` so its Rosetta x64→arm64 upgrade still applies.
+  - **The Electron *cache directory* was hardcoded to Linux too**, and that one
+    survived the first pass — found only because the new macOS CI job went green
+    while logging `Path Validation Error: Path(s) specified in the action for
+    caching do(es) not exist`. `@electron/get` resolves its cache root through
+    env-paths: `~/Library/Caches/electron` on macOS, `$XDG_CACHE_HOME/electron`
+    on Linux, `electron_config_cache` over both. So the lookup could never hit on
+    a Mac, and CI's cache step cached nothing on every run and said so only in
+    the log. Both the script and the workflow path are fixed, and the suite
+    asserts they agree — a green step that does nothing is the failure mode
+    worth a check.
   - **There was no `mac` block in the build config**, so `npm run dist` on a Mac
     produced nothing installable. Now `.dmg` + `.zip` for arm64 and x64, via
     `npm run dist:mac`.

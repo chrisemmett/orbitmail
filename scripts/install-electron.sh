@@ -47,13 +47,28 @@ mkdir -p "$DIST"
 # up to Electron 41 Electron's own postinstall created and populated it. From
 # Electron 42 that download was removed, so on a cold runner there is no
 # directory at all, and a cache miss became a build failure. Keep the guard.
+#
+# Where the zip lives is a *host* question, not a target one, and it is not
+# `~/.cache/electron` everywhere: `@electron/get` resolves its cache root through
+# env-paths, which is `~/Library/Caches/electron` on macOS and honours
+# `XDG_CACHE_HOME` on Linux. Hardcoding the Linux answer meant the lookup could
+# never hit on a Mac — and, more visibly, that CI's cache step pointed at a
+# directory that does not exist there and saved nothing at all.
+if [[ -n "${electron_config_cache:-}" ]]; then
+  CACHE_DIR="$electron_config_cache"
+elif [[ "$(uname -s)" == "Darwin" ]]; then
+  CACHE_DIR="$HOME/Library/Caches/electron"
+else
+  CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/electron"
+fi
+
 CACHE_ZIP=""
-if [[ -d "${HOME}/.cache/electron" ]]; then
-  CACHE_ZIP=$(find "${HOME}/.cache/electron" -name "electron-v${VERSION}-${PLATFORM}-${ARCH}.zip" 2>/dev/null | head -1 || true)
+if [[ -d "$CACHE_DIR" ]]; then
+  CACHE_ZIP=$(find "$CACHE_DIR" -name "electron-v${VERSION}-${PLATFORM}-${ARCH}.zip" 2>/dev/null | head -1 || true)
 fi
 
 if [[ -z "$CACHE_ZIP" ]]; then
-  echo "Not in ${HOME}/.cache/electron; downloading."
+  echo "Not in $CACHE_DIR; downloading."
   # install.js writes path.txt itself, and on a Mac running x64 Node under
   # Rosetta it also upgrades the download to arm64 — so let it have the last
   # word rather than re-deriving anything here.

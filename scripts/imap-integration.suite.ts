@@ -4147,6 +4147,18 @@ async function main(): Promise<void> {
       !/electron-v\$\{VERSION\}-linux-x64\.zip/.test(installer) &&
         installer.includes('${PLATFORM}-${ARCH}'))
 
+    // `@electron/get` resolves its cache root through env-paths, so the zip is
+    // under ~/Library/Caches/electron on a Mac. The Linux path is not an error
+    // there, it is worse: the lookup silently never hits, and CI's cache step
+    // goes green having saved nothing.
+    ok('the Electron installer derives the cache directory rather than assuming ~/.cache',
+      installer.includes('Library/Caches/electron') && !/\$\{HOME\}\/\.cache\/electron/.test(installer))
+
+    const workflow = readSource(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8')
+    const macJob = workflow.slice(workflow.indexOf('build-macos:'))
+    ok('and the macOS CI job caches the path macOS actually uses',
+      macJob.includes('~/Library/Caches/electron'))
+
     // A `--ozone-platform` switch is Linux's, and DISPLAY is never set on a Mac
     // — so testing DISPLAY alone handed every macOS run a flag for a windowing
     // layer its Electron was not built with.

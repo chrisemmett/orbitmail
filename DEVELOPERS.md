@@ -2159,6 +2159,16 @@ final guard, so `npm install` could not complete at all. The mapping mirrors
 to `install.js` rather than re-deriving anything, so its Rosetta x64→arm64
 upgrade still applies.
 
+The **cache directory** is derived too, and it is a *host* question rather than a
+target one. `@electron/get` resolves its root through env-paths — respecting
+`electron_config_cache`, `~/Library/Caches/electron` on macOS,
+`$XDG_CACHE_HOME/electron` on Linux — so the hardcoded `~/.cache/electron` could
+never hit on a Mac. That one was caught by the macOS CI job going green while
+logging `Path Validation Error: Path(s) specified in the action for caching
+do(es) not exist`: the cache step cached nothing, every run, and said so only in
+the log. The macOS job's `actions/cache` path was corrected with it. Exercise
+both branches when changing this — a genuinely cold cache *and* a warm one.
+
 The cache lookup is guarded with `[[ -d ]]` for a reason. `find` exits non-zero
 on a directory that does not exist, and under the script's `set -euo pipefail`
 that aborted the whole thing *silently* — printing "Installing Electron
@@ -2218,7 +2228,7 @@ reimplementing them, so it exercises the shipping code paths:
 | OAuth config | Credentials resolve environment-first, fall back to values entered in the app, and the status payload never carries a value back to the renderer. Plus the rule-5 guards: no OAuth constants in the build config, no placeholders in the bundle, and no `.env` value present in `out/main/index.js`. |
 | Tray icon | The count→icon mapping: nothing unread shows the plain icon, single digits show that number, ten or more collapses to `9+`, a fractional count floors instead of naming a file that does not exist, and junk (negative, `NaN`) falls back to the plain icon. Every file the mapping can name is checked to exist in `build/icons/tray/`, and the tooltip keeps the exact number past nine, singular at one. |
 | Launcher badge | The Unity `LauncherEntry` signal is a valid D-Bus object path (a percent-encoded app URI is not, and every emit silently failed), the count is typed `int64`, and zero hides the badge. |
-| macOS packaging | The install script knows where Electron's binary lives on darwin and derives the cache zip from platform and arch rather than hardcoding `linux-x64`; both test runners gate their `DISPLAY` assumptions on Linux; the build config has a mac section reached by `npm run dist:mac`, covers arm64 *and* x64, is at least ad-hoc signed (`identity: "-"` — an unsigned arm64 bundle will not launch), and registers the `mailto:` scheme so the Default-mail-app toggle has something to claim. All of it is metadata no compiler reads, silent on Linux and fatal on a Mac. |
+| macOS packaging | The install script knows where Electron's binary lives on darwin, derives the cache zip from platform and arch rather than hardcoding `linux-x64`, and derives the cache *directory* rather than assuming `~/.cache/electron` (which is also asserted against the macOS CI job's `actions/cache` path — a mismatch there caches nothing and stays green); both test runners gate their `DISPLAY` assumptions on Linux; the build config has a mac section reached by `npm run dist:mac`, covers arm64 *and* x64, is at least ad-hoc signed (`identity: "-"` — an unsigned arm64 bundle will not launch), and registers the `mailto:` scheme so the Default-mail-app toggle has something to claim. All of it is metadata no compiler reads, silent on Linux and fatal on a Mac. |
 | Gmail labels | A label carried by the whole conversation counts every message; one carried by a single reply reports *one*, not the conversation (the difference the picker draws a dash for). The Inbox is a label and says so; a virtual view is not offered as one, and neither is anything a message can only be moved to. Another account holding the same `Message-ID` contributes no label — asserted against `listMessageCopies` itself, because the label-level check passes whether or not the scoping exists, and a leaked copy is what `addLabel` would take its COPY *from*. Adding a label every message already carries, or removing one none carries, does nothing at all (`failed` is asserted too — without the filter it would attempt a server round-trip and report a failure rather than a no-op). Labelling a non-Gmail account is refused, and a label deleted underneath the picker is an error rather than a crash. |
 | IPC contract | Every channel `preload.ts` invokes has an `ipcMain.handle` in `main.ts`. Added after two channels were wired into the preload but not main — clean build, green suite, runtime failure. |
 | Docs | Every `npm run` script and file path the docs cite exists, the documented Electron version matches `package.json`, and no document claims credentials are built into a package (CLAUDE.md rule 6). Prose is not checked; references are. |
@@ -2273,7 +2283,8 @@ Notes for anyone extending it:
   there is no `DISPLAY`, so no xvfb is needed.
 - CI runs a second job on `macos-latest` doing `npm ci`, `npm run build` and
   `npm run test:store`, plus a one-line assertion that the Electron binary is
-  where `path.txt` claims. That job exists for the install step: the macOS
+  where `path.txt` claims. Its `actions/cache` path is
+  `~/Library/Caches/electron`, not the Linux job's `~/.cache/electron`. That job exists for the install step: the macOS
   breakage was in `postinstall`, so it happened before any test could run, and
   no Linux job could ever see it. It stops at the store checks because
   `test:imap` and `test:e2e` both need Docker, which GitHub's macOS runners do
