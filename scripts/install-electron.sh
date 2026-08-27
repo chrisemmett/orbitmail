@@ -21,11 +21,22 @@ echo "Installing Electron $VERSION binary..."
 rm -rf "$DIST"
 mkdir -p "$DIST"
 
-CACHE_ZIP=$(find "${HOME}/.cache/electron" -name "electron-v${VERSION}-linux-x64.zip" 2>/dev/null | head -1)
+# `find` exits non-zero when the cache directory does not exist, and under
+# `set -euo pipefail` that killed this script silently — the download below was
+# never reached. It went unnoticed for as long as the directory always existed:
+# up to Electron 41 Electron's own postinstall created and populated it. From
+# Electron 42 that download was removed, so on a cold runner there is no
+# directory at all, and a cache miss became a build failure. Keep the guard.
+CACHE_ZIP=""
+if [[ -d "${HOME}/.cache/electron" ]]; then
+  CACHE_ZIP=$(find "${HOME}/.cache/electron" -name "electron-v${VERSION}-linux-x64.zip" 2>/dev/null | head -1 || true)
+fi
 
 if [[ -z "$CACHE_ZIP" ]]; then
+  echo "Not in ${HOME}/.cache/electron; downloading."
   node "$ELECTRON_DIR/install.js"
 else
+  echo "Found $CACHE_ZIP; unpacking."
   unzip -q -o "$CACHE_ZIP" -d "$DIST"
 fi
 

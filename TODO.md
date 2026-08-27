@@ -111,6 +111,29 @@ does. Preserving that needs prefix or trigram tokenisation.
 
 ## Shipped
 
+- **`npm ci` failed on a cold Electron cache, turning `main` red after the 44
+  upgrade** — `scripts/install-electron.sh` printed "Installing Electron 44.0.0
+  binary..." and exited 1 with no error. The cause is one line: `find` exits
+  non-zero on a directory that does not exist, `set -euo pipefail` propagates
+  that, and `set -e` killed the script before it reached the download. Guarded
+  with `[[ -d ]]` and `|| true`, and both branches now say which one they took.
+
+  **The bug predates the upgrade; only its reachability is new.** Up to Electron
+  41 the directory always existed, because Electron's own postinstall created and
+  populated it. Electron 42 removed that download — which is the same change
+  already recorded as making this script load-bearing — so the first CI cache
+  miss after the version bump hit a code path nothing had ever run.
+
+  **How it got merged:** every local run had a warm `~/.cache/electron`, seeded by
+  the `dist:deb` download during the upgrade trial. `npm ci`, `build`,
+  `test:store`, `test:imap` and all five `test:e2e` suites passed on Electron 44
+  and told us nothing, because none of them can reach a cold cache. GitHub Actions
+  was in a `major_outage` for the whole window, so the one check that would have
+  caught it never started, and the PR was merged on local evidence with the
+  outage noted. Fixed by reproducing CI's exact state — empty `HOME`, no
+  `node_modules/electron/dist` — where the old script exits 1 and the new one
+  downloads and completes.
+
 - **Audit sweep: the three findings Dependabot never raised** — `npm audit`
   reported high-severity DoS advisories in `brace-expansion` (unbounded
   expansion, and a second bypassing the first mitigation), `tar` (uncontrolled
