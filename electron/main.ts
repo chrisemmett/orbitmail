@@ -1563,7 +1563,8 @@ function registerIpc(): void {
     (): PlatformCapabilities => ({
       trayActive: isTrayActive(),
       notificationsSupported: Notification.isSupported(),
-      mailtoHandlerActive: app.isDefaultProtocolClient('mailto')
+      mailtoHandlerActive: app.isDefaultProtocolClient('mailto'),
+      platform: process.platform
     })
   )
 
@@ -1892,8 +1893,15 @@ if (!gotSingleInstanceLock) {
       startBackgroundWork()
     }
 
+    // Clicking the Dock icon, on macOS, where closing the main window leaves the
+    // app running rather than quitting (`window-all-closed` does not quit
+    // there). "No windows at all" is the wrong test for that: a composer is a
+    // top-level window that outlives the main one deliberately — see
+    // createComposeWindow — so with a half-written message on screen the count
+    // is never zero and the main window could not be brought back at all.
     app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) createMainWindow()
+      if (liveMainWindow()) focusMainWindow()
+      else createMainWindow()
     })
   })
 }

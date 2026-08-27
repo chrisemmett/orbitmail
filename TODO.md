@@ -69,8 +69,16 @@ Severity tags come from the [2026-07-21 audit](#security--correctness-audit-2026
 - **Restoring down a composer that opened maximized gives a size nobody chose.** Size persistence ships (see Done); this is its one measured rough edge. A window maximized *before it is mapped* has no normal geometry for the window manager to restore to, so Muffin invents one at roughly 90% of the screen. The obvious fix is worse and was tried: re-imposing the remembered size from an `unmaximize` handler loses to the WM, which finishes its own restore afterwards and snaps the window back to the maximized rectangle — restore-down then appears to do nothing at all. The remaining option is to show the window unmaximized and maximize it after it is mapped, which trades this for a visible small→full-screen jump on **every** composer, a worse trade for a much more common action. Left alone deliberately; revisit only if a desktop is found where the jump does not happen.
 - **IMAP draft upload** — local autosave ships (see Done); drafts are not uploaded to the account's Drafts folder, so one started here is not visible in webmail or on a phone. Uploading means an APPEND per save *and* deleting the previously uploaded copy or the folder fills with revisions, needs the connection lane, cannot work offline, and has no meaning for POP3. The duplicate-draft failure if a delete fails is the reason it was not done with the local half.
 - Inline search-operator syntax (`from:`, `subject:`) and result highlighting — field **scoping** now ships via the search-scope selector (All/From/To/Subject/Body); inline operator parsing and match highlighting are still deferred
-- Auto-update and code signing (CI and integration tests now exist — `.github/workflows/ci.yml` runs `npm run build`, `npm run test:store` and `npm run test:imap` on every push and pull request)
-- Cross-platform builds (Windows/macOS)
+- Auto-update and code signing (CI and integration tests now exist — `.github/workflows/ci.yml` runs `npm run build`, `npm run test:store` and `npm run test:imap` on every push and pull request, plus a macOS build job)
+- **Signed, notarized macOS builds.** The macOS build is ad-hoc signed, which is
+  the minimum that makes it launch, and is therefore a copy for the machine that
+  built it — moved elsewhere it is quarantined and has to be un-quarantined by
+  hand. Notarizing needs a paid Apple Developer account and an Apple ID in CI;
+  the same reasoning that declined Google verification applies. Recorded so the
+  limitation is a decision rather than an oversight.
+- **Windows builds.** macOS now ships (see Done); nothing here is deliberately
+  Windows-hostile, but no target, no check and no manual pass covers it, and the
+  tray/launcher-badge layer would need a third answer.
 - POP3 move support or reduced POP3 scope
 - **Block is linear in account size** — `from_addr` stores the display form (`"Name" <addr>`), so the block predicate is a `LIKE` per blocked entry and cannot use an index; it is capped at 200 entries. The sub-linear fix is a `from_normalized` column populated in `upsertMessage` beside `search_text`, backfilled through `drainInBackground`, indexed on `(account_id, from_normalized)`. **Its trap, recorded before anyone tries it:** un-backfilled rows are `NULL`, and `from_normalized NOT IN (…)` evaluates to `NULL` for them — falsy — so a naive version silently hides *every* message the backfill has not reached yet. It needs `(from_normalized IS NULL OR from_normalized NOT IN (…))`, which in turn fails to block old mail until the backfill completes.
 
@@ -110,6 +118,66 @@ does. Preserving that needs prefix or trigram tokenisation.
 # Done
 
 ## Shipped
+
+- **macOS support.** The app was already close to portable — the launcher badge
+  and tray are the only Linux-specific runtime code, both already gated on
+  `process.platform`, and the renderer's shortcuts already accepted `metaKey`.
+  What was actually broken was everything *around* the app:
+
+  - **`scripts/install-electron.sh` could not complete on a Mac**, which meant
+    `npm install` could not either. It hardcoded the Linux answers to two
+    platform questions: the executable inside `dist` is
+    `Electron.app/Contents/MacOS/Electron` on darwin, not `electron`, and the
+    cached zip is named for the platform and arch. The first made the
+    "already installed" test unsatisfiable, so every install wiped `dist/` and
+    re-downloaded; the script then wrote a `path.txt` naming a file that was not
+    there and failed its own final guard. Both are derived now, mirroring
+    `getPlatformPath()` in Electron's `install.js`, and the download path
+    delegates to `install.js` so its Rosetta x64→arm64 upgrade still applies.
+  - **There was no `mac` block in the build config**, so `npm run dist` on a Mac
+    produced nothing installable. Now `.dmg` + `.zip` for arm64 and x64, via
+    `npm run dist:mac`.
+  - **`identity: "-"`, and it is load-bearing.** With no Developer ID
+    electron-builder does not sign at all, and the kernel refuses an unsigned
+    arm64 bundle — "the application is damaged" on every Apple Silicon Mac, which
+    reads as "the app is broken" rather than "the build is unsigned". Ad-hoc
+    signing is what makes a locally built copy run. `hardenedRuntime` is off to
+    match: it only buys notarization, which needs a paid account, and ad-hoc plus
+    hardened runtime needs a `disable-library-validation` entitlement to avoid
+    launch failures.
+  - **`mailto:` needed a `CFBundleURLTypes` registration** (`build.mac.protocols`).
+    Without it `setAsDefaultProtocolClient` has nothing to claim and the
+    Default-mail-app toggle could never take effect on a Mac.
+  - **Both test runners assumed Linux.** `test:imap` passed
+    `--ozone-platform=headless` whenever `DISPLAY` was unset — which is always,
+    on a Mac — handing macOS Electron a switch for a windowing layer it is not
+    built with; `test:e2e` refused to start at all for the same reason. Both
+    guards are gated on `process.platform === 'linux'` now.
+  - **`build/icon.png` is 1024×1024**, up from 512. electron-builder converts it
+    to the `.icns`; 512 is its floor and silently costs the Retina slot.
+  - **The close-to-tray setting was telling Macs something false.** With no tray
+    it said "closing the window always quits", which is exactly what does *not*
+    happen there. `app:getPlatformCapabilities` now carries `platform` so the
+    pane can say the true thing — closing leaves the app in the Dock — which is
+    what that whole capability object exists for.
+  - **The Dock icon could fail to bring the window back.** `activate` — the
+    macOS reopen path, and the only platform where it fires, since closing the
+    window there leaves the app running — tested `getAllWindows().length === 0`.
+    A composer is a top-level window that outlives the main one deliberately, so
+    with a half-written message on screen that count is never zero and clicking
+    the Dock icon did nothing. Keyed on the main window now.
+  - **The executable-attachment list gained the macOS entries** it was missing:
+    `.scpt`, `.scptd`, `.applescript`, `.workflow`, `.terminal`, `.action`,
+    `.mpkg`. The list is deliberately not scoped to the running platform — a
+    `.exe` on a Mac is harmless to run and a strong signal the mail is hostile.
+
+  Checked structurally rather than by running: `test:imap` gained a macOS
+  packaging section (every check in it fails on the pre-change tree), and CI
+  gained a `macos-latest` job doing `npm ci` → build → `test:store`, which is the
+  only place the `postinstall` breakage could ever have been caught — it happened
+  before any test could run. Neither `test:imap` nor `test:e2e` can run there:
+  both need Docker, which GitHub's macOS runners do not have. **Nobody has run
+  the app on a Mac yet**; that is the gap this leaves.
 
 - **Sync status is per account** — the first item out of the daily-driver audit,
   and the one four other findings collapse into. `SyncStatus` was a single

@@ -58,7 +58,12 @@ function runSuite(entry) {
     // X server (CI) it exits with "Missing X server or $DISPLAY". The headless
     // Ozone platform avoids that without needing xvfb. Only applied when there
     // is genuinely no display, so local runs behave exactly as before.
-    const headless = !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY
+    //
+    // Linux-only: Ozone is the Linux windowing layer, and DISPLAY is a Linux
+    // notion. A Mac never sets it, so testing it alone would have handed every
+    // macOS run a switch for a platform its Electron was not built with.
+    const headless =
+      process.platform === 'linux' && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY
     const args = ['--no-sandbox', ...(headless ? ['--ozone-platform=headless'] : []), entry]
     const child = spawn(electron, args, {
       cwd: ROOT,

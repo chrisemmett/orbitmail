@@ -419,6 +419,14 @@ export interface PlatformCapabilities {
   trayActive: boolean
   notificationsSupported: boolean
   mailtoHandlerActive: boolean
+  /**
+   * `process.platform` from the main process. Carried because "no tray" does
+   * not mean the same thing everywhere: on Linux it means closing the window
+   * quits, on macOS it means the app stays in the Dock and the Dock badge keeps
+   * the count. A toggle explained with the wrong one of those is still a lie,
+   * which is what this whole object exists to prevent.
+   */
+  platform: NodeJS.Platform
 }
 
 export interface AiAnalysis {

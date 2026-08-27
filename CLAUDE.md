@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 5. **Never put credentials in a build.** Mandatory, no exceptions.
 6. **Docs ship with the change.** A feature isn't done until the docs match it.
 
-Orbit Mail is an Electron desktop email client for Linux (IMAP/POP3/SMTP + Gmail/O365 OAuth, optional Anthropic AI features). **[DEVELOPERS.md](DEVELOPERS.md) is the authoritative deep reference** — sync model, threading, search, OAuth setup, AI caching, packaging. This file captures only what's non-obvious for working in the code.
+Orbit Mail is an Electron desktop email client for Linux and macOS (IMAP/POP3/SMTP + Gmail/O365 OAuth, optional Anthropic AI features). **[DEVELOPERS.md](DEVELOPERS.md) is the authoritative deep reference** — sync model, threading, search, OAuth setup, AI caching, packaging. This file captures only what's non-obvious for working in the code.
 
 ## Rule 5 — no credentials in a build
 
@@ -102,7 +102,20 @@ Two habits that prevent the worst of it:
 
 - `npm run dev` — dev server with hot reload. If Electron refuses to start, `unset ELECTRON_RUN_AS_NODE` first (it's set in this environment's shell).
 - `npm run build` — **this is the verification gate.** It compiles main, preload, and renderer via electron-vite/esbuild. Run it after changes to confirm they're sound.
-- `npm run dist` / `dist:deb` / `dist:appimage` — package (runs `icons` + `build` + electron-builder). Packages contain **no** OAuth credentials (rule 5); they are resolved at runtime, so there is nothing to rebuild after editing `.env`.
+- `npm run dist` / `dist:deb` / `dist:appimage` / `dist:mac` — package (runs `icons` + `build` + electron-builder). Packages contain **no** OAuth credentials (rule 5); they are resolved at runtime, so there is nothing to rebuild after editing `.env`.
+
+**Two platforms, and the Mac half cannot be run from here.** The app's only
+Linux-specific runtime code is the launcher badge and the tray, both already
+gated on `process.platform`. The traps are in the scaffolding: `postinstall`'s
+Electron path and cache-zip name are platform-derived (they were hardcoded to
+Linux, and `npm install` could not complete on a Mac), `--ozone-platform` and
+`DISPLAY` are Linux notions the test runners must gate on, and
+`build.mac.identity` is `"-"` because electron-builder does not sign without a
+Developer ID and the kernel refuses an unsigned arm64 bundle. All of it is
+metadata no compiler reads — silent here, fatal there — so `test:imap` asserts
+the lot, and CI builds on `macos-latest` (build + `test:store` only: no Docker on
+those runners). Changing any of it means changing the check with it. See
+DEVELOPERS.md → Platform differences.
 
 - `npm run ui:preview` — serve the built renderer to a browser with the IPC bridge stubbed, so UI changes can be looked at where Electron will not start. Not a test; see the GUI note below.
 

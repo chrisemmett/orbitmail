@@ -1,13 +1,13 @@
 # Orbit Mail
 
-A desktop email client for Linux, with the three-pane layout Apple Mail users
-will recognise. It handles Gmail, Microsoft 365, and any IMAP or POP3 account.
+A desktop email client for Linux and macOS, with the three-pane layout Apple
+Mail users will recognise. It handles Gmail, Microsoft 365, and any IMAP or POP3 account.
 Your mail is cached on your machine, so search is instant and you can read
 offline. Optional AI features — off unless you add your own API key — summarise
 messages and pull out what you still need to do.
 
 ![Version](https://img.shields.io/badge/version-0.7.0-blue)
-![Platform](https://img.shields.io/badge/platform-Linux-green)
+![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
 - [What you can do](#what-you-can-do)
@@ -99,15 +99,17 @@ your address.
 
 Light and dark mode, and a zoom for when the text is too small — `Ctrl` and
 `+` or `-`, `Ctrl` `0` to reset, exactly as in a browser. It applies to every
-window and is remembered between runs. Desktop notifications for new mail. Your unread count in the
-window title and on a tray icon. Links open in your browser. It remembers where
-you were — folder, message, window size — between runs.
+window and is remembered between runs. Desktop notifications for new mail. Your
+unread count in the window title, and on a tray icon on Linux or the Dock icon on
+a Mac. Links open in your browser. It remembers where you were — folder, message,
+window size — between runs.
 
-Closing the window tucks Orbit Mail into the tray and keeps your mail syncing in
-the background — the way most mail clients behave. Quitting for real is a
-deliberate choice: the tray icon's **Quit**, or **File → Quit** (Ctrl+Q). (If
-your desktop doesn't draw a tray icon, launching Orbit Mail again brings the
-hidden window back.)
+Closing the window keeps Orbit Mail running and your mail syncing in the
+background — the way most mail clients behave. On Linux it tucks into the tray,
+and quitting for real is a deliberate choice: the tray icon's **Quit**, or
+**File → Quit** (Ctrl+Q). On a Mac it stays in the Dock, as Mac apps do, and
+`⌘Q` quits. (If your Linux desktop doesn't draw a tray icon, launching Orbit
+Mail again brings the hidden window back.)
 
 ### AI, if you want it (optional)
 
@@ -148,14 +150,18 @@ Off by default. Nothing is sent anywhere until you add an
 
 ## Install
 
-Linux only, for now. Install the `.deb` or run the AppImage:
+**Linux** — install the `.deb` or run the AppImage:
 
 ```bash
 sudo dpkg -i orbit-mail-*.deb
 ```
 
-Building your own copy takes about 15 minutes and needs no coding. Both routes,
-plus the OAuth setup for Gmail and Microsoft, are in **[INSTALL.md](INSTALL.md)**.
+**macOS** — Apple Silicon or Intel, macOS 11 or later. There is no signed,
+notarized build to download: you build your own copy, which takes about fifteen
+minutes and needs no coding.
+
+Building your own copy on either system, plus the OAuth setup for Gmail and
+Microsoft, is in **[INSTALL.md](INSTALL.md)**.
 
 ## Using Orbit Mail
 
@@ -174,6 +180,8 @@ plus the OAuth setup for Gmail and Microsoft, are in **[INSTALL.md](INSTALL.md)*
 | `Ctrl` + `+` / `-` | Make everything bigger or smaller, as in a browser |
 | `Ctrl` + `0` | Back to normal size |
 
+On a Mac, use `⌘` wherever the table says `Ctrl`.
+
 ### The toolbar
 
 **Compose**, **Delete**, **Archive**, **Star**, **Mark unread**, **Refresh**,
@@ -191,7 +199,8 @@ The gear, or `Ctrl` + `,`. What you can change today:
 - **Appearance** — dark mode, and whether mail is grouped into conversations.
 - **When you close the window** — keep running in the tray, or quit. (If your
   desktop has no tray, this says so instead of offering a switch that would do
-  nothing.)
+  nothing; on a Mac it says that closing the window already leaves the app in
+  the Dock.)
 - **Notifications** — on or off. The unread count and tray icon keep updating
   either way.
 - **Default mail app** — open `mailto:` links in Orbit Mail. This registers with
@@ -233,15 +242,19 @@ Everything Orbit Mail knows lives on your machine:
 | `~/.config/orbit-mail/data/attachments/` | Downloaded attachments |
 | `~/.config/orbit-mail/renderer-errors.log` | Written only if the window fails to draw — what went wrong, so a report has something to attach |
 
+On a Mac the same three live under `~/Library/Application Support/Orbit Mail/`
+instead.
+
 - **Nothing is sent anywhere except your mail servers** — no telemetry, no
   analytics, no accounts with us. There is no "us".
 - **Only your account can read it.** The database and downloaded attachments are
   created readable by you alone, and an older install with looser permissions is
   corrected the next time the app starts — it matters on a machine with more than
   one user account.
-- **Passwords and tokens are encrypted** using your system keyring. Without a
-  keyring installed they fall back to obfuscation, and the app tells you so with a
-  banner rather than pretending otherwise.
+- **Passwords and tokens are encrypted** using your system keyring — the login
+  keyring on Linux, the Keychain on macOS. Without a keyring installed they fall
+  back to obfuscation, and the app tells you so with a banner rather than
+  pretending otherwise.
 - **Remote images are blocked** until you ask for them, because loading them tells
   the sender you read the mail and reveals your IP address. You can allow them per
   message, or always for a particular sender.
@@ -289,7 +302,11 @@ Everything Orbit Mail knows lives on your machine:
   more** for older mail, or **Search whole mailbox** to pull in older matches.
 - **A very long conversation is capped at 200 messages** — you see the most
   recent 200, and the app does not currently tell you when there were more.
-- **Linux only** — no Windows or macOS builds.
+- **No Windows build.**
+- **The macOS build is not signed or notarized by Apple** — you build it
+  yourself, and it is signed only well enough for macOS to run it locally. There
+  is nothing to download and pass on.
+- **No tray icon on macOS** — the unread count goes on the Dock icon instead.
 
 The full backlog, including known bugs, is in [TODO.md](TODO.md).
 

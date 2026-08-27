@@ -7,6 +7,26 @@ which keeps decisions rather than just tasks.
 Versions follow [semantic versioning](https://semver.org/). Before 1.0 the minor
 number moves for anything substantial.
 
+## Unreleased
+
+### Added
+
+- **Orbit Mail runs on macOS**, on Apple Silicon and Intel. `npm run dist:mac`
+  builds a `.dmg` you can drag into Applications; the install steps are in
+  [INSTALL.md](INSTALL.md). Everything works the way it does on Linux, with two
+  differences you will notice: there is no tray icon, because the unread count
+  goes on the Dock icon instead, and closing the window leaves Orbit Mail
+  running in the Dock rather than tucking it away — which is what Mac apps do.
+  Settings says so rather than offering you a switch that would do nothing.
+
+  There is no build to download. You build your own copy, and it is signed only
+  well enough for your own Mac to run it — not signed by Apple, so a copy moved
+  to another Mac is blocked until that Mac is told to trust it.
+
+- Attachments that can run code on a Mac — `.command`, `.scpt`, `.workflow` and
+  the like — now get the same "open this?" warning that `.exe` and `.sh` already
+  did.
+
 ## 0.7.0 — 2026-08-04
 
 Writing a message gets the window and the toolbar it should always have had. The

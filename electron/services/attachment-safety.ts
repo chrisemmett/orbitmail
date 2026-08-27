@@ -3,8 +3,9 @@
 // `attachments:open` hands the file to the OS opener, and both the filename and
 // its extension come from whoever sent the mail. On Linux a .desktop file is a
 // launcher, .sh/.run are scripts, and a .pdf.exe reads as a PDF in the UI while
-// ending in .exe on disk. Opening any of those deserves a deliberate second
-// step rather than a single click.
+// ending in .exe on disk. On macOS a .command or .scpt runs on double-click and
+// a .app is a directory the Finder treats as a program. Opening any of those
+// deserves a deliberate second step rather than a single click.
 //
 // This is a prompt, not a block: the user may well have asked a colleague for a
 // script. It exists so that "open" is never silently "execute".
@@ -18,8 +19,10 @@ const EXECUTABLE_EXTENSIONS = new Set([
   // Windows — harmless to run here, but a strong signal the mail is hostile
   'exe', 'msi', 'com', 'bat', 'cmd', 'scr', 'pif', 'cpl', 'ps1', 'psm1',
   'vbs', 'vbe', 'wsf', 'wsh', 'hta', 'reg', 'lnk',
-  // macOS / mobile
-  'app', 'command', 'dmg', 'pkg', 'apk'
+  // macOS / mobile. `.app` is a bundle rather than a file, but it arrives as
+  // one — zipped or as a directory entry — and reads as a document name.
+  'app', 'command', 'dmg', 'pkg', 'mpkg', 'apk',
+  'scpt', 'scptd', 'applescript', 'workflow', 'terminal', 'action'
 ])
 
 /** The final extension, lowercased, without the dot. Empty if there is none. */

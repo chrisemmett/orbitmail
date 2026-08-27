@@ -10,6 +10,9 @@ export function GeneralPane() {
   const desktopNotifications = useMailStore((s) => s.desktopNotifications)
   const handleMailtoLinks = useMailStore((s) => s.handleMailtoLinks)
   const capabilities = useMailStore((s) => s.platformCapabilities)
+  // Null until the main process answers; the panes fall back to the wording
+  // that is true of every other desktop rather than guessing at a Mac.
+  const isMac = capabilities?.platform === 'darwin'
 
   return (
     <>
@@ -31,12 +34,21 @@ export function GeneralPane() {
       <section className="settings-section">
         <h3>When you close the window</h3>
         <SettingToggle
-          label="Keep running in the tray"
-          description="Mail keeps syncing and the unread count stays live. Quit with the tray's Quit, or Ctrl+Q."
+          label={isMac ? 'Keep running in the Dock' : 'Keep running in the tray'}
+          description={
+            isMac
+              ? 'Mail keeps syncing and the unread count stays live. Quit with ⌘Q.'
+              : "Mail keeps syncing and the unread count stays live. Quit with the tray's Quit, or Ctrl+Q."
+          }
           checked={closeToTray}
           disabledReason={
             capabilities && !capabilities.trayActive
-              ? 'This desktop has no system tray, so closing the window always quits.'
+              ? isMac
+                ? // Not a limitation on a Mac: closing the last window leaves the
+                  // app in the Dock by platform convention, which is what this
+                  // toggle asks for, so there is nothing left for it to switch.
+                  'macOS already does this — closing the window leaves Orbit Mail running in the Dock.'
+                : 'This desktop has no system tray, so closing the window always quits.'
               : undefined
           }
           onChange={(next) => void setGlobalPreference('closeToTray', next)}
