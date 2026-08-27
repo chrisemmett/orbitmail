@@ -262,7 +262,26 @@ const OVERRIDES = {
     attachmentsIncluded: true,
     skippedAttachments: ['Minutes 2019.doc']
   },
-  'sync.getStatus': { syncing: false, lastSyncAt: Date.now() - 120000, error: null, syncCurrent: 0, syncTotal: 0 },
+  // Sync status is per account. One mailbox is deliberately failing here so the
+  // sidebar's health marker and the status bar's error line are both visible in
+  // the preview — they are invisible in a fixture where everything is healthy.
+  'sync.getStatus': {
+    syncing: false,
+    lastSyncAt: Date.now() - 120000,
+    syncCurrent: 0,
+    syncTotal: 0,
+    accounts: {
+      'acc-1': {
+        accountId: 'acc-1', email: 'you@example.com',
+        syncing: false, lastSyncAt: Date.now() - 120000, error: null
+      },
+      'acc-2': {
+        accountId: 'acc-2', email: 'you@work.example',
+        syncing: false, lastSyncAt: Date.now() - 5400000,
+        error: 'Authentication failed: token expired'
+      }
+    }
+  },
   'ai.getStatus': { configured: true },
   'ai.getTasks': {
     tasks: [

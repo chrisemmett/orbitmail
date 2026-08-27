@@ -24,6 +24,7 @@ import {
 import { SecureStorageBanner } from './components/SecureStorageBanner'
 import { exposeFlushHook } from './stores/persistence'
 import { printMessageDetail, printThreadDetails } from './utils/printMessage'
+import { summarizeSyncStatus, syncErrorDetail } from './utils/syncStatus'
 
 function StatusBar() {
   const syncStatus = useMailStore((s) => s.syncStatus)
@@ -46,21 +47,21 @@ function StatusBar() {
     }
   }
 
-  const needsReauth =
-    syncStatus.error &&
-    /auth|token|login|expired|invalid_grant|consent/i.test(syncStatus.error)
+  const summary = summarizeSyncStatus(syncStatus)
 
   return (
     <div className="status-bar">
       {!isOnline && <span className="status-offline">Offline — showing cached mail</span>}
       {syncStatus.syncing && <span className="status-syncing">{syncLabel}</span>}
-      {syncStatus.error && (
+      {summary.errorLabel && (
         <span className="status-error-wrap">
-          <span className="status-error">{syncStatus.error}</span>
+          <span className="status-error" title={syncErrorDetail(summary.failing)}>
+            {summary.errorLabel}
+          </span>
           <button type="button" className="status-action" onClick={handleRetrySync}>
             Retry
           </button>
-          {needsReauth && (
+          {summary.needsReauth && (
             <button
               type="button"
               className="status-action"
@@ -71,9 +72,10 @@ function StatusBar() {
           )}
         </span>
       )}
-      {syncStatus.lastSyncAt && !syncStatus.syncing && !syncStatus.error && (
+      {summary.healthyLastSyncAt !== null && !syncStatus.syncing && (
         <span>
-          Last synced {new Date(syncStatus.lastSyncAt).toLocaleTimeString()}
+          {summary.mixed ? 'Others last synced ' : 'Last synced '}
+          {new Date(summary.healthyLastSyncAt).toLocaleTimeString()}
         </span>
       )}
     </div>

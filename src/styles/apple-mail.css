@@ -520,6 +520,31 @@ textarea {
   padding-top: 2px;
 }
 
+/* Per-account sync health, shown beside the account name in the sidebar. The
+   sidebar is where you look to understand your mail, so a mailbox that has
+   stopped syncing has to say so here — not only in the status bar, which can
+   show one line for any number of accounts. */
+.sidebar-account-health {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-left: 4px;
+  color: #ff3b30;
+}
+
+.sidebar-account-health-syncing {
+  color: var(--text-secondary, #8e8e93);
+  animation: spin 1.4s linear infinite;
+}
+
+/* Respect the OS setting: a permanently spinning icon in a sidebar is exactly
+   the kind of motion this preference exists to stop. */
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-account-health-syncing {
+    animation: none;
+  }
+}
+
 .sidebar-item {
   display: flex;
   align-items: center;
@@ -2811,6 +2836,13 @@ textarea {
 
 .status-error {
   color: #ff3b30;
+  /* The full per-account detail is in this element's title attribute, which is
+     newline-separated; the visible text is a single summary line and must stay
+     on one line whatever the bar's width. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 60ch;
 }
 
 

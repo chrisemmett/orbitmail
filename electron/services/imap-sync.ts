@@ -6,6 +6,7 @@ import { tmpdir } from 'os'
 import type {
   Provider,
   FolderType,
+  AccountSyncStatus,
   SyncStatus,
   MessageSummary,
   SearchField
@@ -44,7 +45,12 @@ import {
   type TokenData
 } from './db-service'
 import type { Folder } from '../../shared/types'
-import { getLastSyncAt, setLastSyncAt } from './preferences-service'
+import {
+  getAccountLastSyncAt,
+  getLastSyncAt,
+  setAccountLastSyncAt,
+  setLastSyncAt
+} from './preferences-service'
 import { recordAttachmentsMetadata, toAttachmentMeta, type AttachmentMeta } from './attachment-fetch'
 import { isWithinSyncWindow, syncSinceDate } from './sync-policy'
 import { isVirtualViewFolder } from '../../shared/folders'
@@ -110,19 +116,48 @@ const FOLDER_NAME_MAP: Record<string, FolderType> = {
 
 export type SyncStatusState = SyncStatus
 
-let syncStatus: SyncStatusState = {
-  syncing: false,
-  lastSyncAt: null,
-  error: null,
-  syncCurrent: 0,
-  syncTotal: 0
+// Per-account truth. Everything the renderer sees is derived from this map, so
+// there is no way for one account's failure to overwrite another's state.
+const accountStatus = new Map<string, AccountSyncStatus>()
+
+// Progress is deliberately *not* per-account: a refresh shows one bar for the
+// whole pass, and the accounts fetch in parallel into a shared counter.
+let syncProgress = { current: 0, total: 0 }
+
+function accountEntry(accountId: string): AccountSyncStatus {
+  const existing = accountStatus.get(accountId)
+  if (existing) return existing
+  const created: AccountSyncStatus = {
+    accountId,
+    email: getAccountTokens(accountId)?.email ?? accountId,
+    syncing: false,
+    lastSyncAt: null,
+    error: null
+  }
+  accountStatus.set(accountId, created)
+  return created
 }
 
 export function initSyncFromPersistence(): void {
-  syncStatus = {
-    ...syncStatus,
-    lastSyncAt: getLastSyncAt()
+  const perAccount = getAccountLastSyncAt()
+  // An install predating per-account status has one global timestamp. Seeding
+  // every account with it is a better lie than "never synced" for all of them,
+  // and the first real sync replaces it.
+  const legacy = getLastSyncAt()
+  for (const account of listAccounts()) {
+    accountStatus.set(account.id, {
+      accountId: account.id,
+      email: account.email,
+      syncing: false,
+      lastSyncAt: perAccount[account.id] ?? legacy,
+      error: null
+    })
   }
+}
+
+/** Drop an account's status when the account itself goes away. */
+export function forgetAccountSyncStatus(accountId: string): void {
+  if (accountStatus.delete(accountId)) emitSyncStatus()
 }
 
 let statusListeners: ((s: SyncStatusState) => void)[] = []
@@ -136,7 +171,40 @@ const sentPathCache = new Map<string, string>()
 export type SyncProgressHandler = () => void
 
 export function getSyncStatus(): SyncStatusState {
-  return { ...syncStatus }
+  const accounts: Record<string, AccountSyncStatus> = {}
+  let anySyncing = false
+  let newest: number | null = null
+
+  // forEach, not for...of: tsconfig.node.json targets below ES2015, where
+  // iterating a Map needs downlevelIteration. esbuild transpiles past it, so
+  // this would build and only fail a typecheck.
+  accountStatus.forEach((entry, id) => {
+    accounts[id] = { ...entry }
+    if (entry.syncing) anySyncing = true
+    // The aggregate timestamp is the *most recent* success, not the oldest: it
+    // answers "has anything landed lately", while a specific mailbox's own
+    // freshness is only ever read off its own entry.
+    if (entry.lastSyncAt !== null && (newest === null || entry.lastSyncAt > newest)) {
+      newest = entry.lastSyncAt
+    }
+  })
+
+  return {
+    syncing: anySyncing,
+    lastSyncAt: newest,
+    syncCurrent: syncProgress.current,
+    syncTotal: syncProgress.total,
+    accounts
+  }
+}
+
+/** True while any account is mid-sync — the re-entrancy guard sync uses. */
+function anyAccountSyncing(): boolean {
+  let syncing = false
+  accountStatus.forEach((entry) => {
+    if (entry.syncing) syncing = true
+  })
+  return syncing
 }
 
 export function onSyncStatusChange(listener: (s: SyncStatusState) => void): () => void {
@@ -146,20 +214,48 @@ export function onSyncStatusChange(listener: (s: SyncStatusState) => void): () =
   }
 }
 
-function setSyncStatus(patch: Partial<SyncStatusState>): void {
-  syncStatus = { ...syncStatus, ...patch }
-  if (patch.lastSyncAt !== undefined) {
+function emitSyncStatus(): void {
+  const status = getSyncStatus()
+  statusListeners.forEach((l) => l(status))
+}
+
+function setAccountStatus(accountId: string, patch: Partial<AccountSyncStatus>): void {
+  const next = { ...accountEntry(accountId), ...patch }
+  accountStatus.set(accountId, next)
+  if (patch.lastSyncAt !== undefined && patch.lastSyncAt !== null) {
+    setAccountLastSyncAt(accountId, patch.lastSyncAt)
+    // Keep the legacy key moving too, so downgrading to a build without
+    // per-account status does not present the app as having never synced.
     setLastSyncAt(patch.lastSyncAt)
   }
-  statusListeners.forEach((l) => l({ ...syncStatus }))
+  emitSyncStatus()
+}
+
+/** Mark every account in a multi-account pass at once, then emit once. */
+function setManyAccountStatus(
+  accountIds: string[],
+  patch: Partial<AccountSyncStatus>
+): void {
+  for (const id of accountIds) {
+    accountStatus.set(id, { ...accountEntry(id), ...patch })
+  }
+  emitSyncStatus()
+}
+
+function resetSyncProgress(total = 0): void {
+  syncProgress = { current: 0, total }
+  emitSyncStatus()
+}
+
+function setSyncTotal(total: number): void {
+  syncProgress = { ...syncProgress, total }
+  emitSyncStatus()
 }
 
 function incrementSyncProgress(by = 1): void {
-  const syncCurrent = syncStatus.syncCurrent + by
-  setSyncStatus({
-    syncCurrent,
-    syncTotal: Math.max(syncStatus.syncTotal, syncCurrent)
-  })
+  const current = syncProgress.current + by
+  syncProgress = { current, total: Math.max(syncProgress.total, current) }
+  emitSyncStatus()
 }
 
 const SYNC_BATCH_SIZE = 200
@@ -1012,27 +1108,22 @@ function accountSyncError(email: string, err: unknown): string {
 }
 
 export async function refreshAccount(accountId: string, provider: Provider): Promise<void> {
-  setSyncStatus({
-    syncing: true,
-    error: null,
-    syncCurrent: 0,
-    syncTotal: 0
-  })
+  resetSyncProgress()
+  setAccountStatus(accountId, { syncing: true, error: null })
 
   try {
     const total = await countNewMessagesForAccount(accountId, provider)
-    setSyncStatus({ syncTotal: Math.max(total, 1) })
+    setSyncTotal(Math.max(total, 1))
 
     const fetched = await syncAccount(accountId, provider, {
       onProgress: incrementSyncProgress
     })
 
-    setSyncStatus({
+    syncProgress = { current: fetched, total: Math.max(fetched, total, 1) }
+    setAccountStatus(accountId, {
       syncing: false,
       lastSyncAt: Date.now(),
-      error: null,
-      syncCurrent: fetched,
-      syncTotal: Math.max(fetched, total, 1)
+      error: null
     })
 
     if (fetched > 0) {
@@ -1046,23 +1137,27 @@ export async function refreshAccount(accountId: string, provider: Provider): Pro
       getAccountTokens(accountId)?.email ?? accountId,
       err
     )
-    setSyncStatus({ syncing: false, error: message })
+    // The failure is recorded against this account only. Its lastSyncAt is left
+    // alone: the mailbox is stale, not un-synced, and the UI says how stale.
+    setAccountStatus(accountId, { syncing: false, error: message })
     throw err instanceof Error ? err : new Error(message)
   }
 }
 
 export async function refreshAllAccounts(): Promise<void> {
-  if (syncStatus.syncing) return
-
-  setSyncStatus({
-    syncing: true,
-    error: null,
-    syncCurrent: 0,
-    syncTotal: 0
-  })
+  if (anyAccountSyncing()) return
 
   const accounts = listAccounts()
   const errors: string[] = []
+  // Which accounts failed, so a success can clear a *stale* error and a failure
+  // can be attributed to the mailbox that actually produced it.
+  const failed = new Map<string, string>()
+
+  resetSyncProgress()
+  setManyAccountStatus(
+    accounts.map((a) => a.id),
+    { syncing: true, error: null }
+  )
 
   // Accounts sync independently through their own pooled connections, so run
   // them in parallel rather than one-at-a-time.
@@ -1071,14 +1166,16 @@ export async function refreshAllAccounts(): Promise<void> {
       try {
         return await countNewMessagesForAccount(account.id, account.provider)
       } catch (err) {
-        errors.push(accountSyncError(account.email, err))
+        const message = accountSyncError(account.email, err)
+        errors.push(message)
+        failed.set(account.id, message)
         return 0
       }
     })
   )
   const estimatedTotal = estimates.reduce((sum, n) => sum + n, 0)
 
-  setSyncStatus({ syncTotal: Math.max(estimatedTotal, 1) })
+  setSyncTotal(Math.max(estimatedTotal, 1))
 
   const fetchedCounts = await Promise.all(
     accounts.map(async (account) => {
@@ -1087,20 +1184,36 @@ export async function refreshAllAccounts(): Promise<void> {
           onProgress: incrementSyncProgress
         })
       } catch (err) {
-        errors.push(accountSyncError(account.email, err))
+        const message = accountSyncError(account.email, err)
+        errors.push(message)
+        failed.set(account.id, message)
         return 0
       }
     })
   )
   const fetchedTotal = fetchedCounts.reduce((sum, n) => sum + n, 0)
 
-  setSyncStatus({
-    syncing: false,
-    lastSyncAt: Date.now(),
-    error: errors.length ? errors.join('\n\n') : null,
-    syncCurrent: fetchedTotal,
-    syncTotal: Math.max(fetchedTotal, estimatedTotal, 1)
-  })
+  syncProgress = {
+    current: fetchedTotal,
+    total: Math.max(fetchedTotal, estimatedTotal, 1)
+  }
+
+  // Each account lands its own verdict. An account that succeeded gets a fresh
+  // timestamp even while another one is failing — that is the whole point.
+  const now = Date.now()
+  for (const account of accounts) {
+    const message = failed.get(account.id)
+    accountStatus.set(account.id, {
+      ...accountEntry(account.id),
+      email: account.email,
+      syncing: false,
+      error: message ?? null,
+      lastSyncAt: message ? accountEntry(account.id).lastSyncAt : now
+    })
+    if (!message) setAccountLastSyncAt(account.id, now)
+  }
+  if (failed.size < accounts.length) setLastSyncAt(now)
+  emitSyncStatus()
 
   if (fetchedTotal > 0) {
     onFolderSynced?.()
@@ -1122,7 +1235,7 @@ export async function pollForNewMessages(
   options: { announce?: boolean; filter?: (account: { provider: Provider }) => boolean } = {}
 ): Promise<void> {
   const announce = options.announce ?? true
-  if (syncStatus.syncing) return
+  if (anyAccountSyncing()) return
 
   const accounts = options.filter ? listAccounts().filter(options.filter) : listAccounts()
   if (accounts.length === 0) return
@@ -1140,38 +1253,54 @@ export async function pollForNewMessages(
   const estimatedTotal = estimates.reduce((sum, n) => sum + n, 0)
 
   if (estimatedTotal === 0) {
-    setSyncStatus({ lastSyncAt: Date.now() })
+    // Nothing to fetch still means these mailboxes were reached just now, which
+    // is exactly what "last synced" is claiming.
+    const checkedAt = Date.now()
+    for (const account of accounts) {
+      setAccountStatus(account.id, { lastSyncAt: checkedAt })
+    }
     return
   }
 
-  setSyncStatus({
-    syncing: true,
-    error: null,
-    syncCurrent: 0,
-    syncTotal: estimatedTotal
-  })
+  resetSyncProgress(estimatedTotal)
+  setManyAccountStatus(
+    accounts.map((a) => a.id),
+    { syncing: true }
+  )
 
-  const fetchedCounts = await Promise.all(
+  const polled = await Promise.all(
     accounts.map(async (account) => {
       try {
-        return await syncAccount(account.id, account.provider, {
+        const n = await syncAccount(account.id, account.provider, {
           onProgress: incrementSyncProgress,
           silent: true
         })
+        return { id: account.id, fetched: n, ok: true }
       } catch {
-        // keep polling on the next interval
-        return 0
+        // Polling stays quiet: a transient failure here must not raise an error
+        // in the UI, and must not stamp a fresh timestamp on a mailbox we did
+        // not actually reach. Retried on the next interval.
+        return { id: account.id, fetched: 0, ok: false }
       }
     })
   )
-  const fetchedTotal = fetchedCounts.reduce((sum, n) => sum + n, 0)
+  const fetchedTotal = polled.reduce((sum, r) => sum + r.fetched, 0)
 
-  setSyncStatus({
-    syncing: false,
-    lastSyncAt: Date.now(),
-    syncCurrent: fetchedTotal,
-    syncTotal: Math.max(fetchedTotal, estimatedTotal)
-  })
+  syncProgress = {
+    current: fetchedTotal,
+    total: Math.max(fetchedTotal, estimatedTotal)
+  }
+  const polledAt = Date.now()
+  for (const result of polled) {
+    accountStatus.set(result.id, {
+      ...accountEntry(result.id),
+      syncing: false,
+      lastSyncAt: result.ok ? polledAt : accountEntry(result.id).lastSyncAt
+    })
+    if (result.ok) setAccountLastSyncAt(result.id, polledAt)
+  }
+  if (polled.some((r) => r.ok)) setLastSyncAt(polledAt)
+  emitSyncStatus()
 
   if (fetchedTotal > 0) {
     onFolderSynced?.()

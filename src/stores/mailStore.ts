@@ -254,7 +254,7 @@ export const useMailStore = create<MailState>((set) => ({
   searchField: 'all',
   searchLoading: false,
   serverSearched: false,
-  syncStatus: { syncing: false, lastSyncAt: null, error: null, syncCurrent: 0, syncTotal: 0 },
+  syncStatus: { syncing: false, lastSyncAt: null, syncCurrent: 0, syncTotal: 0, accounts: {} },
   showAddAccount: false,
   toast: null,
   loading: false,

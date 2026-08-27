@@ -5444,6 +5444,76 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Sync status: one account failing must not speak for the others')
+  // -------------------------------------------------------------------------
+  {
+    // Sync status used to be a single global object: one syncing flag, one
+    // lastSyncAt, one error string for every account at once. Two accounts
+    // failing were joined with "\n\n" into that one string, and the status bar
+    // hid "last synced" for *every* account whenever any one of them errored.
+    // These checks pin the per-account behaviour that replaced it.
+    const sync = await import('../electron/services/imap-sync')
+
+    const healthy = db.saveManualAccount('imap', {
+      authType: 'password', email: 'healthy@example.com', displayName: 'Healthy',
+      username: 'rob', password: 'secret',
+      incoming: { host: HOST, port: IMAP_PORT, security: 'none' },
+      outgoing: { host: HOST, port: SMTP_PORT, security: 'none' }
+    })
+    // Port 1 is reserved and nothing listens on it, so this account cannot sync
+    // however long it waits — a deterministic failure needing no fault injection.
+    const broken = db.saveManualAccount('imap', {
+      authType: 'password', email: 'broken@example.com', displayName: 'Broken',
+      username: 'rob', password: 'secret',
+      incoming: { host: HOST, port: 1, security: 'none' },
+      outgoing: { host: HOST, port: SMTP_PORT, security: 'none' }
+    })
+
+    await sync.refreshAllAccounts().catch(() => {})
+
+    const status = sync.getSyncStatus()
+    const h = status.accounts[healthy.id]
+    const b = status.accounts[broken.id]
+
+    ok('both accounts have their own status entry', !!h && !!b,
+      `healthy=${!!h} broken=${!!b}`)
+    ok('the failing account carries its own error', !!b?.error, String(b?.error).slice(0, 80))
+    ok('the healthy account carries none', h?.error === null, String(h?.error))
+    ok('the error names only the account that produced it',
+      !b?.error?.includes('healthy@example.com'), String(b?.error).slice(0, 80))
+
+    // The regression that motivated the whole change: a healthy mailbox still
+    // reports when it last synced, even while another one is broken.
+    ok('the healthy account still reports a last-synced time', h?.lastSyncAt !== null,
+      `lastSyncAt=${h?.lastSyncAt}`)
+    ok('and the aggregate reports one too, despite the failure',
+      status.lastSyncAt !== null, `lastSyncAt=${status.lastSyncAt}`)
+    ok('a failure does not fake freshness on the account that failed',
+      b?.lastSyncAt === null, `lastSyncAt=${b?.lastSyncAt}`)
+    ok('nothing is left marked as syncing once the pass ends',
+      status.syncing === false && !h?.syncing && !b?.syncing,
+      `any=${status.syncing} healthy=${h?.syncing} broken=${b?.syncing}`)
+
+    // A later success has to clear the previous failure, or a fixed mailbox
+    // would keep its warning badge until the app restarted.
+    await sync.refreshAccount(healthy.id, 'imap').catch(() => {})
+    ok('a fresh success leaves no stale error behind',
+      sync.getSyncStatus().accounts[healthy.id]?.error === null,
+      String(sync.getSyncStatus().accounts[healthy.id]?.error))
+
+    // Status is keyed by account id and is not covered by the DB cascade, so
+    // removal has to drop it explicitly or a deleted account keeps reporting.
+    db.removeAccount(broken.id)
+    sync.forgetAccountSyncStatus(broken.id)
+    ok('a removed account stops reporting status',
+      sync.getSyncStatus().accounts[broken.id] === undefined,
+      JSON.stringify(Object.keys(sync.getSyncStatus().accounts)))
+
+    db.removeAccount(healthy.id)
+    sync.forgetAccountSyncStatus(healthy.id)
+  }
+
+  // -------------------------------------------------------------------------
   section('Send: a sent message should be filed in Sent')
   // -------------------------------------------------------------------------
   {

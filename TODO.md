@@ -111,6 +111,38 @@ does. Preserving that needs prefix or trigram tokenisation.
 
 ## Shipped
 
+- **Sync status is per account** — the first item out of the daily-driver audit,
+  and the one four other findings collapse into. `SyncStatus` was a single
+  global object: one `syncing` flag, one `lastSyncAt`, one `error` for every
+  account at once. With more than one mailbox that shape cannot express the
+  truth, and it produced three visible bugs — the sidebar could show **no**
+  account health at all, one account failing **hid "last synced" for every
+  account**, and two failures were joined with `\n\n` into a one-line status bar
+  where HTML collapsed the break into a run-on sentence.
+
+  The source of truth is now a per-account map; the aggregate fields are derived
+  from it. A failure keeps its account's previous timestamp rather than stamping
+  a fresh one (stale is not un-synced), a success lands its own verdict without
+  waiting on a failing neighbour, and polling still swallows transient errors but
+  no longer claims to have reached a mailbox it did not. The sidebar now marks a
+  failing account, and the status bar names one failure or counts several,
+  keeping the full per-account detail in the tooltip.
+
+  **Verification is the part worth recording.** The "last synced" bug lived in a
+  single JSX condition, which nothing in this repo could reach — `test:imap` is
+  windowless and there is no component test. So the wording is now a pure
+  function in `src/utils/syncStatus.ts` covered by `test:store`, which is the
+  same trick already used for the dark-mode classifier. All three new checks were
+  confirmed to fail on the unfixed behaviour: reinstating the suppression, the
+  `\n\n` join, and unconditional timestamping each failed exactly the assertion
+  aimed at it. The integration suite also caught a real bug mid-change — the new
+  `accountLastSyncAt` key was not listed in `readRawState`, so the timestamps
+  would have been silently dropped on every restart.
+
+  Not done here, and deliberately: deriving offline state from real connection
+  outcomes rather than `navigator.onLine`. It belongs with this work but is a
+  separate change.
+
 - **`npm ci` failed on a cold Electron cache, turning `main` red after the 44
   upgrade** — `scripts/install-electron.sh` printed "Installing Electron 44.0.0
   binary..." and exited 1 with no error. The cause is one line: `find` exits

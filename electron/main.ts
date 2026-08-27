@@ -85,6 +85,7 @@ import { authenticateGoogle } from './services/oauth-google'
 import { authenticateMicrosoft } from './services/oauth-microsoft'
 import {
   refreshAllAccounts,
+  forgetAccountSyncStatus,
   getSyncStatus,
   onSyncStatusChange,
   startBackgroundSync,
@@ -157,7 +158,8 @@ import {
   allowSenderImages,
   unmuteSender,
   unblockSender,
-  revokeSenderImages
+  revokeSenderImages,
+  clearAccountLastSyncAt
 } from './services/preferences-service'
 import {
   analyzeMessage,
@@ -1005,6 +1007,11 @@ function registerIpc(): void {
 
   ipcMain.handle('accounts:remove', async (_, accountId: string) => {
     removeAccount(accountId)
+    // Sync status and its persisted timestamp are keyed by account id and are
+    // not covered by the DB's cascading deletes, so they have to be dropped
+    // explicitly or a removed account keeps reporting state in the sidebar.
+    forgetAccountSyncStatus(accountId)
+    clearAccountLastSyncAt(accountId)
     await closeAccountPool(accountId)
     restartIdleMonitoring()
   })
