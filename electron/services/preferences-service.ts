@@ -53,6 +53,7 @@ function readRawState(): PersistedAppState {
     return {
       ui: { ...DEFAULT_UI_PREFERENCES, ...parsed.ui },
       lastSyncAt: parsed.lastSyncAt ?? null,
+      accountLastSyncAt: parsed.accountLastSyncAt ?? {},
       handleMailtoLinks: parsed.handleMailtoLinks ?? false,
       closeToTray: parsed.closeToTray ?? true,
       desktopNotifications: parsed.desktopNotifications ?? true,
@@ -185,6 +186,26 @@ export function setLastSyncAt(lastSyncAt: number | null): void {
 
 export function getLastSyncAt(): number | null {
   return getAppState().lastSyncAt
+}
+
+export function getAccountLastSyncAt(): Record<string, number> {
+  return getAppState().accountLastSyncAt ?? {}
+}
+
+export function setAccountLastSyncAt(accountId: string, lastSyncAt: number): void {
+  // Merged rather than replaced: patchAppState shallow-merges, so writing a
+  // one-key object here would drop every other account's timestamp.
+  patchAppState({
+    accountLastSyncAt: { ...getAccountLastSyncAt(), [accountId]: lastSyncAt }
+  })
+}
+
+/** Forget a removed account's timestamp so the map does not grow forever. */
+export function clearAccountLastSyncAt(accountId: string): void {
+  const rest = { ...getAccountLastSyncAt() }
+  if (!(accountId in rest)) return
+  delete rest[accountId]
+  patchAppState({ accountLastSyncAt: rest })
 }
 
 export function setWindowPreferences(window: WindowPreferences | undefined): void {

@@ -18,7 +18,8 @@ import {
   TrayArrowDown,
   PlusCircle,
   GearSix,
-  ArrowsClockwise
+  ArrowsClockwise,
+  WarningCircle
 } from '../icons'
 
 const STANDARD_TYPES: FolderType[] = ['inbox', 'sent', 'drafts', 'trash', 'junk']
@@ -145,6 +146,20 @@ function AccountSection({
     [account, folders]
   )
 
+  // This mailbox's own health, not the app's. Before per-account sync status
+  // the sidebar could not show this at all: a mailbox that stopped syncing
+  // hours ago looked exactly like one that synced a second ago.
+  const health = useMailStore((s) => s.syncStatus.accounts[account.id])
+  const healthTitle = health?.error
+    ? `Not syncing — ${health.error}${
+        health.lastSyncAt
+          ? `\nLast synced ${new Date(health.lastSyncAt).toLocaleString()}`
+          : '\nNever synced'
+      }`
+    : health?.syncing
+      ? 'Syncing…'
+      : undefined
+
   const byType = (type: FolderType) => accountFolders.find((f) => f.type === type)
   // Custom folders (Gmail labels among them) arrive in whatever order the
   // server listed them during sync, which is neither stable nor meaningful.
@@ -175,6 +190,26 @@ function AccountSection({
           aria-expanded={!collapsed}
         >
           <span className="sidebar-account-label">{accountLabel(account)}</span>
+          {health?.error && (
+            <span
+              className="sidebar-account-health"
+              title={healthTitle}
+              aria-label={`${account.email} is not syncing: ${health.error}`}
+              role="img"
+            >
+              <WarningCircle size={13} weight="fill" />
+            </span>
+          )}
+          {!health?.error && health?.syncing && (
+            <span
+              className="sidebar-account-health sidebar-account-health-syncing"
+              title={healthTitle}
+              aria-label={`${account.email} is syncing`}
+              role="img"
+            >
+              <ArrowsClockwise size={12} weight="bold" />
+            </span>
+          )}
           {collapsed && accountUnreadCountValue > 0 && (
             <span className="sidebar-badge sidebar-account-badge" aria-label={`${accountUnreadCountValue} unread`}>
               {accountUnreadCountValue}

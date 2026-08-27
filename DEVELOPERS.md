@@ -797,6 +797,57 @@ the control, and the README says so.
   move to an ordinary label keeps every other label, so the "deleted" message
   stays in All Mail, in search, and in thread views.
 
+### Sync status is per account
+
+`SyncStatus` used to be a single global object — one `syncing` flag, one
+`lastSyncAt`, one `error` string for the whole app. With more than one account
+that shape cannot express the truth, and it produced three visible bugs:
+
+- The UI could not say **which** mailbox was syncing or which had failed. The
+  sidebar showed no account health at all, so a mailbox that stopped syncing
+  three hours ago looked identical to one that synced a second ago.
+- One account failing **hid "last synced" for every account**, because the
+  status bar rendered the timestamp only when nothing anywhere had errored —
+  losing that reassurance at exactly the moment something was wrong.
+- Two accounts failing were joined with `\n\n` into that one string and rendered
+  in a one-line bar, where HTML collapses the break into a run-on sentence.
+
+The source of truth is now a `Map<accountId, AccountSyncStatus>` in
+`imap-sync.ts` holding `syncing`, `lastSyncAt` and `error` per mailbox. The
+aggregate fields on `SyncStatus` are **derived** from it on every read:
+`syncing` is "any account is", and `lastSyncAt` is the *most recent* success
+across accounts. Progress (`syncCurrent`/`syncTotal`) is deliberately not
+per-account — a refresh shows one bar, and accounts fetch in parallel into a
+shared counter.
+
+Rules the implementation keeps, each of which was a bug in the old shape:
+
+- **A failure never stamps freshness.** An account that errors keeps its
+  previous `lastSyncAt`; it is stale, not un-synced, and the UI says how stale.
+- **A success never waits for its neighbours.** Each account lands its own
+  verdict at the end of a multi-account pass, so a healthy mailbox is marked
+  fresh in the same pass that another one fails.
+- **Polling stays quiet but honest.** `pollForNewMessages` still swallows
+  transient errors rather than raising them in the UI, but it no longer stamps a
+  timestamp on a mailbox it did not reach. "Nothing new" *does* stamp one —
+  being reached and having nothing is what last-synced claims.
+- **Removal is explicit.** Status and its persisted timestamp are keyed by
+  account id and are **not** covered by the DB's cascading deletes, so
+  `accounts:remove` calls `forgetAccountSyncStatus` and `clearAccountLastSyncAt`
+  or a deleted account keeps reporting state in the sidebar.
+
+Timestamps persist per account under `accountLastSyncAt` in the preferences
+blob. The legacy single `lastSyncAt` key is still written, and on first run
+seeds any account with no entry of its own — an install predating this change
+shows a plausible time rather than claiming every mailbox has never synced.
+That key is also why `readRawState` has to list it: the state literal there *is*
+the whole state, so a key with no line is dropped on read (the integration suite
+checks exactly this, and caught it during this change).
+
+The renderer's half lives in `src/utils/syncStatus.ts` as a pure function rather
+than inline in JSX, because the "last synced" bug was one JSX condition and
+nothing in this repo could reach it — `test:imap` is windowless. See Store tests.
+
 ### Inline images are not attachments
 
 A signature logo is not a file the sender attached, but mailparser hands it over
@@ -2109,6 +2160,7 @@ reimplementing them, so it exercises the shipping code paths:
 | Responsiveness | A mark-read issued while a flag reconcile is in flight is not stuck behind the whole pass — `imap-pool` serializes per account, so anything holding the lane across every folder blocks user actions. |
 | Send | SMTP submission succeeds; the message is filed in `Sent` exactly once and shares its Message-ID with the delivered copy; the **delivered** copy carries no `Bcc` header, while the **filed** copy does. |
 | Attachments | Two parts sharing a filename get distinct cache paths **and** distinct content — the second used to overwrite the first on disk *and* resolve to the first MIME part, so it was never downloaded. Also that executable extensions are classified for the open-warning and ordinary documents are not, that the classifier reads the *basename* so a path-shaped filename cannot smuggle one past it, and that the warning names the real extension rather than the one the eye stops at. |
+| Per-account sync status | Two accounts, one pointed at a closed port: the failing one carries its own error, the healthy one carries none and still reports a last-synced time, and the aggregate reports one too. A failure does not stamp freshness on the account that failed; a later success clears a stale error; removing an account stops it reporting. |
 | Inline images (inbound) | A `multipart/related` message parsed by the real mailparser: the referenced image is marked inline and *is* already a `data:` URI in the body, the `.pdf` beside it is not marked, and an `image/svg+xml` is left alone because mailparser did not embed it either. A message whose only part is a signature logo carries no attachments at all; without an HTML body nothing is hidden. |
 | Inline images (backfill) | Every copy of an embedded image is marked, not just the first — the parts outnumber the `data:` URIs, so consuming matches would leave half behind. A size match under a different image MIME counts; an image the body never embedded stays visible; a document of a colliding size is never touched. `has_attachments` clears only once nothing but embedded images is left, and a second run is a no-op. |
 | Attachment text | The document formats the AI features can read: a `.docx`/`.xlsx`/`.pptx`/`.odt`/`.ods`/`.odp` yields its text with paragraph and row structure intact, text comes from run elements only (so a floating image's coordinates do not appear as content), spreadsheet cells resolve through the shared-string table, a self-closing empty cell does not swallow its neighbour, and an unreadable container (non-ZIP, missing part, iWork, no text) returns null so the caller names it as skipped. RTF drops the font and colour tables, decodes `\'hh` and `\u`, and stops at a `\bin` run rather than emitting binary. |
@@ -2314,14 +2366,15 @@ optimistic-UI invariants live.
 The same harness reaches any pure renderer logic worth pinning down without a
 GUI: it also bundles `src/components/compose/RecipientInput.tsx` for the
 address-token functions below, `src/utils/folders.ts` for the Favourites
-qualifier rule, and `src/utils/emailColorScheme.ts` for the
-dark-mode contrast rule. That second one is why the classifier is string work
+qualifier rule, `src/utils/syncStatus.ts` for the status-bar wording, and
+`src/utils/emailColorScheme.ts` for the dark-mode contrast rule. That second one is why the classifier is string work
 rather than a DOM walk — there is no DOM here at all, so a DOM-based version
 could only have been tested through a real window.
 
 | Area | What it asserts |
 |------|-----------------|
 | Delete/refresh race | A list refresh landing *while* a delete is in flight does not resurrect the row, in the list or the count. The main process removes the local SQLite row only after the IMAP round-trip returns, so a refresh in that window reads a DB that still holds the message; `withPendingRemoval` holds it out until the op settles. |
+| Sync status wording | A mailbox that synced a moment ago still reports its time while another account is failing; a failing account never lends its stale timestamp to that line; two failures are counted rather than concatenated, with the per-account detail kept for the tooltip; re-authentication is offered for credential errors and not for network ones. The bug this replaces lived in one JSX condition, which no test in this repo could reach — hence `summarizeSyncStatus` being a pure function. |
 | Rollback | A rejected delete releases the hold *before* the caller's rollback refresh, so the row comes back rather than staying invisible until the next folder switch. |
 | Selection advance | Deleting mid-list selects the row below; deleting the last row falls back to the row above. |
 | Conversation multi-select | Shift-click selects a range of conversation rows and can shrink it again (the anchor survives `selectThread` moving the lead), ctrl/cmd-click adds and removes one, and Delete batches the whole selection into a single `deleteMany` — leaving the survivor selected exactly as a plain click would. |

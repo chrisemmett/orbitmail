@@ -339,6 +339,17 @@ async function main() {
     logLevel: 'silent'
   })
 
+  // The status-bar wording is a pure function for exactly this reason: the bug
+  // it replaces lived in JSX, where no test in this repo could reach it.
+  await build({
+    entryPoints: [join(root, 'src/utils/syncStatus.ts')],
+    bundle: true,
+    format: 'cjs',
+    platform: 'node',
+    outfile: join(outDir, 'syncStatus.cjs'),
+    logLevel: 'silent'
+  })
+
   installWindowStub()
   const require = createRequire(import.meta.url)
   const store = require(outfile)
@@ -1099,6 +1110,68 @@ async function main() {
     ])
     ok('a same-account collision with no parent to show is left unqualified',
       noParent.size === 0)
+  }
+
+  // -------------------------------------------------------------------------
+  section('Sync status: a failing account must not silence the healthy ones')
+  // -------------------------------------------------------------------------
+  {
+    const { summarizeSyncStatus, syncErrorDetail } = require(join(outDir, 'syncStatus.cjs'))
+
+    const acct = (id, email, over = {}) => ({
+      accountId: id, email, syncing: false, lastSyncAt: null, error: null, ...over
+    })
+    const status = (accounts) => ({
+      syncing: false, lastSyncAt: null, syncCurrent: 0, syncTotal: 0,
+      accounts: Object.fromEntries(accounts.map((a) => [a.accountId, a]))
+    })
+
+    // The regression this exists for. Work is broken; Personal synced a moment
+    // ago. The old status bar rendered its timestamp only when *nothing*
+    // anywhere had errored, so Personal silently stopped reporting.
+    const mixed = summarizeSyncStatus(status([
+      acct('p', 'personal@example.com', { lastSyncAt: 5000 }),
+      acct('w', 'work@example.com', { error: 'connect ECONNREFUSED' })
+    ]))
+    ok('a healthy account still reports its last sync while another fails',
+      mixed.healthyLastSyncAt === 5000, `healthyLastSyncAt=${mixed.healthyLastSyncAt}`)
+    ok('and the failing one is named in the summary line',
+      mixed.errorLabel === 'work@example.com: connect ECONNREFUSED', mixed.errorLabel)
+    ok('the wording changes when only some accounts are healthy', mixed.mixed === true)
+
+    // A stale timestamp on a broken mailbox must not be presented as freshness.
+    const staleWins = summarizeSyncStatus(status([
+      acct('p', 'personal@example.com', { lastSyncAt: 1000 }),
+      acct('w', 'work@example.com', { lastSyncAt: 9999, error: 'expired' })
+    ]))
+    ok('a failing account does not lend its timestamp to the healthy line',
+      staleWins.healthyLastSyncAt === 1000, `healthyLastSyncAt=${staleWins.healthyLastSyncAt}`)
+
+    // Several failures are counted, not concatenated. They used to be joined
+    // with a blank line into one string and rendered in a one-line bar, where
+    // HTML collapsed the break and produced a run-on sentence.
+    const many = summarizeSyncStatus(status([
+      acct('a', 'a@example.com', { error: 'no route to host' }),
+      acct('b', 'b@example.com', { error: 'certificate expired' })
+    ]))
+    ok('two failures are counted rather than pasted together',
+      many.errorLabel === '2 accounts are not syncing', many.errorLabel)
+    ok('but the full detail survives for the tooltip, one line per account',
+      syncErrorDetail(many.failing).split('\n').length === 2,
+      JSON.stringify(syncErrorDetail(many.failing)))
+
+    // Re-auth is offered for credential failures only; a dropped connection
+    // must not send the user round an OAuth loop that fixes nothing.
+    ok('an expired credential offers re-authentication',
+      summarizeSyncStatus(status([acct('a', 'a@x', { error: 'invalid_grant' })])).needsReauth)
+    ok('a network failure does not',
+      !summarizeSyncStatus(status([acct('a', 'a@x', { error: 'no route to host' })])).needsReauth)
+
+    const clean = summarizeSyncStatus(status([acct('p', 'p@x', { lastSyncAt: 42 })]))
+    ok('with nothing wrong there is no error line and no mixed wording',
+      clean.errorLabel === null && clean.mixed === false && clean.healthyLastSyncAt === 42)
+    ok('an account list that is empty summarizes without throwing',
+      summarizeSyncStatus(status([])).healthyLastSyncAt === null)
   }
 
   console.log(

@@ -225,12 +225,37 @@ export interface AttachmentDraft {
   size: number
 }
 
-export interface SyncStatus {
+/**
+ * How one mailbox is doing. Sync status used to be a single global object, so
+ * with more than one account the UI could not say *which* one was syncing,
+ * which had failed, or when each last succeeded — and one account's error hid
+ * every other account's "last synced". This is the per-account truth; the
+ * aggregate fields on `SyncStatus` are derived from it.
+ */
+export interface AccountSyncStatus {
+  accountId: string
+  /** Carried so the UI can name the account without joining the account list. */
+  email: string
   syncing: boolean
   lastSyncAt: number | null
+  /** This account's own failure, unjoined with anyone else's. */
   error: string | null
+}
+
+export interface SyncStatus {
+  /** True while *any* account is syncing. */
+  syncing: boolean
+  /**
+   * The most recent successful sync across all accounts, for the aggregate
+   * status line. Per-account timestamps live in `accounts` — read those before
+   * telling the user a specific mailbox is up to date.
+   */
+  lastSyncAt: number | null
+  /** Progress is pooled across accounts: one bar for the whole refresh. */
   syncCurrent: number
   syncTotal: number
+  /** Keyed by account id. The source of truth for everything above. */
+  accounts: Record<string, AccountSyncStatus>
 }
 
 export interface UiPreferences {
@@ -320,7 +345,14 @@ export interface ComposeWindowPreferences {
 // it on the next merge.
 export interface PersistedAppState {
   ui: UiPreferences
+  /**
+   * Legacy single timestamp, kept so an install predating per-account status
+   * still shows a last-synced time on first run: it seeds every account that
+   * has no entry in `accountLastSyncAt` yet.
+   */
   lastSyncAt: number | null
+  /** Last successful sync per account id. Absent means never synced. */
+  accountLastSyncAt?: Record<string, number>
   /** Register as the system handler for mailto: links. */
   handleMailtoLinks?: boolean
   /**
