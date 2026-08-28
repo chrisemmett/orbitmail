@@ -3194,7 +3194,10 @@ async function main(): Promise<void> {
       'tool.AppImage', // case must not matter
       'macro.vbs',
       'app.jar',
-      'script.py'
+      'script.py',
+      'Update.command', // double-clicks straight into Terminal on macOS
+      'invoice.scpt', // AppleScript, likewise
+      'Setup.workflow'
     ]
     for (const name of risky) {
       ok(`warns before opening ${name}`, isExecutableAttachment(name))
@@ -4119,6 +4122,82 @@ async function main(): Promise<void> {
     ok('the explicit StartupWMClass differs from what desktopName would derive',
       packagedWmClass !== pkg.desktopName.replace(/\.desktop$/, ''),
       `explicit=${packagedWmClass} derived=${pkg.desktopName.replace(/\.desktop$/, '')}`)
+  }
+
+  // -------------------------------------------------------------------------
+  section('macOS: the build and the install script must target it, not assume Linux')
+  // -------------------------------------------------------------------------
+  {
+    // Everything here is the same class of bug as the desktop-entry checks
+    // above: platform metadata that no compiler reads, where being wrong is
+    // silent on the machine you are developing on and fatal on the one you are
+    // not. None of it can be exercised from Linux, so it is checked instead.
+    const { readFileSync: readSource } = await import('fs')
+    const pkg = JSON.parse(readSource(join(process.cwd(), 'package.json'), 'utf8'))
+
+    // `path.txt` names the executable *inside* `dist`, and it is not "electron"
+    // on a Mac. The script hardcoded the Linux answer and the Linux zip name,
+    // so on macOS the "already installed" test could never pass: every install
+    // wiped dist, re-downloaded, wrote a path.txt pointing at nothing, and
+    // failed its own final guard — `npm install` could not complete at all.
+    const installer = readSource(join(process.cwd(), 'scripts/install-electron.sh'), 'utf8')
+    ok('the Electron installer knows where the binary lives on macOS',
+      installer.includes('Electron.app/Contents/MacOS/Electron'))
+    ok('the Electron installer does not hardcode a Linux platform or arch',
+      !/electron-v\$\{VERSION\}-linux-x64\.zip/.test(installer) &&
+        installer.includes('${PLATFORM}-${ARCH}'))
+
+    // `@electron/get` resolves its cache root through env-paths, so the zip is
+    // under ~/Library/Caches/electron on a Mac. The Linux path is not an error
+    // there, it is worse: the lookup silently never hits, and CI's cache step
+    // goes green having saved nothing.
+    ok('the Electron installer derives the cache directory rather than assuming ~/.cache',
+      installer.includes('Library/Caches/electron') && !/\$\{HOME\}\/\.cache\/electron/.test(installer))
+
+    const workflow = readSource(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8')
+    const macJob = workflow.slice(workflow.indexOf('build-macos:'))
+    ok('and the macOS CI job caches the path macOS actually uses',
+      macJob.includes('~/Library/Caches/electron'))
+
+    // A `--ozone-platform` switch is Linux's, and DISPLAY is never set on a Mac
+    // — so testing DISPLAY alone handed every macOS run a flag for a windowing
+    // layer its Electron was not built with.
+    for (const runner of ['scripts/imap-integration.mjs', 'scripts/e2e.mjs']) {
+      const source = readSource(join(process.cwd(), runner), 'utf8')
+      const gated = !/DISPLAY/.test(source) ||
+        /process\.platform === 'linux'[\s\S]{0,120}DISPLAY/.test(source)
+      ok(`${runner} gates its display assumptions on Linux`, gated)
+    }
+
+    // Without a mac block electron-builder falls back to defaults that produce
+    // nothing installable, and `npm run dist` on a Mac is a no-op worth naming.
+    const mac = pkg.build?.mac
+    ok('the build config has a macOS section', !!mac)
+    ok('and a documented script that reaches it',
+      typeof pkg.scripts?.['dist:mac'] === 'string', pkg.scripts?.['dist:mac'])
+
+    const arches = new Set(
+      (Array.isArray(mac?.target) ? mac.target : []).flatMap((t: unknown) =>
+        typeof t === 'object' && t !== null ? ((t as { arch?: string[] }).arch ?? []) : []
+      )
+    )
+    ok('macOS builds cover Apple Silicon as well as Intel',
+      arches.has('arm64') && arches.has('x64'), [...arches].join(', ') || 'none')
+
+    // The one that is silently fatal. electron-builder does not sign at all
+    // when it finds no Developer ID, and an unsigned arm64 bundle is refused by
+    // the kernel — "the application is damaged", on every Apple Silicon Mac.
+    // `identity: '-'` is ad-hoc signing, which is what makes a locally built
+    // copy launch without an Apple developer account.
+    ok('macOS builds are at least ad-hoc signed, so Apple Silicon will run them',
+      mac?.identity === '-', String(mac?.identity))
+
+    // mailto: on macOS is a CFBundleURLTypes registration in Info.plist.
+    // Without it `setAsDefaultProtocolClient` has nothing to claim, and the
+    // "Open mailto: links in Orbit Mail" toggle can never take effect.
+    const schemes = (mac?.protocols ?? []).flatMap((p: { schemes?: string[] }) => p.schemes ?? [])
+    ok('the mac bundle registers the mailto: scheme', schemes.includes('mailto'),
+      schemes.join(', ') || 'none')
   }
 
   // -------------------------------------------------------------------------

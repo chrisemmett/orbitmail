@@ -17,7 +17,11 @@ for (const size of sizes) {
   console.log(`Wrote ${out}`)
 }
 
-await sharp(svgPath, { density: 384 }).resize(512, 512).png().toFile(join(root, 'build/icon.png'))
+// The single master electron-builder converts for platforms that want one file
+// rather than a directory — macOS `.icns` above all. 1024 because that is the
+// largest representation an .icns holds (512@2x); electron-builder's floor is
+// 512, and feeding it exactly 512 costs the Retina slot on every Mac.
+await sharp(svgPath, { density: 512 }).resize(1024, 1024).png().toFile(join(root, 'build/icon.png'))
 console.log(`Wrote ${join(root, 'build/icon.png')}`)
 
 // ---------------------------------------------------------------------------

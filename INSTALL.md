@@ -16,7 +16,8 @@ For architecture, contributing and the deep OAuth reference, see
 
 ## Install a package
 
-Orbit Mail is Linux-only for now.
+Packages exist for Linux. On **macOS** there is nothing to download — skip to
+[Build your own copy](#build-your-own-copy), which is the supported route there.
 
 **Debian / Ubuntu / Mint:**
 
@@ -42,10 +43,20 @@ If you only use IMAP or POP3 accounts, you are done — skip to
 
 About 15 minutes and a terminal. No coding.
 
-**1. Prerequisites** (Debian / Ubuntu / Mint):
+**1. Prerequisites.**
+
+Debian / Ubuntu / Mint:
 
 ```bash
 sudo apt install git nodejs npm build-essential python3
+```
+
+macOS (11 or later, Apple Silicon or Intel) — the compiler comes from Apple's
+command line tools, which is a one-off download of a few hundred megabytes:
+
+```bash
+xcode-select --install
+brew install node
 ```
 
 Node.js 22.12 or newer is required — check with `node --version`. That floor is
@@ -67,7 +78,9 @@ npm install
 npm run dev
 ```
 
-…or build a package and install that:
+…or build a package and install that.
+
+On Linux:
 
 ```bash
 npm run dist
@@ -76,6 +89,28 @@ sudo dpkg -i release/orbit-mail-*.deb
 
 `npm run dist` builds both a `.deb` and an AppImage; `npm run dist:deb` and
 `npm run dist:appimage` build one at a time.
+
+On macOS:
+
+```bash
+npm run dist:mac
+```
+
+That writes `Orbit Mail.app` inside `release/mac-arm64/` (or `release/mac/` on an
+Intel Mac) along with a `.dmg`. Drag the app into `/Applications` and open it.
+
+The app is **ad-hoc signed** — signed just well enough that macOS will run it,
+because an unsigned build is refused outright on Apple Silicon. It is not signed
+with an Apple Developer ID and not notarized, so it is a copy for the machine
+that built it. If you move the `.dmg` to another Mac, macOS quarantines it and
+refuses to open the app; that Mac can clear the flag with:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Orbit Mail.app"
+```
+
+Only do that for a build you made yourself. Notarized distribution needs a paid
+Apple Developer account and is not something this project does.
 
 ## Register an OAuth app
 
@@ -128,13 +163,20 @@ starts, so editing the file and restarting is enough.
 ```bash
 git pull
 npm install
-npm run dist
+npm run dist                            # Linux
 sudo dpkg -i release/orbit-mail-*.deb
 ```
 
-**Uninstall** the Debian package with `sudo apt remove orbit-mail`, or just
-delete the AppImage.
+```bash
+git pull
+npm install
+npm run dist:mac                        # macOS, then replace the app in /Applications
+```
 
-Your mail cache, accounts and settings live in `~/.config/orbit-mail/` and are
-left alone by an uninstall. Delete that directory to remove them too — it
-contains your cached mail, downloaded attachments and stored credentials.
+**Uninstall** the Debian package with `sudo apt remove orbit-mail`, or just
+delete the AppImage. On macOS, drag `Orbit Mail.app` to the Trash.
+
+Your mail cache, accounts and settings live in `~/.config/orbit-mail/` (on macOS,
+`~/Library/Application Support/Orbit Mail/`) and are left alone by an uninstall.
+Delete that directory to remove them too — it contains your cached mail,
+downloaded attachments and stored credentials.

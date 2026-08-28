@@ -132,7 +132,9 @@ function cleanup() {
 process.on('SIGINT', () => { cleanup(); process.exit(130) })
 process.on('SIGTERM', () => { cleanup(); process.exit(143) })
 
-if (!process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) {
+// A Mac is always able to open a window, so the check is Linux's: there DISPLAY
+// (or WAYLAND_DISPLAY) is what says whether one can be drawn at all.
+if (process.platform === 'linux' && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) {
   fail(
     'No display. These checks drive real windows, and headless Ozone segfaults on\n' +
     'the first BrowserWindow, so there is no headless mode. Use `npm run test:imap`\n' +

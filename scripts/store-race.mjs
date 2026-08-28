@@ -132,7 +132,12 @@ const backend = {
   savedPreferences: [],
   preferenceSaveFails: false,
   mailtoRegistrationSucceeds: true,
-  capabilities: { trayActive: true, notificationsSupported: true, mailtoHandlerActive: false }
+  capabilities: {
+    trayActive: true,
+    notificationsSupported: true,
+    mailtoHandlerActive: false,
+    platform: 'linux'
+  }
 }
 
 function installWindowStub() {

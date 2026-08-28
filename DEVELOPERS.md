@@ -5,8 +5,8 @@ Technical documentation for the architecture, internals and contribution workflo
 ## Requirements
 
 - **Node.js** 20 or later
-- **Linux** desktop (developed on Linux Mint Cinnamon; other desktops supported)
-- **Build tools** — needed for the `better-sqlite3` native module (`build-essential`, Python 3, etc.)
+- **Linux** desktop (developed on Linux Mint Cinnamon; other desktops supported) **or macOS** 11+, Apple Silicon or Intel
+- **Build tools** — needed for the `better-sqlite3` native module: `build-essential` and Python 3 on Linux, Xcode command line tools (`xcode-select --install`) on macOS
 - **OAuth credentials** — required for Gmail and Microsoft 365 during development (see [OAuth setup](#oauth-setup))
 
 ## Quick start
@@ -36,6 +36,34 @@ npm run install:desktop
 ```
 
 If the launcher icon is missing, run `npm run icons` before `npm run install:desktop`.
+
+This is Linux-only; there is no equivalent on macOS, where `npm run dev` is run
+from the terminal and a packaged build is an ordinary `.app`.
+
+## Platform differences
+
+The app is one codebase on both platforms. What actually differs, and where:
+
+| Concern | Linux | macOS |
+|---------|-------|-------|
+| Unread count | `app.setBadgeCount`, a Unity `LauncherEntry` D-Bus signal, and a tray icon carrying the number (`app-badge.ts`, `tray.ts`) | `app.setBadgeCount` alone — it lands on the Dock icon, which is why no tray is created |
+| Closing the last window | Hides to the tray when one exists, else quits (`closeToTray`) | Window closes, app stays in the Dock; `window-all-closed` deliberately does not quit on `darwin`, and `activate` refocuses the main window or rebuilds it. That is keyed on the *main* window, not on a window count: a composer is top-level and outlives the main one deliberately, so with one open the count is never zero and the main window could never be reopened |
+| `mailto:` | An xdg association keyed on an installed `.desktop` file, so it no-ops under `npm run dev` | `CFBundleURLTypes` in `Info.plist`, from `build.mac.protocols` — likewise only in a packaged build. A `mailto:` reaches the app as an `open-url` event rather than in `process.argv` (both are handled) |
+| Credential encryption | `safeStorage` over gnome-keyring / kwallet; falls back to obfuscation with a banner when absent | `safeStorage` over the Keychain, which is always present |
+| Data directory | `~/.config/orbit-mail/` | `~/Library/Application Support/Orbit Mail/` for a packaged build; `.../orbit-mail/` under `npm run dev`, because the name comes from `CFBundleName` only once bundled |
+| Zoom / shortcuts | `Ctrl` | `Cmd` — `zoomActionForInput` already accepts `input.meta`, and the renderer's handlers test `metaKey || ctrlKey` |
+| Packaging | `.deb` + AppImage | `.dmg` + `.zip`, arm64 and x64 |
+| `npm run test:e2e` | Needs a real X/Wayland display; headless Ozone segfaults | Runs as-is; a Mac can always open a window |
+
+Two things that look platform-specific and are not: `tmpdir()` handles the
+`.eml` export directory portably, and the only shell-out in the app (`gdbus`,
+for the launcher badge) returns early off Linux.
+
+The settings UI does not hardcode any of this. `app:getPlatformCapabilities`
+reports `trayActive`, `notificationsSupported`, `mailtoHandlerActive` and
+`platform`, and the panes word themselves from it — `platform` is there because
+"no tray" means *closing quits* on Linux and *stays in the Dock* on macOS, and a
+toggle explained with the wrong one is still lying.
 
 ## OAuth setup
 
@@ -2013,12 +2041,16 @@ and tokens are encrypted with `safeStorage`; when no keyring is available it
 falls back to base64 so the app still works, and warns — the main process logs
 it at startup and a dismissible banner (`SecureStorageBanner`, driven by
 `app.getSecureStorageStatus()`) tells the user their secrets are obfuscated, not
-encrypted.
+encrypted. That fallback is a Linux state in practice: `safeStorage` is backed by
+the Keychain on macOS, which is always available, so neither the log line nor the
+banner appears there — which is also why both name gnome-keyring and kwallet
+without qualification.
 
 ### On-disk data
 
 Everything cached locally is mail: message bodies, attachment files, and the
-encrypted credential blob. Electron creates `~/.config/orbit-mail` as `0700`, but
+encrypted credential blob. Electron creates `~/.config/orbit-mail` as `0700`
+(`~/Library/Application Support/Orbit Mail` on macOS), but
 anything made *inside* it followed the process umask — the database landed `0644`
 and the data directories `0775` — so on a shared machine another account could
 read all of it.
@@ -2055,8 +2087,11 @@ that no live copy of the app could still own them.
 ### Attachments
 
 Opening an attachment whose extension can execute (`.desktop`, `.sh`, `.jar`,
-`.exe`, …) prompts first, naming the real extension — the point of a
-`.pdf.exe` is that the eye stops reading at `.pdf`. See
+`.exe`, `.command`, `.scpt`, …) prompts first, naming the real extension — the
+point of a `.pdf.exe` is that the eye stops reading at `.pdf`. The list is not
+scoped to the running platform: a Windows `.exe` on a Mac is not dangerous, but
+it is a strong signal the mail is hostile, and the reverse holds for the macOS
+entries on Linux. See
 `electron/services/attachment-safety.ts`. Attachment files are written `0600`
 and keyed by attachment id, so two parts sharing a filename cannot overwrite
 each other.
@@ -2094,7 +2129,7 @@ their own. Approval is cleared when the compose window closes.
 | `npm run build` | Build main, preload, and renderer for production |
 | `npm run preview` | Preview production build |
 | `npm run icons` | Regenerate PNG icons from `build/icon.svg`, including the numbered tray icons in `build/icons/tray/` |
-| `npm run install:desktop` | Install a dev `.desktop` launcher |
+| `npm run install:desktop` | Install a dev `.desktop` launcher (Linux only) |
 | `npm run test:imap` | Integration suite against a real IMAP/SMTP server (see below) |
 | `npm run test:store` | Renderer-store checks under plain node (see below) — no Docker, no Electron |
 | `npm run test:e2e` | End-to-end suites through real windows — send path, signatures, window lifecycle, zoom (see below). Needs Docker *and* a display, so it is not in CI |
@@ -2102,6 +2137,7 @@ their own. Approval is cleared when the compose window closes.
 | `npm run dist` | Build icons, compile, and package (.deb + AppImage) |
 | `npm run dist:deb` | Debian package only |
 | `npm run dist:appimage` | AppImage only |
+| `npm run dist:mac` | macOS `.dmg` + `.zip`, arm64 and x64 |
 
 `postinstall` runs `electron-builder install-app-deps` (which rebuilds
 `better-sqlite3` against Electron's ABI) and then `scripts/install-electron.sh`.
@@ -2111,6 +2147,27 @@ it `npm ci` leaves `node_modules/electron/dist` empty and every Electron-hosted
 check fails at startup. It unzips from `~/.cache/electron` when the version is
 already there and falls back to `install.js` otherwise, which is also what makes
 CI's Electron cache worth having.
+
+Both halves of that are **platform-derived, not constants**. The executable
+inside `dist` is `electron` on Linux but `Electron.app/Contents/MacOS/Electron`
+on macOS, and the cached zip is named for the platform and arch. Hardcoding the
+Linux answers — which the script did — made the "already installed" test
+unsatisfiable on a Mac: every install wiped `dist/`, re-downloaded, wrote a
+`path.txt` naming a file that was not there, and then failed the script's own
+final guard, so `npm install` could not complete at all. The mapping mirrors
+`getPlatformPath()` in Electron's `install.js`, and the download path delegates
+to `install.js` rather than re-deriving anything, so its Rosetta x64→arm64
+upgrade still applies.
+
+The **cache directory** is derived too, and it is a *host* question rather than a
+target one. `@electron/get` resolves its root through env-paths — respecting
+`electron_config_cache`, `~/Library/Caches/electron` on macOS,
+`$XDG_CACHE_HOME/electron` on Linux — so the hardcoded `~/.cache/electron` could
+never hit on a Mac. That one was caught by the macOS CI job going green while
+logging `Path Validation Error: Path(s) specified in the action for caching
+do(es) not exist`: the cache step cached nothing, every run, and said so only in
+the log. The macOS job's `actions/cache` path was corrected with it. Exercise
+both branches when changing this — a genuinely cold cache *and* a warm one.
 
 The cache lookup is guarded with `[[ -d ]]` for a reason. `find` exits non-zero
 on a directory that does not exist, and under the script's `set -euo pipefail`
@@ -2171,6 +2228,7 @@ reimplementing them, so it exercises the shipping code paths:
 | OAuth config | Credentials resolve environment-first, fall back to values entered in the app, and the status payload never carries a value back to the renderer. Plus the rule-5 guards: no OAuth constants in the build config, no placeholders in the bundle, and no `.env` value present in `out/main/index.js`. |
 | Tray icon | The count→icon mapping: nothing unread shows the plain icon, single digits show that number, ten or more collapses to `9+`, a fractional count floors instead of naming a file that does not exist, and junk (negative, `NaN`) falls back to the plain icon. Every file the mapping can name is checked to exist in `build/icons/tray/`, and the tooltip keeps the exact number past nine, singular at one. |
 | Launcher badge | The Unity `LauncherEntry` signal is a valid D-Bus object path (a percent-encoded app URI is not, and every emit silently failed), the count is typed `int64`, and zero hides the badge. |
+| macOS packaging | The install script knows where Electron's binary lives on darwin, derives the cache zip from platform and arch rather than hardcoding `linux-x64`, and derives the cache *directory* rather than assuming `~/.cache/electron` (which is also asserted against the macOS CI job's `actions/cache` path — a mismatch there caches nothing and stays green); both test runners gate their `DISPLAY` assumptions on Linux; the build config has a mac section reached by `npm run dist:mac`, covers arm64 *and* x64, is at least ad-hoc signed (`identity: "-"` — an unsigned arm64 bundle will not launch), and registers the `mailto:` scheme so the Default-mail-app toggle has something to claim. All of it is metadata no compiler reads, silent on Linux and fatal on a Mac. |
 | Gmail labels | A label carried by the whole conversation counts every message; one carried by a single reply reports *one*, not the conversation (the difference the picker draws a dash for). The Inbox is a label and says so; a virtual view is not offered as one, and neither is anything a message can only be moved to. Another account holding the same `Message-ID` contributes no label — asserted against `listMessageCopies` itself, because the label-level check passes whether or not the scoping exists, and a leaked copy is what `addLabel` would take its COPY *from*. Adding a label every message already carries, or removing one none carries, does nothing at all (`failed` is asserted too — without the filter it would attempt a server round-trip and report a failure rather than a no-op). Labelling a non-Gmail account is refused, and a label deleted underneath the picker is an error rather than a crash. |
 | IPC contract | Every channel `preload.ts` invokes has an `ipcMain.handle` in `main.ts`. Added after two channels were wired into the preload but not main — clean build, green suite, runtime failure. |
 | Docs | Every `npm run` script and file path the docs cite exists, the documented Electron version matches `package.json`, and no document claims credentials are built into a package (CLAUDE.md rule 6). Prose is not checked; references are. |
@@ -2223,6 +2281,14 @@ Notes for anyone extending it:
   request (`.github/workflows/ci.yml`), alongside `npm run build`. Docker is
   preinstalled on the runners, and the runner switches to headless Ozone when
   there is no `DISPLAY`, so no xvfb is needed.
+- CI runs a second job on `macos-latest` doing `npm ci`, `npm run build` and
+  `npm run test:store`, plus a one-line assertion that the Electron binary is
+  where `path.txt` claims. Its `actions/cache` path is
+  `~/Library/Caches/electron`, not the Linux job's `~/.cache/electron`. That job exists for the install step: the macOS
+  breakage was in `postinstall`, so it happened before any test could run, and
+  no Linux job could ever see it. It stops at the store checks because
+  `test:imap` and `test:e2e` both need Docker, which GitHub's macOS runners do
+  not have.
 - On failure the runner prints GreenMail's last 40 log lines before removing the
   container — on CI that is the only view of the server side.
 - CI deliberately does not run `tsc -b`; see the note in the workflow.
@@ -2234,7 +2300,9 @@ npm run test:e2e            # build, start GreenMail, run every suite, tear down
 npm run test:e2e -- --keep  # leave the container up afterwards
 ```
 
-**Requires Docker *and* a display; it is not in CI.** `test:imap` is windowless
+**Requires Docker, and on Linux a display; it is not in CI.** (The display check
+is Linux's: `DISPLAY`/`WAYLAND_DISPLAY` is what says whether a window can be
+drawn there. A Mac can always open one, so the guard skips.) `test:imap` is windowless
 by design, which means a *window's* lifecycle — a `close` handler, the draft
 flush, parent/child destroy order — is the one part of the app it cannot reach.
 These close that gap. `scripts/e2e.mjs` starts GreenMail on its own ports
@@ -2505,6 +2573,36 @@ sudo dpkg -i release/Orbit\ Mail-*.deb
 
 Packaged builds install a `.desktop` launcher with `StartupWMClass=orbit-mail` for correct taskbar/window grouping on Cinnamon and other desktops. `mailto:` handling is opt-in so the app does not hijack links from browsers or admin consoles.
 
+### macOS
+
+```bash
+npm run dist:mac      # .dmg + .zip, arm64 and x64
+```
+
+Output lands in `release/mac-arm64/` (or `release/mac/` on Intel) as
+`Orbit Mail.app`, plus the disk image. `build.mac.protocols` puts the `mailto:`
+scheme into `CFBundleURLTypes`, which is what `setAsDefaultProtocolClient` needs
+to have anything to claim; without it the Default-mail-app toggle can never take
+effect on a Mac. There is no tray target and no `.desktop` equivalent — the Dock
+badge carries the unread count.
+
+The macOS icon is converted by electron-builder from `build/icon.png`, which
+`npm run icons` writes at 1024×1024. That is the size an `.icns` tops out at
+(512@2x); electron-builder's floor is 512, and feeding it exactly 512 silently
+costs the Retina slot on every Mac.
+
+**`identity: "-"` is load-bearing, not a placeholder.** When electron-builder
+finds no Developer ID it does not sign at all, and the kernel refuses to run an
+unsigned arm64 bundle — "the application is damaged", on every Apple Silicon
+Mac. `"-"` is ad-hoc signing, which is what makes a locally built copy launch
+with no Apple developer account. `hardenedRuntime` is off to match: it only buys
+notarization, which needs a paid account, and ad-hoc signing with it on requires
+a `disable-library-validation` entitlement to avoid launch failures. Builds are
+therefore for the machine that made them — moved to another Mac they are
+quarantined, and the recipient has to clear the flag by hand
+([INSTALL.md](INSTALL.md#build-your-own-copy)). Signed, notarized distribution is
+out of scope; see [TODO.md](TODO.md).
+
 **Packages never contain OAuth credentials** (CLAUDE.md rule 5, enforced by `npm run test:imap`). A build made with a `.env` present is byte-identical in this respect to one made without: credentials are resolved at runtime from the environment, `~/.config/orbit-mail/.env`, or the Add Account dialog. There is nothing to rebuild after changing them.
 
 ## Troubleshooting (development)
@@ -2516,7 +2614,13 @@ Confirm IMAP is enabled, the consent screen includes `https://mail.google.com/`,
 Register the redirect URI exactly as `http://127.0.0.1/callback`, set **Allow public client flows** to **Yes**, and confirm your tenant allows OAuth IMAP/SMTP. You do **not** need to add "Office 365 Exchange Online" API permissions — scopes are consented in the browser at sign-in. If you see "no refresh token", re-check that public client flows are enabled and try again.
 
 **`better-sqlite3` compile errors on install**  
-Install build essentials: `sudo apt install build-essential python3`.
+Install build essentials: `sudo apt install build-essential python3` on Linux, or
+`xcode-select --install` on macOS.
+
+**macOS: "Orbit Mail is damaged and can't be opened"**  
+Either the build was not signed at all — check `build.mac.identity` is still
+`"-"` — or the `.app` came from another machine and is quarantined. See
+[INSTALL.md](INSTALL.md#build-your-own-copy).
 
 **Electron won't start (`ELECTRON_RUN_AS_NODE`)**  
 Run `unset ELECTRON_RUN_AS_NODE` before `npm run dev`.
@@ -2544,6 +2648,17 @@ See [`TODO.md`](TODO.md) for the full backlog.
   inline stops them being listed as attachments, but `body_html` still holds one
   base64 copy per reply — the message behind that fix is 3.66MB of it. Nothing
   deduplicates the body, so the disk cost of a long thread is unchanged.
+- **macOS builds are ad-hoc signed, not notarized.** They run on the machine
+  that built them and are quarantined anywhere else. Notarization needs a paid
+  Apple Developer account, which this project does not have — the same reasoning
+  as the OAuth decision above.
+- **The macOS side is checked structurally, not run.** `test:imap` asserts the
+  build config, the install script and the runners' platform gating, and CI
+  builds and runs the store checks on `macos-latest`. Nothing exercises the app
+  on a Mac: `test:imap` and `test:e2e` both need Docker, which GitHub's macOS
+  runners do not have.
+- **No Windows support.** Nothing here is deliberately Windows-hostile, but no
+  target, no check and no manual pass covers it.
 - **The dialog in `attachments:open` is not itself covered.** The classifier and
   its warning text are (see the table above), but whether declining actually
   aborts the open needs a window — `test:imap` is windowless and no e2e suite
